@@ -1,0 +1,86 @@
+from typing import Annotated, Any
+
+from fastapi import Depends, HTTPException, Security, status
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from firebase_admin import auth
+from firebase_admin.exceptions import FirebaseError
+
+from app.core.config import Settings, get_settings
+from app.core.security import CurrentUser, is_valid_dev_auth_token
+from app.infrastructure.firebase import (
+    FirebaseConfigurationError,
+    verify_firebase_id_token,
+)
+
+
+firebase_bearer = HTTPBearer(auto_error=False)
+dev_auth_header = APIKeyHeader(name="X-Dev-Auth-Token", auto_error=False)
+
+
+def _authentication_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Credenciais de autenticacao invalidas.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _user_from_firebase_claims(claims: dict[str, Any]) -> CurrentUser:
+    uid = claims.get("uid")
+    if not isinstance(uid, str) or not uid:
+        raise _authentication_error()
+
+    return CurrentUser(uid=uid)
+
+
+def get_current_user(
+    bearer_credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Security(firebase_bearer),
+    ],
+    provided_dev_token: Annotated[
+        str | None,
+        Security(dev_auth_header),
+    ],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> CurrentUser:
+    if is_valid_dev_auth_token(provided_dev_token, settings):
+        return CurrentUser(
+            uid="local-development",
+            role="developer",
+        )
+
+    if (
+        bearer_credentials is None
+        or bearer_credentials.scheme.lower() != "bearer"
+        or not bearer_credentials.credentials
+    ):
+        raise _authentication_error()
+
+    try:
+        claims = verify_firebase_id_token(
+            bearer_credentials.credentials,
+            settings,
+        )
+    except FirebaseConfigurationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Servico de autenticacao indisponivel.",
+        ) from error
+    except (
+        auth.ExpiredIdTokenError,
+        auth.InvalidIdTokenError,
+        auth.RevokedIdTokenError,
+        auth.UserDisabledError,
+    ) as error:
+        raise _authentication_error() from error
+    except FirebaseError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Servico de autenticacao indisponivel.",
+        ) from error
+
+    return _user_from_firebase_claims(claims)
+
+
+CurrentUserDependency = Annotated[CurrentUser, Depends(get_current_user)]
