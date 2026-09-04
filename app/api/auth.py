@@ -5,7 +5,6 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from firebase_admin import auth
 from firebase_admin.exceptions import FirebaseError
 
-from app.core.config import Settings, get_settings
 from app.core.security import CurrentUser, is_valid_dev_auth_token
 from app.infrastructure.firebase import (
     FirebaseConfigurationError,
@@ -42,9 +41,8 @@ def get_current_user(
         str | None,
         Security(dev_auth_header),
     ],
-    settings: Annotated[Settings, Depends(get_settings)],
 ) -> CurrentUser:
-    if is_valid_dev_auth_token(provided_dev_token, settings):
+    if is_valid_dev_auth_token(provided_dev_token):
         return CurrentUser(
             uid="local-development",
             role="developer",
@@ -58,10 +56,7 @@ def get_current_user(
         raise _authentication_error()
 
     try:
-        claims = verify_firebase_id_token(
-            bearer_credentials.credentials,
-            settings,
-        )
+        claims = verify_firebase_id_token(bearer_credentials.credentials)
     except FirebaseConfigurationError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

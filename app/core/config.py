@@ -1,30 +1,72 @@
-from functools import lru_cache
-from typing import Literal
+import os
+from pathlib import Path
 
-from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
-
-    app_env: Literal["development", "test", "staging", "production"] = "development"
-    firebase_project_id: str = ""
-    firebase_credentials_base64: SecretStr = SecretStr("")
-    dev_auth_token: SecretStr = SecretStr("")
-
-    @property
-    def dev_auth_enabled(self) -> bool:
-        return self.app_env in {"development", "test"} and bool(
-            self.dev_auth_token.get_secret_value()
-        )
+from dotenv import load_dotenv
 
 
-@lru_cache
-def get_settings() -> Settings:
-    return Settings()
+BASE_DIR = Path(__file__).resolve().parents[2]
+
+load_dotenv(BASE_DIR / ".env", override=False)
+
+
+APP_ENV = os.getenv("APP_ENV", "development")
+
+FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
+FIREBASE_CREDENTIALS_BASE64 = os.getenv("FIREBASE_CREDENTIALS_BASE64")
+DEV_AUTH_TOKEN = os.getenv("DEV_AUTH_TOKEN")
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+MONGODB_URI = os.getenv("MONGODB_URI")
+MONGODB_DATABASE = os.getenv("MONGODB_DATABASE")
+
+REDIS_URL = os.getenv("REDIS_URL")
+
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+
+LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+LANGSMITH_ENDPOINT = os.getenv(
+    "LANGSMITH_ENDPOINT",
+    "https://api.smith.langchain.com",
+)
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "astro-ai-api")
+LANGSMITH_WORKSPACE_ID = os.getenv("LANGSMITH_WORKSPACE_ID")
+
+
+OBRIGATORIAS = {
+    "DATABASE_URL": DATABASE_URL,
+    "MONGODB_URI": MONGODB_URI,
+    "MONGODB_DATABASE": MONGODB_DATABASE,
+    "REDIS_URL": REDIS_URL,
+    "QDRANT_URL": QDRANT_URL,
+    "GROQ_API_KEY": GROQ_API_KEY,
+    "MISTRAL_API_KEY": MISTRAL_API_KEY,
+}
+
+
+def validar_config() -> list[str]:
+    problemas = [
+        f"Variavel ausente no .env: {nome}"
+        for nome, valor in OBRIGATORIAS.items()
+        if not valor
+    ]
+
+    if LANGSMITH_TRACING:
+        if not LANGSMITH_ENDPOINT:
+            problemas.append("Variavel ausente no .env: LANGSMITH_ENDPOINT")
+        if not LANGSMITH_API_KEY:
+            problemas.append("Variavel ausente no .env: LANGSMITH_API_KEY")
+        if not LANGSMITH_PROJECT:
+            problemas.append("Variavel ausente no .env: LANGSMITH_PROJECT")
+
+    return problemas

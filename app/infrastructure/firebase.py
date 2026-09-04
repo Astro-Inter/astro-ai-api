@@ -7,7 +7,7 @@ from typing import Any
 import firebase_admin
 from firebase_admin import App, auth, credentials
 
-from app.core.config import Settings
+from app.core import config
 
 
 class FirebaseConfigurationError(RuntimeError):
@@ -17,8 +17,8 @@ class FirebaseConfigurationError(RuntimeError):
 _firebase_initialization_lock = Lock()
 
 
-def _build_firebase_credential(settings: Settings) -> credentials.Certificate:
-    encoded_credentials = settings.firebase_credentials_base64.get_secret_value()
+def _build_firebase_credential() -> credentials.Certificate:
+    encoded_credentials = config.FIREBASE_CREDENTIALS_BASE64
     if not encoded_credentials:
         raise FirebaseConfigurationError(
             "As credenciais administrativas do Firebase nao foram configuradas."
@@ -48,7 +48,7 @@ def _build_firebase_credential(settings: Settings) -> credentials.Certificate:
         ) from error
 
 
-def get_firebase_app(settings: Settings) -> App:
+def get_firebase_app() -> App:
     try:
         return firebase_admin.get_app()
     except ValueError:
@@ -58,20 +58,17 @@ def get_firebase_app(settings: Settings) -> App:
         try:
             return firebase_admin.get_app()
         except ValueError:
-            credential = _build_firebase_credential(settings)
+            credential = _build_firebase_credential()
             options = (
-                {"projectId": settings.firebase_project_id}
-                if settings.firebase_project_id
+                {"projectId": config.FIREBASE_PROJECT_ID}
+                if config.FIREBASE_PROJECT_ID
                 else None
             )
             return firebase_admin.initialize_app(credential, options)
 
 
-def verify_firebase_id_token(
-    id_token: str,
-    settings: Settings,
-) -> dict[str, Any]:
-    firebase_app = get_firebase_app(settings)
+def verify_firebase_id_token(id_token: str) -> dict[str, Any]:
+    firebase_app = get_firebase_app()
     return auth.verify_id_token(
         id_token,
         app=firebase_app,
