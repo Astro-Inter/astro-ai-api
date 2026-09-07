@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.api.router import api_router
 from app.api.login import router as login_router
 from app.core import config
+from app.modules.chat.service import ChatService
 
 
 def create_app() -> FastAPI:
@@ -10,6 +11,7 @@ def create_app() -> FastAPI:
         title="Astro AI API",
         version="0.1.0",
     )
+    application.state.chat_service = ChatService()
     application.include_router(api_router)
     if config.ENABLE_DEV_LOGIN and config.APP_ENV in {"development", "test"}:
         application.include_router(login_router)
