@@ -13,7 +13,8 @@ APP_ENV = os.getenv("APP_ENV", "development")
 
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
 FIREBASE_CREDENTIALS_BASE64 = os.getenv("FIREBASE_CREDENTIALS_BASE64")
-DEV_AUTH_TOKEN = os.getenv("DEV_AUTH_TOKEN")
+FIREBASE_WEB_API_KEY = os.getenv("FIREBASE_WEB_API_KEY")
+ENABLE_DEV_LOGIN = os.getenv("ENABLE_DEV_LOGIN", "false").lower() == "true"
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 

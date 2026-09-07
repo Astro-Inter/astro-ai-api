@@ -1,11 +1,11 @@
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Security, status
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
 from firebase_admin.exceptions import FirebaseError
 
-from app.core.security import CurrentUser, is_valid_dev_auth_token
+from app.core.security import CurrentUser
 from app.infrastructure.firebase import (
     FirebaseConfigurationError,
     verify_firebase_id_token,
@@ -13,7 +13,6 @@ from app.infrastructure.firebase import (
 
 
 firebase_bearer = HTTPBearer(auto_error=False)
-dev_auth_header = APIKeyHeader(name="X-Dev-Auth-Token", auto_error=False)
 
 
 def _authentication_error() -> HTTPException:
@@ -37,17 +36,7 @@ def get_current_user(
         HTTPAuthorizationCredentials | None,
         Security(firebase_bearer),
     ],
-    provided_dev_token: Annotated[
-        str | None,
-        Security(dev_auth_header),
-    ],
 ) -> CurrentUser:
-    if is_valid_dev_auth_token(provided_dev_token):
-        return CurrentUser(
-            uid="local-development",
-            role="developer",
-        )
-
     if (
         bearer_credentials is None
         or bearer_credentials.scheme.lower() != "bearer"
