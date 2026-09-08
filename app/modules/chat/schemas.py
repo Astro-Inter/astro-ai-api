@@ -17,6 +17,18 @@ class ChatResponse(BaseModel):
     agentes_chamados: list[str]
 
 
+class SessionResponse(BaseModel):
+    session_id: UUID
+    status: Literal["ativa", "encerrada"]
+    resumo: str | None = None
+    resumo_indexado: bool = False
+
+
+class MemorySearch(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    busca: str = Field(max_length=1000)
+
+
 class InputDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

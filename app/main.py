@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.api.router import api_router
@@ -7,9 +9,17 @@ from app.modules.chat.service import ChatService
 
 
 def create_app() -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(application):
+        try:
+            yield
+        finally:
+            await application.state.chat_service.close()
+
     application = FastAPI(
         title="Astro AI API",
         version="0.1.0",
+        lifespan=lifespan,
     )
     application.state.chat_service = ChatService()
     application.include_router(api_router)

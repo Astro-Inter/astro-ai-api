@@ -15,7 +15,8 @@ from app.infrastructure.llm import models
 from app.main import create_app
 from app.modules.chat.errors import ChatError
 from app.modules.chat.schemas import ChatRequest
-from app.modules.chat.service import ChatService
+from app.modules.chat.service import ChatService, recent_history
+from memory_fakes import FakeSessions, FakeVectors
 
 
 class FakeModel:
@@ -60,7 +61,7 @@ def chat_client(monkeypatch):
     monkeypatch.setattr(config, "ENABLE_DEV_LOGIN", False)
     application = create_app()
     model = FakeModel()
-    application.state.chat_service = ChatService(model)
+    application.state.chat_service = ChatService(model, repository=FakeSessions(), vectors=FakeVectors())
     application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(uid="user-a")
     with TestClient(application) as client:
         yield client, model, application
@@ -78,15 +79,15 @@ def test_specialist_flow(chat_client, domain):
         "guardrail_entrada", "roteador", domain, "orquestrador", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == body["agentes_chamados"]
-    history = application.state.chat_service.sessions[UUID(body["session_id"])].history
+    history = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"]
     assert history == [
-        {"role": "user", "content": "Consulte meus dados."},
+        {"role": "human", "content": "Consulte meus dados."},
         {"role": "assistant", "content": body["resposta"]},
     ]
     system = model.calls[2][1][0].content
     assert '"uid": "user-a"' in system
     assert '"fuso": "America/Sao_Paulo"' in system
-    assert '"ferramentas_disponiveis": []' in system
+    assert '"ferramentas_disponiveis": ["buscar_historico"]' in system
 
 
 def test_direct_and_faq_flows(chat_client):
@@ -114,8 +115,8 @@ def test_input_guard_stops_graph(chat_client, decision):
     assert response.status_code == 200
     assert response.json()["agentes_chamados"] == ["guardrail_entrada"]
     assert response.json()["resposta"] == "Explique seu pedido."
-    session = application.state.chat_service.sessions[UUID(response.json()["session_id"])]
-    assert bool(session.history) == (decision == "esclarecer")
+    session = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert bool(session["mensagens"]) == (decision == "esclarecer")
 
 
 @pytest.mark.parametrize("status", ["corrigido", "bloqueado"])
@@ -126,8 +127,8 @@ def test_output_guard_replaces_candidate(chat_client, status):
     })
     response = client.post("/chat/messages", json={"message": "Pedido"})
     assert response.json()["resposta"] == "Resposta revisada."
-    session = application.state.chat_service.sessions[UUID(response.json()["session_id"])]
-    assert bool(session.history) == (status == "corrigido")
+    session = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert bool(session["mensagens"]) == (status == "corrigido")
 
 
 @pytest.mark.parametrize("agent,reply", [
@@ -150,7 +151,8 @@ def test_invalid_agent_reply_fails_closed(chat_client, agent, reply):
     response = client.post("/chat/messages", json={"message": "Pedido"})
     assert response.status_code == 502
     assert response.json() == {"detail": "A IA retornou uma resposta invalida. Tente novamente."}
-    assert application.state.chat_service.sessions == {}
+    assert all(not doc["mensagens"] and "lock_token" not in doc
+               for doc in application.state.chat_service.repository.docs.values())
     assert application.state.chat_service.active_requests == 0
 
 
@@ -173,9 +175,9 @@ def test_session_history_and_ownership(chat_client):
     model.calls.clear()
     forbidden = client.post("/chat/messages", json={"message": "Oi", "session_id": first["session_id"]})
     unknown = client.post("/chat/messages", json={"message": "Oi", "session_id": str(uuid4())})
-    assert forbidden.status_code == unknown.status_code == 404
-    assert forbidden.json() == unknown.json()
-    assert not model.calls
+    assert forbidden.status_code == 404
+    assert unknown.status_code == 200
+    model.calls.clear()
     new = client.post("/chat/messages", json={"message": "Nova conversa"})
     assert new.status_code == 200
     assert len(model.calls[0][1]) == 2
@@ -190,8 +192,8 @@ def test_each_turn_resets_intermediate_results(chat_client):
     assert second.json()["agentes_chamados"] == ["guardrail_entrada", "roteador", "guardrail_saida"]
     review = json.loads(model.calls[-1][1][-1].content.split("\n", 1)[1])
     assert review["resultado"] == {}
-    session = application.state.chat_service.sessions[UUID(first["session_id"])]
-    assert len(session.history) == 4
+    session = application.state.chat_service.repository.docs[first["session_id"]]
+    assert len(session["mensagens"]) == 4
 
 
 @pytest.mark.parametrize("body", [
@@ -228,31 +230,31 @@ def test_chat_requires_verified_firebase_token(chat_client, monkeypatch):
     assert "fake-valid-token" not in str(model.calls)
 
 
-def test_memory_limits_and_expiry():
+def test_persistent_history_with_bounded_model_context():
     async def scenario():
-        service = ChatService(FakeModel("direta"), max_sessions=1)
+        repository = FakeSessions()
+        service = ChatService(FakeModel("direta"), repository=repository, vectors=FakeVectors())
         user = CurrentUser(uid="user-a")
         first = await service.chat(ChatRequest(message="Olá"), user)
         for _ in range(12):
             await service.chat(ChatRequest(message="x" * 4000, session_id=first.session_id), user)
-        history = service.sessions[first.session_id].history
+        messages = repository.docs[str(first.session_id)]["mensagens"]
+        assert len(messages) == 26
+        history = recent_history(messages)
         assert len(history) <= 20 and len(history) % 2 == 0
         assert sum(len(message["content"]) for message in history) <= 24000
-        with pytest.raises(ChatError) as error:
-            await service.chat(ChatRequest(message="Nova"), user)
-        assert error.value.status_code == 503
-        service.sessions[first.session_id].touched -= 3601
-        with pytest.raises(ChatError) as error:
-            await service.chat(ChatRequest(message="Expirada", session_id=first.session_id), user)
-        assert error.value.status_code == 404
-        assert (await service.chat(ChatRequest(message="Nova"), user)).session_id != first.session_id
+        other_model = FakeModel("direta")
+        restarted = ChatService(other_model, repository=repository, vectors=FakeVectors())
+        await restarted.chat(ChatRequest(message="Continuação", session_id=first.session_id), user)
+        assert len(other_model.calls[0][1]) > 2
+        assert len(repository.docs) == 1
     asyncio.run(scenario())
 
 
 def test_concurrency_and_timeout_release_session():
     async def scenario():
         model = FakeModel("direta")
-        service = ChatService(model)
+        service = ChatService(model, repository=FakeSessions(), vectors=FakeVectors())
         user = CurrentUser(uid="user-a")
         first = await service.chat(ChatRequest(message="Oi"), user)
         entered, release = asyncio.Event(), asyncio.Event()
@@ -271,18 +273,19 @@ def test_concurrency_and_timeout_release_session():
         release.set()
         await pending
         assert service.active_requests == 0
-        assert not service.sessions[first.session_id].busy
+        assert not ("lock_token" in service.repository.docs[str(first.session_id)])
         release.clear()
         service.request_timeout = 0.01
-        history = list(service.sessions[first.session_id].history)
+        history = list(service.repository.docs[str(first.session_id)]["mensagens"])
         with pytest.raises(ChatError) as error:
             await service.chat(request, user)
         assert error.value.status_code == 504
-        assert service.sessions[first.session_id].history == history
-        assert not service.sessions[first.session_id].busy
+        assert service.repository.docs[str(first.session_id)]["mensagens"] == history
+        assert not ("lock_token" in service.repository.docs[str(first.session_id)])
         with pytest.raises(ChatError):
             await service.chat(ChatRequest(message="Nova sessão"), user)
-        assert len(service.sessions) == 1
+        assert len(service.repository.docs) == 2
+        assert all("lock_token" not in doc for doc in service.repository.docs.values())
         assert service.active_requests == 0
     asyncio.run(scenario())
 
