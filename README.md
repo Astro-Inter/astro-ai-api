@@ -1,5 +1,58 @@
 # astro-ai-api
 
+## Ingestão de PDFs do FAQ
+
+O script `app/scripts/ingest_faq.py` substitui **todos os pontos** de `faq_chunks`
+pelos PDFs informados, em cada execução. Não altera `memoria_resumos` e não apaga
+a coleção em si: mantém configurações e índices. Não execute duas ingestões
+simultâneas nem grave nessa coleção por outro processo durante a substituição.
+
+Instale as dependências e execute na raiz do projeto:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -e .
+.venv\Scripts\python.exe -m app.scripts.ingest_faq "C:\documentos\faq.pdf"
+```
+
+Para vários arquivos, informe todos na mesma execução:
+
+```powershell
+.venv\Scripts\python.exe -m app.scripts.ingest_faq "C:\documentos\rh.pdf" "C:\documentos\sst.pdf"
+```
+
+Ou informe uma pasta para ler todos os PDFs diretamente nela (sem subpastas):
+
+```powershell
+.venv\Scripts\python.exe -m app.scripts.ingest_faq "C:\documentos\faq"
+```
+
+Os caminhos acima são exemplos. Use os caminhos reais dos seus PDFs. O script usa
+`QDRANT_URL`, `QDRANT_API_KEY` e `MISTRAL_API_KEY` já existentes no `.env`.
+`faq_chunks` deve existir com um único vetor denso de 1024 dimensões e Cosine;
+vetor padrão ou nomeado são aceitos. Não há configuração de coleção/modelo no `.env`.
+
+Fluxo: extrair texto por página → dividir em chunks de 700 caracteres com
+sobreposição de 150 → gerar embeddings `mistral-embed` em lotes de até 50 →
+apagar todos os pontos antigos → inserir os novos em lotes → conferir a contagem.
+Cada ponto contém `page_content`, `page_number` (começando em zero), `source`
+(nome do PDF, sem caminho local completo) e `modelo_embedding`.
+
+**Sempre envie a base completa.** Se executar primeiro com A.pdf e depois apenas
+com B.pdf, a coleção final conterá somente B.pdf. Entradas inválidas, PDFs sem
+texto e falhas ao gerar embeddings abortam antes da limpeza. PDFs digitalizados
+precisam de OCR prévio; páginas sem texto são avisadas e ignoradas. Revise a
+extração de tabelas e layouts complexos antes de usar os documentos como fonte.
+
+Os novos pontos são preparados em memória antes de apagar os antigos. Não há
+rollback automático nem substituição atômica: uma falha durante a gravação pode
+deixar a coleção vazia/parcial. Execute novamente com todos os PDFs; durante a
+limpeza a consulta de FAQ pode ficar temporariamente indisponível. Mantenha os
+PDFs originais ou snapshots próprios se precisar recuperar a versão anterior.
+Gerar embeddings envia os textos à Mistral e pode gerar custos.
+
+O script apenas carrega a base; nenhum upload é disparado ao iniciar a API. Nas
+respostas, o número interno da página é convertido para começar em 1.
+
 ## Login de desenvolvimento
 
 Instale as dependências com `python -m pip install -e .` e inicie com
@@ -72,10 +125,13 @@ Não envie UID, role, workspace ou histórico no JSON.
 - RH, SST e Agenda: cada um possui um subgrafo compilado; o resultado estruturado
   segue para o Orquestrador e depois para o guardrail de saída.
 - FAQ: subgrafo com nós de consulta de normas e resposta direta, sem Orquestrador,
-  conforme a modelagem. **A busca documental ainda não está integrada**: o nó de
-  consulta retorna ausência de fontes e a resposta é um aviso fixo de
-  indisponibilidade, sem chamar o modelo ou inventar normas. O prompt FAQ será
-  conectado quando houver um retriever autorizado.
+  conforme a modelagem. A pergunta é transformada em embedding `mistral-embed` e
+  consulta até cinco trechos de `faq_chunks` por similaridade Cosine. Somente
+  resultados com score mínimo de 0,35 são enviados ao agente, como dados não
+  confiáveis e nunca como instruções. A resposta usa apenas esses trechos e cita
+  nome do PDF e página. Sem resultados relevantes, informa que a informação não
+  foi encontrada; falhas de Qdrant ou embeddings retornam `503` sem inventar uma
+  resposta. A consulta é somente leitura e não altera os pontos ingeridos.
 
 Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
 Nesta etapa só a memória de conversas acessa os bancos; não existem ferramentas
@@ -97,7 +153,7 @@ Os nomes de modelos ficam em `app/infrastructure/llm/models.py`, não no `.env`:
   escolha por configuração, não um fallback automático em caso de erro da Mistral.
 
 Cada mensagem pode gerar de uma a seis chamadas de modelo, além de um embedding
-quando houver busca semântica, com custos e latência
+quando houver busca semântica de histórico ou FAQ, com custos e latência
 dos provedores. `LANGSMITH_*` é lido pelo SDK quando o tracing está habilitado;
 traces podem conter mensagens, contexto do usuário e respostas. Habilite somente
 quando esse envio de dados estiver autorizado. Bearer e chaves não são incluídos

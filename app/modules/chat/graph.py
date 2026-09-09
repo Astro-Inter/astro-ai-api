@@ -16,7 +16,7 @@ from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.guardrails.saida import GUARDRAIL_SAIDA_PROMPT_COMPLETO
 
 
-def build_chat_graph(model: AgentModel, search_memory=None):
+def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def input_guard(state: ChatState):
         decision = await invoke_agent(
             model, "guardrail_entrada", GUARDRAIL_ENTRADA_PROMPT_COMPLETO, state, InputDecision,
@@ -81,7 +81,7 @@ def build_chat_graph(model: AgentModel, search_memory=None):
     for domain in ("rh", "sst", "agenda"):
         graph.add_node(domain, build_specialist_graph(domain, model))
         graph.add_edge(domain, "orquestrador")
-    graph.add_node("faq", build_faq_graph())
+    graph.add_node("faq", build_faq_graph(model, search_faq))
     graph.add_node("orquestrador", orchestrator)
     graph.add_node("guardrail_saida", output_guard)
     graph.add_edge(START, "guardrail_entrada")

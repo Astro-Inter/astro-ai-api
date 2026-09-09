@@ -1,16 +1,15 @@
-import math
 from uuid import UUID
 
-import httpx
 from qdrant_client import AsyncQdrantClient, models
 
 from app.core import config
+from app.infrastructure.llm.embeddings import (
+    EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, gerar_embeddings_batch,
+)
 from app.modules.chat.errors import ChatError
 
 
 COLLECTION_MEMORY = "memoria_resumos"
-EMBEDDING_MODEL = "mistral-embed"
-EMBEDDING_DIMENSIONS = 1024
 
 
 class SummaryVectors:
@@ -48,21 +47,7 @@ class SummaryVectors:
         return self.client
 
     async def embed(self, text: str):
-        if not config.MISTRAL_API_KEY:
-            raise ChatError(503, "Mistral nao configurada para embeddings.")
-        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
-            response = await client.post(
-                "https://api.mistral.ai/v1/embeddings",
-                headers={"Authorization": f"Bearer {config.MISTRAL_API_KEY}"},
-                json={"model": EMBEDDING_MODEL, "input": [text], "encoding_format": "float"},
-            )
-            response.raise_for_status()
-            vector = response.json()["data"][0]["embedding"]
-        if (not isinstance(vector, list) or len(vector) != EMBEDDING_DIMENSIONS
-                or any(type(value) not in (float, int) or not math.isfinite(value) for value in vector)
-                or not any(vector)):
-            raise ChatError(502, "Embedding de memoria invalido.")
-        return vector
+        return (await gerar_embeddings_batch([text]))[0]
 
     async def upsert(self, doc: dict):
         try:

@@ -16,7 +16,7 @@ from app.main import create_app
 from app.modules.chat.errors import ChatError
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
-from memory_fakes import FakeSessions, FakeVectors
+from memory_fakes import FakeFaqVectors, FakeSessions, FakeVectors
 
 
 class FakeModel:
@@ -38,6 +38,8 @@ class FakeModel:
                 "dominio": agent, "intencao": "consultar", "status": "indisponivel",
                 "resposta": "A consulta está indisponível.", "recomendacao": "Consulte a área responsável.",
             })
+        if agent == "faq":
+            return "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
         if agent == "orquestrador":
             return "A consulta está indisponível. Consulte a área responsável."
         if agent == "guardrail_saida":
@@ -61,7 +63,9 @@ def chat_client(monkeypatch):
     monkeypatch.setattr(config, "ENABLE_DEV_LOGIN", False)
     application = create_app()
     model = FakeModel()
-    application.state.chat_service = ChatService(model, repository=FakeSessions(), vectors=FakeVectors())
+    application.state.chat_service = ChatService(
+        model, repository=FakeSessions(), vectors=FakeVectors(), faq_vectors=FakeFaqVectors(),
+    )
     application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(uid="user-a")
     with TestClient(application) as client:
         yield client, model, application
@@ -87,11 +91,11 @@ def test_specialist_flow(chat_client, domain):
     system = model.calls[2][1][0].content
     assert '"uid": "user-a"' in system
     assert '"fuso": "America/Sao_Paulo"' in system
-    assert '"ferramentas_disponiveis": ["buscar_historico"]' in system
+    assert '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas"]' in system
 
 
 def test_direct_and_faq_flows(chat_client):
-    client, model, _ = chat_client
+    client, model, application = chat_client
     model.route = "direta"
     direct = client.post("/chat/messages", json={"message": "Oi"}).json()
     assert direct["agentes_chamados"] == ["guardrail_entrada", "roteador", "guardrail_saida"]
@@ -99,9 +103,27 @@ def test_direct_and_faq_flows(chat_client):
     model.calls.clear()
     model.route = "faq"
     faq = client.post("/chat/messages", json={"message": "Qual a norma interna?"}).json()
-    assert faq["agentes_chamados"] == ["guardrail_entrada", "roteador", "faq"]
-    assert "indisponível" in faq["resposta"]
-    # Sem retriever, não gastar uma chamada nem inventar conteúdo de normas.
+    assert faq["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_normas", "faq",
+    ]
+    assert faq["resposta"] == "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
+    assert application.state.chat_service.faq_vectors.calls == ["Qual a norma interna?"]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada", "roteador", "faq"]
+    retrieved = json.loads(model.calls[-1][1][-1].content.split("\n", 1)[1])
+    assert retrieved["resultado"]["trechos"][0]["fonte"] == "normas.pdf"
+    session = application.state.chat_service.repository.docs[faq["session_id"]]
+    assert session["mensagens"][-1]["content"] == faq["resposta"]
+
+
+def test_faq_without_relevant_chunks_does_not_call_model(chat_client):
+    client, model, application = chat_client
+    model.route = "faq"
+    application.state.chat_service.faq_vectors.results = []
+    response = client.post("/chat/messages", json={"message": "Pergunta ausente"})
+    assert response.status_code == 200
+    assert response.json()["resposta"] == (
+        "Não encontrei essa informação nas normas disponibilizadas ao Astro."
+    )
     assert [call[0] for call in model.calls] == ["guardrail_entrada", "roteador"]
 
 

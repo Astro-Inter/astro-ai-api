@@ -78,3 +78,24 @@ class FakeVectors:
 
     async def close(self):
         pass
+
+
+class FakeFaqVectors:
+    def __init__(self):
+        self.calls = []
+        self.results = [{
+            "conteudo": "O objetivo do Astro e centralizar orientacoes internas.",
+            "fonte": "normas.pdf",
+            "pagina": 1,
+            "relevancia": 0.91,
+        }]
+        self.failure = False
+
+    async def search(self, query):
+        self.calls.append(query)
+        if self.failure:
+            raise ChatError(503, "Consulta as normas indisponivel.")
+        return deepcopy(self.results)
+
+    async def close(self):
+        pass

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from app.core.security import CurrentUser
 from app.infrastructure.database.sessions import MongoSessions, utc_now
 from app.infrastructure.llm.models import AgentModel, LanguageModels
+from app.infrastructure.vectorstore.faq import FaqVectors
 from app.infrastructure.vectorstore.memory import SummaryVectors
 from app.modules.chat.errors import ChatError
 from app.modules.chat.graph import build_chat_graph
@@ -29,14 +30,15 @@ def recent_history(messages):
 
 class ChatService:
     def __init__(self, model: AgentModel | None = None, *, repository=None,
-                 vectors=None, request_timeout: float = 120):
+                 vectors=None, faq_vectors=None, request_timeout: float = 120):
         if not 0 < request_timeout <= 120:
             raise ValueError("Timeout deve estar entre 0 e 120 segundos.")
         self.model = model or LanguageModels()
         self.repository = repository if repository is not None else MongoSessions()
         self.vectors = vectors if vectors is not None else SummaryVectors()
+        self.faq_vectors = faq_vectors if faq_vectors is not None else FaqVectors()
         self.memory = ConversationMemory(self.repository, self.vectors, self.model)
-        self.graph = build_chat_graph(self.model, self.memory.search)
+        self.graph = build_chat_graph(self.model, self.memory.search, self.faq_vectors.search)
         self.request_timeout = request_timeout
         self.active_requests = 0
 
@@ -90,10 +92,12 @@ class ChatService:
                         "uid": user.uid, "role": user.role, "workspace_id": None,
                         "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
-                        "ferramentas_disponiveis": ["buscar_historico"], "fontes_disponiveis": [],
+                        "ferramentas_disponiveis": ["buscar_historico", "consultar_normas"],
+                        "fontes_disponiveis": ["faq_chunks"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
-                                   "Nao ha consulta de registros de negocio ou normas, nem execucao "
-                                   "de operacoes. Historico nao comprova direitos nem execucao. "
+                                   "Normas podem ser consultadas apenas na base FAQ autorizada. "
+                                   "Nao ha consulta de registros de negocio nem execucao de operacoes. "
+                                   "Historico nao comprova direitos nem execucao. "
                                    "Nao incluir escrita, fontes ou evento na saida.",
                     },
                     "memoria": {}, "busca_memoria": "", "memoria_consultada": False,
@@ -135,6 +139,9 @@ class ChatService:
 
     async def close(self):
         try:
-            await self.repository.close()
+            try:
+                await self.repository.close()
+            finally:
+                await self.vectors.close()
         finally:
-            await self.vectors.close()
+            await self.faq_vectors.close()

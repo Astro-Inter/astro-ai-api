@@ -86,6 +86,9 @@ Roteador: ROUTE=agenda
 Usuário: O que diz a política de férias da empresa?
 Roteador: ROUTE=faq
 
+Usuário: Qual é o objetivo do Astro?
+Roteador: ROUTE=faq
+
 Usuário: Preciso resolver um treinamento.
 Roteador: Você quer agendar o treinamento ou tirar uma dúvida sobre ele?
 

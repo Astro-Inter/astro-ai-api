@@ -4,6 +4,7 @@ from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.agents import invoke_agent
 from app.modules.chat.errors import InvalidAgentResponse
 from app.modules.chat.prompts.agenda import AGENDA_PROMPT_COMPLETO
+from app.modules.chat.prompts.faq import FAQ_PROMPT_COMPLETO
 from app.modules.chat.prompts.rh import RH_PROMPT_COMPLETO
 from app.modules.chat.prompts.sst import SST_PROMPT_COMPLETO
 from app.modules.chat.schemas import SpecialistResult
@@ -34,18 +35,36 @@ def build_specialist_graph(domain: str, model: AgentModel):
     return graph.compile(name=f"subgrafo_{domain}")
 
 
-def build_faq_graph():
+def build_faq_graph(model: AgentModel, search_faq=None):
     async def consult_norms(state: ChatState):
-        # Ponto de integração da consulta autorizada: sem acervo/retriever, não há
-        # evidências para invocar o prompt FAQ e responder sobre normas da empresa.
+        if search_faq is None:
+            result = {"dominio": "faq", "status": "indisponivel", "trechos": []}
+        else:
+            snippets = await search_faq(state["mensagem"])
+            result = {
+                "dominio": "faq",
+                "status": "encontrado" if snippets else "sem_dados",
+                "trechos": snippets,
+            }
         return {
-            "resultado": {"dominio": "faq", "status": "indisponivel", "fontes": []},
-            "agentes_chamados": state["agentes_chamados"] + ["faq"],
+            "resultado": result,
+            "agentes_chamados": state["agentes_chamados"] + ["consultar_normas"],
         }
 
     async def answer(state: ChatState):
-        return {"resposta": "A consulta às normas está indisponível no momento. "
-                            "Confirme sua dúvida com a área responsável."}
+        status = state["resultado"]["status"]
+        if status == "indisponivel":
+            response = ("A consulta às normas está indisponível no momento. "
+                        "Confirme sua dúvida com a área responsável.")
+        elif status == "sem_dados":
+            response = "Não encontrei essa informação nas normas disponibilizadas ao Astro."
+        else:
+            response = await invoke_agent(model, "faq", FAQ_PROMPT_COMPLETO, state)
+        return {
+            "resposta": response,
+            "guardar_turno": True,
+            "agentes_chamados": state["agentes_chamados"] + ["faq"],
+        }
 
     graph = StateGraph(ChatState)
     graph.add_node("consultar_normas", consult_norms)
