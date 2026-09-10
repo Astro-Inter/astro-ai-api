@@ -56,6 +56,24 @@ class OutputDecision(BaseModel):
     resposta: str = Field(min_length=1, max_length=6000)
 
 
+class JudgeDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    status: Literal["aprovado", "revisar", "rejeitado"]
+    motivo: str = Field(min_length=1, max_length=1000)
+    problemas: list[str] = Field(max_length=8)
+
+    @model_validator(mode="after")
+    def validate_problems(self):
+        if any(not problem or len(problem) > 500 for problem in self.problemas):
+            raise ValueError("Problema invalido.")
+        if self.status == "aprovado" and self.problemas:
+            raise ValueError("Aprovacao nao deve listar problemas.")
+        if self.status != "aprovado" and not self.problemas:
+            raise ValueError("Revisao ou rejeicao exige problemas.")
+        return self
+
+
 class SpecialistResult(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 

@@ -42,6 +42,11 @@ class FakeModel:
             return "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
         if agent == "orquestrador":
             return "A consulta está indisponível. Consulte a área responsável."
+        if agent == "juiz":
+            return json.dumps({
+                "status": "aprovado", "motivo": "Resposta sustentada pelos dados.",
+                "problemas": [],
+            })
         if agent == "guardrail_saida":
             data = json.loads(messages[-1].content.split("\n", 1)[1])
             return json.dumps({
@@ -80,7 +85,7 @@ def test_specialist_flow(chat_client, domain):
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
     assert body["agentes_chamados"] == [
-        "guardrail_entrada", "roteador", domain, "orquestrador", "guardrail_saida",
+        "guardrail_entrada", "roteador", domain, "orquestrador", "juiz", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == body["agentes_chamados"]
     history = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"]
@@ -98,19 +103,28 @@ def test_direct_and_faq_flows(chat_client):
     client, model, application = chat_client
     model.route = "direta"
     direct = client.post("/chat/messages", json={"message": "Oi"}).json()
-    assert direct["agentes_chamados"] == ["guardrail_entrada", "roteador", "guardrail_saida"]
+    assert direct["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
+    ]
     assert direct["resposta"] == "Olá! Como posso ajudar?"
     model.calls.clear()
     model.route = "faq"
     faq = client.post("/chat/messages", json={"message": "Qual a norma interna?"}).json()
     assert faq["agentes_chamados"] == [
-        "guardrail_entrada", "roteador", "consultar_normas", "faq",
+        "guardrail_entrada", "roteador", "consultar_normas", "faq", "juiz", "guardrail_saida",
     ]
     assert faq["resposta"] == "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
     assert application.state.chat_service.faq_vectors.calls == ["Qual a norma interna?"]
-    assert [call[0] for call in model.calls] == ["guardrail_entrada", "roteador", "faq"]
-    retrieved = json.loads(model.calls[-1][1][-1].content.split("\n", 1)[1])
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "faq", "juiz", "guardrail_saida",
+    ]
+    faq_call = next(call for call in model.calls if call[0] == "faq")
+    retrieved = json.loads(faq_call[1][-1].content.split("\n", 1)[1])
     assert retrieved["resultado"]["trechos"][0]["fonte"] == "normas.pdf"
+    judge_call = next(call for call in model.calls if call[0] == "juiz")
+    judged = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
+    assert judged["resultado"]["trechos"][0]["fonte"] == "normas.pdf"
+    assert judged["resposta_candidata"] == faq["resposta"]
     session = application.state.chat_service.repository.docs[faq["session_id"]]
     assert session["mensagens"][-1]["content"] == faq["resposta"]
 
@@ -124,7 +138,9 @@ def test_faq_without_relevant_chunks_does_not_call_model(chat_client):
     assert response.json()["resposta"] == (
         "Não encontrei essa informação nas normas disponibilizadas ao Astro."
     )
-    assert [call[0] for call in model.calls] == ["guardrail_entrada", "roteador"]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
+    ]
 
 
 @pytest.mark.parametrize("decision", ["bloquear", "esclarecer"])
@@ -164,6 +180,8 @@ def test_output_guard_replaces_candidate(chat_client, status):
     ("rh", json.dumps({"dominio": "rh", "intencao": "atualizar", "status": "concluido",
                        "resposta": "Alteração feita", "recomendacao": ""})),
     ("orquestrador", "   "),
+    ("juiz", "não é JSON"),
+    ("juiz", json.dumps({"status": "aprovado", "motivo": "ok", "problemas": ["erro"]})),
     ("guardrail_saida", json.dumps({"status": "aprovado", "motivo": "ok", "resposta": "Alterada"})),
     ("guardrail_saida", "```json\n{}\n```"),
 ])
@@ -211,11 +229,51 @@ def test_each_turn_resets_intermediate_results(chat_client):
     model.route = "direta"
     model.calls.clear()
     second = client.post("/chat/messages", json={"message": "Oi", "session_id": first["session_id"]})
-    assert second.json()["agentes_chamados"] == ["guardrail_entrada", "roteador", "guardrail_saida"]
+    assert second.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
+    ]
     review = json.loads(model.calls[-1][1][-1].content.split("\n", 1)[1])
     assert review["resultado"] == {}
     session = application.state.chat_service.repository.docs[first["session_id"]]
     assert len(session["mensagens"]) == 4
+
+
+def test_judge_flags_response_and_guardrail_must_change_it(chat_client):
+    client, model, application = chat_client
+    model.route = "direta"
+    model.replies["juiz"] = json.dumps({
+        "status": "revisar", "motivo": "Afirmação sem evidência.",
+        "problemas": ["A candidata afirma uma operação não confirmada."],
+    })
+    model.replies["guardrail_saida"] = json.dumps({
+        "status": "corrigido", "motivo": "Afirmação não confirmada removida.",
+        "resposta": "Não consigo confirmar que essa operação foi realizada.",
+    })
+    response = client.post("/chat/messages", json={"message": "A operação terminou?"})
+    assert response.status_code == 200
+    assert response.json()["resposta"] == "Não consigo confirmar que essa operação foi realizada."
+    judge_data = json.loads(model.calls[-2][1][-1].content.split("\n", 1)[1])
+    assert judge_data["resposta_candidata"] == "Olá! Como posso ajudar?"
+    guard_data = json.loads(model.calls[-1][1][-1].content.split("\n", 1)[1])
+    assert guard_data["avaliacao_juiz"]["status"] == "revisar"
+    assert application.state.chat_service.repository.docs[response.json()["session_id"]]["mensagens"]
+
+
+@pytest.mark.parametrize("guard_status", ["aprovado", "corrigido"])
+def test_guardrail_cannot_ignore_negative_judge(chat_client, guard_status):
+    client, model, application = chat_client
+    model.route = "direta"
+    model.replies["juiz"] = json.dumps({
+        "status": "rejeitado", "motivo": "Sem base.",
+        "problemas": ["Resposta sem evidência."],
+    })
+    model.replies["guardrail_saida"] = json.dumps({
+        "status": guard_status, "motivo": "Ignorando avaliação.",
+        "resposta": "Olá! Como posso ajudar?",
+    })
+    response = client.post("/chat/messages", json={"message": "Pedido"})
+    assert response.status_code == 502
+    assert all(not doc["mensagens"] for doc in application.state.chat_service.repository.docs.values())
 
 
 @pytest.mark.parametrize("body", [
@@ -339,6 +397,7 @@ def test_missing_llm_configuration(monkeypatch):
 
 @pytest.mark.parametrize("agent,mistral_key,expected_model,host", [
     ("roteador", "fake-mistral", models.GROQ_FAST_MODEL, "api.groq.com"),
+    ("juiz", "fake-mistral", models.GROQ_FAST_MODEL, "api.groq.com"),
     ("rh", "fake-mistral", models.MISTRAL_SPECIALIST_MODEL, "api.mistral.ai"),
     ("agenda", "", models.GROQ_SPECIALIST_MODEL, "api.groq.com"),
 ])

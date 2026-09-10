@@ -182,7 +182,8 @@ def test_router_memory_lookup_and_owner_filter():
         new_service = ChatService(remembering, repository=repo, vectors=vectors)
         result = await new_service.chat(ChatRequest(message="O que conversamos antes?"), user)
         assert result.agentes_chamados == [
-            "guardrail_entrada", "roteador", "buscar_historico", "roteador", "guardrail_saida",
+            "guardrail_entrada", "roteador", "buscar_historico", "roteador", "juiz",
+            "guardrail_saida",
         ]
         vectors.search.assert_awaited_once_with("owner", str(result.session_id), "RH")
         assert result.resposta == "Conversamos sobre RH, sem consulta de registros."

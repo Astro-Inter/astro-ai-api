@@ -105,7 +105,7 @@ Exemplo de resposta (o texto e o caminho dependem da mensagem):
 {
   "session_id": "94229143-d20b-4766-80a4-05341435c236",
   "resposta": "Olá! Posso ajudar com RH, SST, Agenda e dúvidas sobre normas.",
-  "agentes_chamados": ["guardrail_entrada", "roteador", "guardrail_saida"]
+  "agentes_chamados": ["guardrail_entrada", "roteador", "juiz", "guardrail_saida"]
 }
 ```
 
@@ -123,7 +123,7 @@ Não envie UID, role, workspace ou histórico no JSON.
 - Roteador: escolhe RH, SST, Agenda ou FAQ; saudações e esclarecimentos podem
   receber resposta direta, revisada pelo guardrail de saída.
 - RH, SST e Agenda: cada um possui um subgrafo compilado; o resultado estruturado
-  segue para o Orquestrador e depois para o guardrail de saída.
+  segue para o Orquestrador, o Juiz e o guardrail de saída.
 - FAQ: subgrafo com nós de consulta de normas e resposta direta, sem Orquestrador,
   conforme a modelagem. A pergunta é transformada em embedding `mistral-embed` e
   consulta até cinco trechos de `faq_chunks` por similaridade Cosine. Somente
@@ -132,6 +132,13 @@ Não envie UID, role, workspace ou histórico no JSON.
   nome do PDF e página. Sem resultados relevantes, informa que a informação não
   foi encontrada; falhas de Qdrant ou embeddings retornam `503` sem inventar uma
   resposta. A consulta é somente leitura e não altera os pontos ingeridos.
+- Juiz: toda resposta candidata, inclusive respostas diretas e do FAQ, passa por
+  uma avaliação estruturada antes do guardrail de saída. O Juiz verifica relevância,
+  coerência, sustentação nas evidências, fontes, execução de operações, privacidade
+  e segurança. Ele retorna apenas `aprovado`, `revisar` ou `rejeitado`, com motivo
+  e problemas; não responde ao usuário nem reescreve a candidata. O guardrail
+  corrige ou bloqueia avaliações negativas, e a aplicação rejeita uma aprovação
+  que tente ignorar o Juiz.
 
 Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
 Nesta etapa só a memória de conversas acessa os bancos; não existem ferramentas
@@ -146,13 +153,13 @@ implementada com as respectivas ferramentas.
 Atualize as dependências com `python -m pip install -e .` e reinicie a API.
 Os nomes de modelos ficam em `app/infrastructure/llm/models.py`, não no `.env`:
 
-- `GROQ_API_KEY`: necessária para guardrails, Roteador e Orquestrador, usando
+- `GROQ_API_KEY`: necessária para guardrails, Roteador, Juiz e Orquestrador, usando
   `openai/gpt-oss-20b`.
 - `MISTRAL_API_KEY`: quando preenchida, os especialistas usam
   `mistral-small-latest`. Sem ela, usam `openai/gpt-oss-120b` no Groq. Isso é uma
   escolha por configuração, não um fallback automático em caso de erro da Mistral.
 
-Cada mensagem pode gerar de uma a seis chamadas de modelo, além de um embedding
+Cada mensagem pode gerar de uma a sete chamadas de modelo, além de um embedding
 quando houver busca semântica de histórico ou FAQ, com custos e latência
 dos provedores. `LANGSMITH_*` é lido pelo SDK quando o tracing está habilitado;
 traces podem conter mensagens, contexto do usuário e respostas. Habilite somente
@@ -286,4 +293,5 @@ O health permanece público e não testa dependências externas.
 Instale `python -m pip install -e ".[dev]"` e execute `python -m pytest -q`.
 Testes usam repositório/LLMs simulados e Qdrant local em memória, sem escrever nas
 coleções reais ou enviar traces. Cobrem propriedade por UID, retomada, concorrência,
-resumo por trechos, repetição de encerramento e falhas parciais entre os bancos.
+resumo por trechos, repetição de encerramento, falhas parciais entre os bancos e a
+obrigatoriedade de o guardrail respeitar avaliações negativas do Juiz.

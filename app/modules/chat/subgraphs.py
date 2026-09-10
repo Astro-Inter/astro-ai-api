@@ -61,8 +61,7 @@ def build_faq_graph(model: AgentModel, search_faq=None):
         else:
             response = await invoke_agent(model, "faq", FAQ_PROMPT_COMPLETO, state)
         return {
-            "resposta": response,
-            "guardar_turno": True,
+            "candidato": response,
             "agentes_chamados": state["agentes_chamados"] + ["faq"],
         }
 

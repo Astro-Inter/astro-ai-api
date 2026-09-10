@@ -101,7 +101,8 @@ class ChatService:
                                    "Nao incluir escrita, fontes ou evento na saida.",
                     },
                     "memoria": {}, "busca_memoria": "", "memoria_consultada": False,
-                    "rota": "", "resultado": {}, "candidato": "", "resposta": "",
+                    "rota": "", "resultado": {}, "candidato": "", "avaliacao_juiz": {},
+                    "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
                 }, config={"recursion_limit": 20})
                 response = ChatResponse(session_id=session_id, resposta=result["resposta"],

@@ -13,6 +13,7 @@ class ChatState(TypedDict, total=False):
     rota: str
     resultado: dict
     candidato: str
+    avaliacao_juiz: dict
     resposta: str
     agentes_chamados: list[str]
     guardar_turno: bool
