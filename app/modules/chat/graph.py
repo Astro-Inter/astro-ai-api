@@ -52,7 +52,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
 
     async def memory_lookup(state: ChatState):
         memory = await search_memory(
-            state["contexto"]["uid"], state["session_id"], state["busca_memoria"],
+            state["usuario_atual"].uid, state["session_id"], state["busca_memoria"],
         )
         return {"memoria": memory, "memoria_consultada": True,
                 "agentes_chamados": state["agentes_chamados"] + ["buscar_historico"]}

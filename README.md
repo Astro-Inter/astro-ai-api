@@ -83,6 +83,14 @@ O backend usa a API REST oficial do Firebase e não cria JWT próprio nem retorn
 refresh tokens. A validação Bearer mantém a verificação de revogação e de usuários
 desabilitados. O antigo header `X-Dev-Auth-Token` não concede mais acesso.
 
+Depois de validar o Firebase ID Token, cada rota protegida consulta o PostgreSQL
+com `SELECT fn_retornar_nivel_acesso(%s)`, usando o UID como parâmetro. O claim
+`role` do Firebase é ignorado. Os perfis aceitos são `ADMIN`, `GESTOR`,
+`GESTOR_WORKSPACE` e `FUNCIONARIO`; `SEM_ACESSO` retorna `403`. Falha, retorno
+inválido ou role desconhecida retorna `503`, sem expor detalhes da conexão.
+Configure `DATABASE_URL` e conceda ao usuário do banco somente as permissões
+necessárias para conectar e executar essa função.
+
 Com `ENABLE_DEV_LOGIN=false` ou fora de development/test, o login não é registrado
 e retorna 404, inclusive não aparecendo no OpenAPI. Reinicie a API após editar `.env`.
 Use HTTPS fora do localhost e não registre corpos de login nem headers de autorização.
@@ -116,6 +124,10 @@ Sem `session_id`, uma nova conversa é criada com UUID gerado no backend.
 O backend define o horário de
 referência em `America/Sao_Paulo`; não existe campo `timezone` na requisição.
 Não envie UID, role, workspace ou histórico no JSON.
+O backend instancia `CurrentUser` com `uid` e `role` após a consulta ao PostgreSQL.
+Esse objeto fica em `usuario_atual` no estado compartilhado do LangGraph; todos
+os nós podem utilizá-lo em tools futuras, e os agentes recebem os dois campos no
+contexto confiável da aplicação.
 
 ### Fluxo implementado
 
@@ -141,8 +153,9 @@ Não envie UID, role, workspace ou histórico no JSON.
   que tente ignorar o Juiz.
 
 Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
-Nesta etapa só a memória de conversas acessa os bancos; não existem ferramentas
-de registros de negócio, calendário ou escrita operacional. Os
+Além da consulta de autorização no PostgreSQL, nesta etapa somente a memória de
+conversas acessa dados persistidos; não existem ferramentas de registros de
+negócio, calendário ou escrita operacional. Os
 especialistas podem orientar e esclarecer, mas não consultar registros, criar
 eventos ou executar solicitações. Autenticação não concede acesso automático a
 dados de outras pessoas ou empresas; a autorização dessas integrações será
@@ -279,6 +292,7 @@ dos servidores devem estar sincronizados. Limite de 20 operações simultâneas 
 processo; configure rate limiting e política de retenção antes de produção.
 
 - `401`: Bearer ausente ou inválido.
+- `403`: UID autenticado sem um dos quatro níveis de acesso reconhecidos.
 - `404`: sessão de outro usuário, ou sessão inexistente ao encerrar.
 - `409`: operação simultânea, sessão encerrada/em encerramento ou limite atingido.
 - `422`: corpo ou UUID inválido; `timezone` continua fora do contrato.

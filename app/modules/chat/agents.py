@@ -17,8 +17,12 @@ async def invoke_agent(
     schema: type[Schema] | None = None,
 ) -> str | Schema:
     # Contexto confiável separado da mensagem do usuário. Não contém Bearer ou chaves.
+    trusted_context = {
+        **state["contexto"],
+        "usuario_atual": state["usuario_atual"].model_dump(),
+    }
     system = prompt + "\n\nCONTEXTO DA REQUISICAO:\n" + json.dumps(
-        state["contexto"], ensure_ascii=False,
+        trusted_context, ensure_ascii=False,
     )
     if schema:
         system += "\nResponda JSON compativel com este contrato:\n" + json.dumps(

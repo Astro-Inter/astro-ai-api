@@ -1,7 +1,10 @@
 from typing import TypedDict
 
+from app.core.security import CurrentUser
+
 
 class ChatState(TypedDict, total=False):
+    usuario_atual: CurrentUser
     session_id: str
     memoria: dict
     busca_memoria: str

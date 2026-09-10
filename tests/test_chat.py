@@ -16,7 +16,7 @@ from app.main import create_app
 from app.modules.chat.errors import ChatError
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
-from memory_fakes import FakeFaqVectors, FakeSessions, FakeVectors
+from memory_fakes import FakeAccessRoles, FakeFaqVectors, FakeSessions, FakeVectors
 
 
 class FakeModel:
@@ -71,7 +71,10 @@ def chat_client(monkeypatch):
     application.state.chat_service = ChatService(
         model, repository=FakeSessions(), vectors=FakeVectors(), faq_vectors=FakeFaqVectors(),
     )
-    application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(uid="user-a")
+    application.state.access_roles = FakeAccessRoles()
+    application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
+        uid="user-a", role="FUNCIONARIO",
+    )
     with TestClient(application) as client:
         yield client, model, application
 
@@ -211,7 +214,9 @@ def test_session_history_and_ownership(chat_client):
     ]
     assert '"ultima_rota": "rh"' in messages[0].content
     assert '"fuso": "America/Sao_Paulo"' in messages[0].content
-    application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(uid="user-b")
+    application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
+        uid="user-b", role="FUNCIONARIO",
+    )
     model.calls.clear()
     forbidden = client.post("/chat/messages", json={"message": "Oi", "session_id": first["session_id"]})
     unknown = client.post("/chat/messages", json={"message": "Oi", "session_id": str(uuid4())})
@@ -307,6 +312,8 @@ def test_chat_requires_verified_firebase_token(chat_client, monkeypatch):
         "Authorization": "Bearer fake-valid-token",
     }).status_code == 200
     assert '"uid": "firebase-user"' in model.calls[0][1][0].content
+    assert '"role": "FUNCIONARIO"' in model.calls[0][1][0].content
+    assert application.state.access_roles.calls == ["firebase-user"]
     assert "fake-valid-token" not in str(model.calls)
 
 
@@ -314,7 +321,7 @@ def test_persistent_history_with_bounded_model_context():
     async def scenario():
         repository = FakeSessions()
         service = ChatService(FakeModel("direta"), repository=repository, vectors=FakeVectors())
-        user = CurrentUser(uid="user-a")
+        user = CurrentUser(uid="user-a", role="FUNCIONARIO")
         first = await service.chat(ChatRequest(message="Olá"), user)
         for _ in range(12):
             await service.chat(ChatRequest(message="x" * 4000, session_id=first.session_id), user)
@@ -335,7 +342,7 @@ def test_concurrency_and_timeout_release_session():
     async def scenario():
         model = FakeModel("direta")
         service = ChatService(model, repository=FakeSessions(), vectors=FakeVectors())
-        user = CurrentUser(uid="user-a")
+        user = CurrentUser(uid="user-a", role="FUNCIONARIO")
         first = await service.chat(ChatRequest(message="Oi"), user)
         entered, release = asyncio.Event(), asyncio.Event()
         original = model.complete

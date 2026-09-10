@@ -1,11 +1,12 @@
 from typing import Annotated, Any
 
-from fastapi import Depends, HTTPException, Security, status
+from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
 from firebase_admin.exceptions import FirebaseError
 
 from app.core.security import CurrentUser
+from app.infrastructure.database.access import AccessLookupError
 from app.infrastructure.firebase import (
     FirebaseConfigurationError,
     verify_firebase_id_token,
@@ -23,15 +24,16 @@ def _authentication_error() -> HTTPException:
     )
 
 
-def _user_from_firebase_claims(claims: dict[str, Any]) -> CurrentUser:
+def _uid_from_firebase_claims(claims: dict[str, Any]) -> str:
     uid = claims.get("uid")
     if not isinstance(uid, str) or not uid:
         raise _authentication_error()
 
-    return CurrentUser(uid=uid)
+    return uid
 
 
-def get_current_user(
+async def get_current_user(
+    request: Request,
     bearer_credentials: Annotated[
         HTTPAuthorizationCredentials | None,
         Security(firebase_bearer),
@@ -64,7 +66,20 @@ def get_current_user(
             detail="Servico de autenticacao indisponivel.",
         ) from error
 
-    return _user_from_firebase_claims(claims)
+    uid = _uid_from_firebase_claims(claims)
+    try:
+        role = await request.app.state.access_roles.get_role(uid)
+    except AccessLookupError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Servico de autorizacao indisponivel.",
+        ) from None
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario sem acesso ao Astro.",
+        )
+    return CurrentUser(uid=uid, role=role)
 
 
 CurrentUserDependency = Annotated[CurrentUser, Depends(get_current_user)]

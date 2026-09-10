@@ -99,3 +99,13 @@ class FakeFaqVectors:
 
     async def close(self):
         pass
+
+
+class FakeAccessRoles:
+    def __init__(self, role="FUNCIONARIO"):
+        self.role = role
+        self.calls = []
+
+    async def get_role(self, uid):
+        self.calls.append(uid)
+        return self.role

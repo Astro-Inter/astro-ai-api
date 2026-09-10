@@ -86,11 +86,11 @@ class ChatService:
                         + len(request.message) + 6000 > MAX_SESSION_CHARACTERS):
                     raise ChatError(409, "Limite da conversa atingido. Encerre e inicie outra sessao.")
                 result = await self.graph.ainvoke({
-                    "session_id": session_id, "historico": recent_history(messages),
+                    "usuario_atual": user, "session_id": session_id,
+                    "historico": recent_history(messages),
                     "mensagem": request.message,
                     "contexto": {
-                        "uid": user.uid, "role": user.role, "workspace_id": None,
-                        "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
+                        "workspace_id": None, "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
                         "ferramentas_disponiveis": ["buscar_historico", "consultar_normas"],
                         "fontes_disponiveis": ["faq_chunks"],

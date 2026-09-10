@@ -1,6 +1,6 @@
 import json
 import logging
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -9,6 +9,7 @@ from firebase_admin import auth as firebase_auth
 
 from app.api import auth
 from app.core import config
+from app.infrastructure.database.access import AccessLookupError
 from app.main import create_app
 
 
@@ -23,6 +24,9 @@ def client(monkeypatch):
     monkeypatch.setattr(config, "ENABLE_DEV_LOGIN", True)
     monkeypatch.setattr(config, "FIREBASE_WEB_API_KEY", KEY)
     application = create_app()
+    application.state.access_roles = Mock(
+        get_role=AsyncMock(return_value="GESTOR"),
+    )
 
     @application.get("/protected-for-tests")
     def protected(user: auth.CurrentUserDependency):
@@ -72,8 +76,9 @@ def test_login_success_and_bearer(client, firebase_http, monkeypatch, caplog):
     verify = Mock(return_value={"uid": "user-123", "role": "ignored"})
     monkeypatch.setattr(auth, "verify_firebase_id_token", verify)
     result = client.get("/protected-for-tests", headers={"Authorization": f"Bearer {TOKEN}"})
-    assert result.json() == {"uid": "user-123", "role": None}
+    assert result.json() == {"uid": "user-123", "role": "GESTOR"}
     verify.assert_called_once_with(TOKEN)
+    client.app.state.access_roles.get_role.assert_awaited_once_with("user-123")
     for secret in (PASSWORD, TOKEN, KEY, "fake-refresh-token"):
         assert secret not in caplog.text
 
@@ -171,3 +176,18 @@ def test_admin_checks_revocation(monkeypatch):
     monkeypatch.setattr(firebase.auth, "verify_id_token", verify)
     assert firebase.verify_firebase_id_token(TOKEN) == {"uid": "user-123"}
     verify.assert_called_once_with(TOKEN, app=app, check_revoked=True)
+
+
+@pytest.mark.parametrize("lookup,status_code,detail", [
+    (None, 403, "Usuario sem acesso ao Astro."),
+    (AccessLookupError(), 503, "Servico de autorizacao indisponivel."),
+])
+def test_database_role_is_required(client, monkeypatch, lookup, status_code, detail):
+    monkeypatch.setattr(auth, "verify_firebase_id_token", Mock(return_value={"uid": "user-123"}))
+    if isinstance(lookup, Exception):
+        client.app.state.access_roles.get_role.side_effect = lookup
+    else:
+        client.app.state.access_roles.get_role.return_value = lookup
+    result = client.get("/protected-for-tests", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert result.status_code == status_code
+    assert result.json() == {"detail": detail}
