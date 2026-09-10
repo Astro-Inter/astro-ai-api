@@ -1,0 +1,186 @@
+import psycopg
+import pytest
+from pydantic import ValidationError
+
+from app.core import config
+from app.modules.rh import tools as rh_tools
+from app.modules.rh.tools import BuscarOutrosUsuariosArgs, buscar_outros_usuarios
+
+
+class FakeCursor:
+    def __init__(self, rows):
+        self.rows = rows
+        self.query = None
+        self.parameters = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def execute(self, query, parameters):
+        self.query = query
+        self.parameters = parameters
+
+    def fetchall(self):
+        return self.rows
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+
+class FakeConnection:
+    def __init__(self, rows):
+        self.db_cursor = FakeCursor(rows)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def cursor(self):
+        return self.db_cursor
+
+
+def run_search(monkeypatch, role, filters, rows=None, uid="firebase-owner"):
+    rows = rows if rows is not None else [(
+        "Ana Lima", "ana@example.com", "FUNCIONARIO", "Soldador", "Matriz",
+        "PRESENCIAL", "ATIVO",
+    )]
+    connection = FakeConnection(rows)
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(rh_tools, "get_conn", lambda: connection)
+    result = buscar_outros_usuarios.invoke(
+        filters.model_dump(),
+        config={"configurable": {"usuario_atual": {"uid": uid, "role": role}}},
+    )
+    return result, connection
+
+
+def test_tools_follow_langchain_pattern_and_hide_authenticated_context():
+    assert buscar_outros_usuarios.name == "buscar_outros_usuarios"
+    assert rh_tools.TOOLS_RH == [buscar_outros_usuarios]
+    for registered_tool in rh_tools.TOOLS_RH:
+        schema = registered_tool.args_schema.model_json_schema()["properties"]
+        assert "config" not in schema
+        assert "uid" not in schema and "role" not in schema
+
+
+def test_manager_search_is_limited_to_own_unit_and_allowed_profiles(monkeypatch):
+    filters = BuscarOutrosUsuariosArgs(
+        status=["ATIVO", "PRE_CADASTRADO"],
+        tipos=["FUNCIONARIO"],
+        nome="Ana%_",
+        cargo="soldador",
+        limite=15,
+    )
+    result, connection = run_search(monkeypatch, "GESTOR", filters)
+
+    query = connection.db_cursor.query
+    assert "usuarios.unidade_id = (" in query
+    assert "unidades.workspace_id = (" not in query
+    assert "WHERE firebase_uid = %s" in query
+    assert "usuarios.status = ANY(%s)" in query
+    assert "usuarios.tipo = ANY(%s)" in query
+    assert "usuarios.nome ILIKE %s" in query
+    assert "cargos.nome ILIKE %s" in query
+    assert connection.db_cursor.parameters == [
+        "firebase-owner", ["GESTOR", "FUNCIONARIO"], "firebase-owner",
+        ["ATIVO", "PRE_CADASTRADO"], ["FUNCIONARIO"],
+        r"%Ana\%\_%", "%soldador%", 15,
+    ]
+    assert result == {
+        "status": "ok",
+        "quantidade": 1,
+        "usuarios": [{
+            "nome": "Ana Lima", "email": "ana@example.com", "tipo": "FUNCIONARIO",
+            "cargo": "Soldador", "unidade": "Matriz", "modalidade": "PRESENCIAL",
+            "status": "ATIVO",
+        }],
+    }
+
+
+def test_workspace_manager_search_is_limited_to_workspace_and_allowed_profiles(monkeypatch):
+    result, connection = run_search(
+        monkeypatch, "GESTOR_WORKSPACE", BuscarOutrosUsuariosArgs(), rows=[],
+    )
+    query = connection.db_cursor.query
+    assert "unidades.workspace_id = (" in query
+    assert "unidade_atual.workspace_id" in query
+    assert "usuarios.unidade_id = (" not in query
+    assert connection.db_cursor.parameters == [
+        "firebase-owner", ["GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"],
+        "firebase-owner", 20,
+    ]
+    assert result == {"status": "sem_dados", "quantidade": 0, "usuarios": []}
+
+
+def test_employee_cannot_search_other_users_or_open_database(monkeypatch):
+    monkeypatch.setattr(
+        rh_tools, "get_conn",
+        lambda: pytest.fail("A conexão não deveria ser aberta para FUNCIONARIO."),
+    )
+    result = buscar_outros_usuarios.invoke(
+        {},
+        config={"configurable": {
+            "usuario_atual": {"uid": "employee", "role": "FUNCIONARIO"},
+        }},
+    )
+    assert result == {
+        "status": "nao_autorizado",
+        "mensagem": "Seu perfil nao permite consultar outros usuarios.",
+    }
+
+
+def test_admin_can_search_all_units_but_never_returns_itself(monkeypatch):
+    result, connection = run_search(
+        monkeypatch, "ADMIN", BuscarOutrosUsuariosArgs(),
+        rows=[], uid="firebase-admin",
+    )
+    query = connection.db_cursor.query
+    assert "usuarios.unidade_id = (" not in query
+    assert "usuarios.firebase_uid <> %s" in query
+    assert connection.db_cursor.parameters == ["firebase-admin", 20]
+    assert result == {"status": "sem_dados", "quantidade": 0, "usuarios": []}
+
+
+@pytest.mark.parametrize("payload", [
+    {"status": ["BLOQUEADO"]},
+    {"tipos": ["ADMIN"]},
+    {"status": ["ATIVO", "ATIVO"]},
+    {"limite": 51},
+    {"campo_sql": "DROP TABLE usuarios"},
+])
+def test_search_filters_reject_invalid_values(payload):
+    with pytest.raises(ValidationError):
+        BuscarOutrosUsuariosArgs.model_validate(payload)
+
+
+def test_missing_authenticated_context_does_not_open_database(monkeypatch):
+    monkeypatch.setattr(
+        rh_tools, "get_conn",
+        lambda: pytest.fail("A conexão não deveria ser aberta sem usuário."),
+    )
+    assert buscar_outros_usuarios.invoke({}) == {
+        "status": "erro", "mensagem": "Usuario nao identificado no contexto.",
+    }
+
+
+def test_database_failure_returns_safe_error(monkeypatch):
+    def connect():
+        raise psycopg.OperationalError("postgresql://user:secret@private-host/astro")
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://user:secret@private-host/astro")
+    monkeypatch.setattr(rh_tools, "get_conn", connect)
+    result = buscar_outros_usuarios.invoke(
+        {},
+        config={"configurable": {
+            "usuario_atual": {"uid": "owner", "role": "ADMIN"},
+        }},
+    )
+    assert result == {
+        "status": "indisponivel", "mensagem": "Consulta de usuarios indisponivel.",
+    }
+    assert "secret" not in str(result)

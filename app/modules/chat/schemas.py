@@ -90,13 +90,14 @@ class SpecialistResult(BaseModel):
     recomendacao: str = Field(max_length=2000)
     esclarecer: str | None = Field(default=None, max_length=1000)
     urgencia: Literal["imediata"] | None = None
-    # Sem ferramentas nesta etapa: resultados não podem afirmar escrita ou citar
-    # fontes inventadas. Esses contratos serão estendidos com as integrações reais.
+    # RH já pode concluir consultas por meio de sua tool somente de leitura.
+    # Os demais domínios continuam sem autorização para afirmar operações.
 
     @model_validator(mode="after")
     def validate_result(self):
         if self.status in {"esclarecer", "aguardando_confirmacao"} and not self.esclarecer:
             raise ValueError("Falta pergunta de esclarecimento ou confirmacao.")
-        if self.status == "concluido" and self.intencao != "orientar":
+        consulta_rh = self.dominio == "rh" and self.intencao == "consultar"
+        if self.status == "concluido" and self.intencao != "orientar" and not consulta_rh:
             raise ValueError("Operacoes e consultas exigem ferramentas reais.")
         return self

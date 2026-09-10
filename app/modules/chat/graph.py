@@ -12,7 +12,7 @@ from app.modules.chat.prompts.orquestrador import ORQUESTRADOR_PROMPT_COMPLETO
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
 from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch, OutputDecision
 from app.modules.chat.state import ChatState
-from app.modules.chat.subgraphs import build_faq_graph, build_specialist_graph
+from app.modules.chat.subgraphs import build_faq_graph, build_rh_graph, build_specialist_graph
 from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.guardrails.saida import GUARDRAIL_SAIDA_PROMPT_COMPLETO
 
@@ -94,7 +94,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_node("roteador", router)
     graph.add_node("buscar_historico", memory_lookup)
     graph.add_edge("buscar_historico", "roteador")
-    for domain in ("rh", "sst", "agenda"):
+    graph.add_node("rh", build_rh_graph(model))
+    graph.add_edge("rh", "orquestrador")
+    for domain in ("sst", "agenda"):
         graph.add_node(domain, build_specialist_graph(domain, model))
         graph.add_edge(domain, "orquestrador")
     graph.add_node("faq", build_faq_graph(model, search_faq))

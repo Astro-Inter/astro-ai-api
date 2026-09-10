@@ -92,16 +92,23 @@ class ChatService:
                     "contexto": {
                         "workspace_id": None, "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
-                        "ferramentas_disponiveis": ["buscar_historico", "consultar_normas"],
+                        "ferramentas_disponiveis": [
+                            "buscar_historico", "consultar_normas",
+                            "buscar_outros_usuarios",
+                        ],
                         "fontes_disponiveis": ["faq_chunks"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
                                    "Normas podem ser consultadas apenas na base FAQ autorizada. "
-                                   "Nao ha consulta de registros de negocio nem execucao de operacoes. "
+                                   "O agente de RH pode consultar somente os dados de usuarios "
+                                   "permitidos pelo perfil autenticado. Nao ha escrita nem outras "
+                                   "operacoes de negocio. "
                                    "Historico nao comprova direitos nem execucao. "
                                    "Nao incluir escrita, fontes ou evento na saida.",
                     },
                     "memoria": {}, "busca_memoria": "", "memoria_consultada": False,
-                    "rota": "", "resultado": {}, "candidato": "", "avaliacao_juiz": {},
+                    "rota": "", "resultado": {}, "resultado_tool": {}, "rh_decision": None,
+                    "rh_route": "",
+                    "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
                 }, config={"recursion_limit": 20})

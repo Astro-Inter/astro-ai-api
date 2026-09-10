@@ -15,6 +15,9 @@ class ChatState(TypedDict, total=False):
     contexto: dict
     rota: str
     resultado: dict
+    resultado_tool: dict
+    rh_decision: object
+    rh_route: str
     candidato: str
     avaliacao_juiz: dict
     resposta: str

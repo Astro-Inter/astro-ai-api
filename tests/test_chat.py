@@ -99,7 +99,96 @@ def test_specialist_flow(chat_client, domain):
     system = model.calls[2][1][0].content
     assert '"uid": "user-a"' in system
     assert '"fuso": "America/Sao_Paulo"' in system
-    assert '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas"]' in system
+    assert (
+        '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
+        '"buscar_outros_usuarios"]'
+    ) in system
+    if domain == "rh":
+        assert "DECISÃO DE USO DA TOOL" in system
+        assert "SAÍDA PARA O ORQUESTRADOR" not in system
+
+
+def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatch):
+    client, model, application = chat_client
+    application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
+        uid="user-a", role="GESTOR",
+    )
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def execute(self, query, parameters):
+            self.query, self.parameters = query, parameters
+        def fetchall(self):
+            return [(
+                "Ana", "ana@example.com", "FUNCIONARIO", "Analista",
+                "Matriz", "HIBRIDO", "ATIVO",
+            )]
+
+    class Connection:
+        def __init__(self):
+            self.db_cursor = Cursor()
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def cursor(self):
+            return self.db_cursor
+
+    connection = Connection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(rh_tools, "get_conn", lambda: connection)
+    model.replies["rh"] = json.dumps({
+        "acao": "buscar_outros_usuarios",
+        "filtros": {"status": ["ATIVO"]},
+        "resposta": None,
+    })
+
+    response = client.post("/chat/messages", json={"message": "Quais funcionários estão ativos?"})
+
+    assert response.status_code == 200
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "rh", "buscar_outros_usuarios",
+        "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "rh", "juiz",
+    ]
+    assert connection.db_cursor.parameters == ["user-a", ["GESTOR", "FUNCIONARIO"], "user-a", ["ATIVO"], 20]
+    assert [call[0] for call in model.calls].count("rh") == 1
+    judge_call = next(call for call in model.calls if call[0] == "juiz")
+    tool_result = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
+    assert tool_result["resultado"]["evidencia_tool"]["resultado"]["usuarios"][0][
+        "email"
+    ] == "ana@example.com"
+    evidence = json.loads(judge_call[1][-1].content.split("\n", 1)[1])["resultado"]
+    assert evidence["evidencia_tool"]["nome"] == "buscar_outros_usuarios"
+    assert evidence["evidencia_tool"]["resultado"]["status"] == "ok"
+
+
+def test_invalid_structured_reply_is_retried_once(chat_client):
+    client, model, _ = chat_client
+    model.replies["rh"] = [
+        '{"acao":"buscar_outros_usuarios","filtros":null,"resposta":null}',
+        json.dumps({
+            "acao": "responder",
+            "filtros": None,
+            "resposta": {
+                "dominio": "rh", "intencao": "orientar", "status": "concluido",
+                "resposta": "Orientação disponível.", "recomendacao": "",
+            },
+        }),
+    ]
+
+    response = client.post("/chat/messages", json={"message": "Preciso de uma orientação."})
+
+    assert response.status_code == 200
+    assert [call[0] for call in model.calls].count("rh") == 2
+    assert "Tente novamente uma unica vez" in [
+        call for call in model.calls if call[0] == "rh"
+    ][-1][1][-1].content
 
 
 def test_direct_and_faq_flows(chat_client):
