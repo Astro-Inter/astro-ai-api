@@ -153,13 +153,12 @@ contexto confiável da aplicação.
   que tente ignorar o Juiz.
 
 Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
-Além da consulta de autorização no PostgreSQL, nesta etapa somente a memória de
-conversas acessa dados persistidos; não existem ferramentas de registros de
-negócio, calendário ou escrita operacional. Os
-especialistas podem orientar e esclarecer, mas não consultar registros, criar
-eventos ou executar solicitações. Autenticação não concede acesso automático a
-dados de outras pessoas ou empresas; a autorização dessas integrações será
-implementada com as respectivas ferramentas.
+No fluxo automático atual, a memória acessa o histórico e a tool de RH consulta
+os usuários permitidos pelo perfil autenticado. Ainda não há escrita operacional
+nem tools de negócio para SST e Agenda. Esses especialistas podem orientar e
+esclarecer, mas não criar eventos ou executar solicitações. Autenticação não
+concede acesso automático a dados de outras pessoas ou empresas; cada ferramenta
+deve aplicar sua própria regra de autorização.
 
 ### Modelos e configuração
 
@@ -169,8 +168,9 @@ Os nomes de modelos ficam em `app/infrastructure/llm/models.py`, não no `.env`:
 - `GROQ_API_KEY`: necessária para guardrails, Roteador, Juiz e Orquestrador, usando
   `openai/gpt-oss-20b`.
 - `MISTRAL_API_KEY`: quando preenchida, os especialistas usam
-  `mistral-small-latest`. Sem ela, usam `openai/gpt-oss-120b` no Groq. Isso é uma
-  escolha por configuração, não um fallback automático em caso de erro da Mistral.
+  `mistral-small-latest` como primeira opção. Sem ela, ou quando a chamada à
+  Mistral falhar, os especialistas usam `openai/gpt-oss-20b` no Groq. A falha
+  somente é devolvida pela API se os dois provedores falharem.
 
 Cada mensagem pode gerar de uma a sete chamadas de modelo, além de um embedding
 quando houver busca semântica de histórico ou FAQ, com custos e latência
@@ -178,6 +178,34 @@ dos provedores. `LANGSMITH_*` é lido pelo SDK quando o tracing está habilitado
 traces podem conter mensagens, contexto do usuário e respostas. Habilite somente
 quando esse envio de dados estiver autorizado. Bearer e chaves não são incluídos
 nos prompts. Nenhuma variável de ambiente nova é necessária para o chat.
+
+### Primeira tool de RH
+
+`app/modules/rh/tools.py` contém a tool LangChain `buscar_outros_usuarios`, uma consulta
+somente leitura de outros usuários no PostgreSQL. Ela recebe `CurrentUser` pelo contexto
+confiável do backend e filtros validados de status, tipo, nome, cargo e limite
+de resultados. Nome e cargo usam busca literal por trecho; curingas `%`, `_` e `\`
+são escapados antes do `ILIKE`. Status, tipos e limite são parâmetros da consulta,
+nunca SQL produzido pelo modelo.
+
+`ADMIN` pode pesquisar todas as unidades. Enquanto a matriz definitiva de
+permissões não for definida, `GESTOR`, `GESTOR_WORKSPACE` e `FUNCIONARIO` ficam
+obrigatoriamente restritos à unidade encontrada pelo Firebase UID autenticado.
+A consulta retorna no máximo 50 registros e apenas nome, e-mail, tipo, cargo,
+unidade, modalidade e status. A conexão é somente leitura e possui timeout.
+
+A tool está registrada exclusivamente no subgrafo do agente de RH. Antes de responder
+sobre dados cadastrais ou profissionais, o agente decide os filtros, a tool aplica o
+escopo do usuário autenticado e o backend envia o resultado confirmado diretamente
+ao fluxo de validação. Isso evita uma segunda geração de JSON entre a consulta e a resposta.
+
+Para reduzir latência e tokens, consultas concluídas por `buscar_outros_usuarios` não
+passam por uma segunda chamada do especialista nem pelo Orquestrador. O backend
+formata os dados confirmados, o Juiz os valida e, quando aprovados, o guardrail de
+saída preserva deterministicamente a resposta. Casos reprovados continuam usando
+o revisor de saída. O Roteador recebe no máximo seis mensagens anteriores e cada
+especialista, dez. Após uma falha da Mistral, os especialistas usam Groq durante
+cinco minutos antes de tentar a Mistral novamente.
 
 ## Histórico persistente e sessões (SCRUM-187)
 

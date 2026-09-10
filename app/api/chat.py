@@ -1,11 +1,14 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from app.api.auth import CurrentUserDependency
-from app.modules.chat.errors import ChatError
+from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.schemas import ChatRequest, ChatResponse
 
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/messages", response_model=ChatResponse)
@@ -16,4 +19,6 @@ async def chat_message(
     try:
         return await request.app.state.chat_service.chat(body, user)
     except ChatError as error:
+        if isinstance(error, InvalidAgentResponse):
+            logger.warning("Resposta invalida no estagio do chat: %s", error.stage)
         raise HTTPException(error.status_code, detail=error.detail) from None

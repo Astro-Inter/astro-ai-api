@@ -34,16 +34,16 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         text = await invoke_agent(model, "roteador", ROTEADOR_PROMPT_COMPLETO, state)
         if text.startswith("MEMORY="):
             if state.get("memoria_consultada") or search_memory is None:
-                raise InvalidAgentResponse()
+                raise InvalidAgentResponse("roteador")
             try:
                 search = MemorySearch.model_validate_json(text[len("MEMORY="):])
             except ValidationError:
-                raise InvalidAgentResponse() from None
+                raise InvalidAgentResponse("roteador") from None
             return {"rota": "memoria", "busca_memoria": search.busca,
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         route = re.fullmatch(r"ROUTE=(rh|sst|agenda|faq)", text)
         if not route and any(marker in text.upper() for marker in ("ROUTE", "MEMORY=")):
-            raise InvalidAgentResponse()
+            raise InvalidAgentResponse("roteador")
         return {
             "rota": route.group(1) if route else "direta",
             "candidato": "" if route else text,
@@ -71,18 +71,28 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     async def output_guard(state: ChatState):
+        evidence = state.get("resultado", {}).get("evidencia_tool", {})
+        if (
+            state["avaliacao_juiz"]["status"] == "aprovado"
+            and evidence.get("nome") == "buscar_outros_usuarios"
+        ):
+            return {
+                "resposta": state["candidato"],
+                "guardar_turno": True,
+                "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
+            }
         decision = await invoke_agent(
             model, "guardrail_saida", GUARDRAIL_SAIDA_PROMPT_COMPLETO, state, OutputDecision,
         )
         judge_status = state["avaliacao_juiz"]["status"]
         if judge_status != "aprovado" and decision.status == "aprovado":
-            raise InvalidAgentResponse()
+            raise InvalidAgentResponse("guardrail_saida")
         if (judge_status != "aprovado" and decision.status == "corrigido"
                 and decision.resposta == state["candidato"]):
-            raise InvalidAgentResponse()
+            raise InvalidAgentResponse("guardrail_saida")
         # "Aprovado" não autoriza o revisor a introduzir novas informações.
         if decision.status == "aprovado" and decision.resposta != state["candidato"]:
-            raise InvalidAgentResponse()
+            raise InvalidAgentResponse("guardrail_saida")
         return {
             "resposta": decision.resposta,
             "guardar_turno": decision.status != "bloqueado",
@@ -95,7 +105,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_node("buscar_historico", memory_lookup)
     graph.add_edge("buscar_historico", "roteador")
     graph.add_node("rh", build_rh_graph(model))
-    graph.add_edge("rh", "orquestrador")
+    graph.add_conditional_edges(
+        "rh",
+        lambda state: "juiz" if state.get("candidato") else "orquestrador",
+        {"juiz": "juiz", "orquestrador": "orquestrador"},
+    )
     for domain in ("sst", "agenda"):
         graph.add_node(domain, build_specialist_graph(domain, model))
         graph.add_edge(domain, "orquestrador")

@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 import httpx
 from fastapi.testclient import TestClient
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langsmith import tracing_context
 
 from app.api import auth
@@ -16,6 +16,7 @@ from app.main import create_app
 from app.modules.chat.errors import ChatError
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
+from app.modules.rh import tools as rh_tools
 from memory_fakes import FakeAccessRoles, FakeFaqVectors, FakeSessions, FakeVectors
 
 
@@ -28,11 +29,22 @@ class FakeModel:
     async def complete(self, agent, messages, *, json_mode=False):
         self.calls.append((agent, messages, json_mode))
         if agent in self.replies:
-            return self.replies[agent]
+            reply = self.replies[agent]
+            return reply.pop(0) if isinstance(reply, list) else reply
         if agent == "guardrail_entrada":
             return json.dumps({"decisao": "aprovar", "motivo": "legitimo", "mensagem": ""})
         if agent == "roteador":
             return "Olá! Como posso ajudar?" if self.route == "direta" else f"ROUTE={self.route}"
+        if agent == "rh" and '"acao"' in messages[0].content:
+            return json.dumps({
+                "acao": "responder",
+                "filtros": None,
+                "resposta": {
+                    "dominio": "rh", "intencao": "consultar", "status": "indisponivel",
+                    "resposta": "A consulta está indisponível.",
+                    "recomendacao": "Consulte a área responsável.",
+                },
+            })
         if agent in {"rh", "sst", "agenda"}:
             return json.dumps({
                 "dominio": agent, "intencao": "consultar", "status": "indisponivel",
@@ -252,6 +264,10 @@ def test_input_guard_stops_graph(chat_client, decision):
 @pytest.mark.parametrize("status", ["corrigido", "bloqueado"])
 def test_output_guard_replaces_candidate(chat_client, status):
     client, model, application = chat_client
+    model.replies["juiz"] = json.dumps({
+        "status": "revisar", "motivo": "Resposta precisa de revisão.",
+        "problemas": ["Resposta não confirmada."],
+    })
     model.replies["guardrail_saida"] = json.dumps({
         "status": status, "motivo": "Falta evidência.", "resposta": "Resposta revisada.",
     })
@@ -280,6 +296,11 @@ def test_output_guard_replaces_candidate(chat_client, status):
 def test_invalid_agent_reply_fails_closed(chat_client, agent, reply):
     client, model, application = chat_client
     model.replies[agent] = reply
+    if agent == "guardrail_saida":
+        model.replies["juiz"] = json.dumps({
+            "status": "revisar", "motivo": "Resposta precisa de revisão.",
+            "problemas": ["Resposta não confirmada."],
+        })
     response = client.post("/chat/messages", json={"message": "Pedido"})
     assert response.status_code == 502
     assert response.json() == {"detail": "A IA retornou uma resposta invalida. Tente novamente."}
@@ -297,7 +318,7 @@ def test_session_history_and_ownership(chat_client):
     })
     assert second.status_code == 200
     assert second.json()["session_id"] == first["session_id"]
-    messages = model.calls[0][1]
+    messages = next(call for call in model.calls if call[0] == "roteador")[1]
     assert [message.content for message in messages[1:]] == [
         "Primeira mensagem", first["resposta"], "E agora?",
     ]
@@ -422,7 +443,8 @@ def test_persistent_history_with_bounded_model_context():
         other_model = FakeModel("direta")
         restarted = ChatService(other_model, repository=repository, vectors=FakeVectors())
         await restarted.chat(ChatRequest(message="Continuação", session_id=first.session_id), user)
-        assert len(other_model.calls[0][1]) > 2
+        router_messages = next(call for call in other_model.calls if call[0] == "roteador")[1]
+        assert len(router_messages) > 2
         assert len(repository.docs) == 1
     asyncio.run(scenario())
 
@@ -473,10 +495,78 @@ def test_model_error_hides_provider_details(monkeypatch):
         async def ainvoke(self, *args, **kwargs):
             raise RuntimeError("internal-url private-key provider-error")
     monkeypatch.setattr(models, "get_model", lambda specialist: BrokenProvider())
+    monkeypatch.setattr(config, "MISTRAL_API_KEY", "")
     with pytest.raises(ChatError) as error:
         asyncio.run(models.LanguageModels().complete("rh", [], json_mode=True))
     assert error.value.status_code == 503
     assert "private-key" not in str(error.value)
+
+
+def test_specialist_falls_back_from_mistral_to_groq(monkeypatch):
+    calls = []
+
+    class BrokenMistral:
+        def bind(self, **kwargs):
+            return self
+        async def ainvoke(self, *args, **kwargs):
+            calls.append("mistral")
+            raise RuntimeError("429 rate limit")
+
+    class WorkingGroq:
+        def bind(self, **kwargs):
+            calls.append(("groq_bind", kwargs))
+            return self
+        async def ainvoke(self, *args, **kwargs):
+            calls.append("groq")
+            return AIMessage(content='{"status":"ok"}')
+
+    monkeypatch.setattr(config, "MISTRAL_API_KEY", "fake-mistral")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq")
+    monkeypatch.setattr(models, "get_model", lambda specialist: BrokenMistral())
+    monkeypatch.setattr(models, "ChatGroq", lambda **kwargs: WorkingGroq())
+
+    result = asyncio.run(models.LanguageModels().complete("rh", [], json_mode=True))
+
+    assert result == '{"status":"ok"}'
+    assert calls == [
+        "mistral",
+        ("groq_bind", {"response_format": {"type": "json_object"}}),
+        "groq",
+    ]
+
+
+def test_groq_400_in_json_mode_retries_with_local_validation(monkeypatch):
+    calls = []
+
+    class JsonModeFailure(Exception):
+        status_code = 400
+
+    class BoundGroq:
+        async def ainvoke(self, *args, **kwargs):
+            calls.append("json_mode")
+            raise JsonModeFailure()
+
+    class Groq:
+        def bind(self, **kwargs):
+            calls.append(("bind", kwargs))
+            return BoundGroq()
+        async def ainvoke(self, *args, **kwargs):
+            calls.append("plain")
+            return AIMessage(content='{"status":"aprovado"}')
+
+    monkeypatch.setattr(config, "MISTRAL_API_KEY", "")
+    monkeypatch.setattr(models, "get_model", lambda specialist: Groq())
+
+    result = asyncio.run(models.LanguageModels().complete(
+        "guardrail_saida", [], json_mode=True,
+    ))
+
+    assert result == '{"status":"aprovado"}'
+    assert calls == [
+        ("bind", {"response_format": {"type": "json_object"}}),
+        "json_mode",
+        "plain",
+    ]
 
 
 def test_missing_llm_configuration(monkeypatch):
@@ -495,7 +585,7 @@ def test_missing_llm_configuration(monkeypatch):
     ("roteador", "fake-mistral", models.GROQ_FAST_MODEL, "api.groq.com"),
     ("juiz", "fake-mistral", models.GROQ_FAST_MODEL, "api.groq.com"),
     ("rh", "fake-mistral", models.MISTRAL_SPECIALIST_MODEL, "api.mistral.ai"),
-    ("agenda", "", models.GROQ_SPECIALIST_MODEL, "api.groq.com"),
+    ("agenda", "", models.GROQ_FAST_MODEL, "api.groq.com"),
 ])
 def test_provider_sdks_with_mock_http(monkeypatch, agent, mistral_key, expected_model, host):
     monkeypatch.setattr(config, "GROQ_API_KEY", "fake-groq")

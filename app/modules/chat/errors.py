@@ -6,5 +6,6 @@ class ChatError(Exception):
 
 
 class InvalidAgentResponse(ChatError):
-    def __init__(self):
+    def __init__(self, stage: str = "desconhecido"):
+        self.stage = stage
         super().__init__(502, "A IA retornou uma resposta invalida. Tente novamente.")

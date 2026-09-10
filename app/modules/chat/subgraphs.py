@@ -42,7 +42,7 @@ def build_specialist_graph(domain: str, model: AgentModel):
             model, domain, SPECIALIST_PROMPTS[domain], state, SpecialistResult,
         )
         if result.dominio != domain:
-            raise InvalidAgentResponse()
+            raise InvalidAgentResponse(domain)
         return {
             "resultado": result.model_dump(exclude_none=True),
             "agentes_chamados": state["agentes_chamados"] + [domain],
