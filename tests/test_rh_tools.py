@@ -6,6 +6,7 @@ from app.core import config
 from app.modules.rh import tools as rh_tools
 from app.modules.rh.tools import (
     BuscarOutrosUsuariosArgs,
+    RhToolDecision,
     buscar_meus_dados,
     buscar_outros_usuarios,
 )
@@ -72,6 +73,35 @@ def test_tools_follow_langchain_pattern_and_hide_authenticated_context():
         assert "config" not in schema
         assert "uid" not in schema and "role" not in schema
     assert buscar_meus_dados.args_schema.model_json_schema()["properties"] == {}
+
+
+@pytest.mark.parametrize("filters", [
+    {},
+    {"status": [], "tipos": [], "nome": None, "cargo": None, "limite": 20},
+])
+def test_current_user_decision_accepts_provider_generated_empty_filters(filters):
+    decision = RhToolDecision.model_validate({
+        "acao": "buscar_meus_dados", "filtros": filters, "resposta": None,
+    })
+    assert decision.filtros is None
+
+
+def test_current_user_decision_rejects_real_filters():
+    with pytest.raises(ValidationError):
+        RhToolDecision.model_validate({
+            "acao": "buscar_meus_dados",
+            "filtros": {"nome": "Outra pessoa"},
+            "resposta": None,
+        })
+
+
+@pytest.mark.parametrize("payload", [
+    {"acao": "buscar_outros_usuarios", "filtros": None, "resposta": None},
+    {"acao": "buscar_outros_usuarios", "resposta": None},
+])
+def test_other_users_decision_treats_missing_filters_as_search_all(payload):
+    decision = RhToolDecision.model_validate(payload)
+    assert decision.filtros == BuscarOutrosUsuariosArgs()
 
 
 def test_manager_search_is_limited_to_own_unit_and_allowed_profiles(monkeypatch):

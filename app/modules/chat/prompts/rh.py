@@ -86,7 +86,8 @@ Antes de responder, decida entre:
 - `buscar_meus_dados`: quando o usuário pedir os próprios dados. Não preencha
   `filtros` nem `resposta`.
 - `buscar_outros_usuarios`: quando o pedido depender de dados de outras pessoas.
-  Preencha somente `filtros`; não antecipe uma resposta.
+  Preencha somente `filtros`; use `{}` quando não houver filtro e não antecipe
+  uma resposta.
 - `responder`: quando a tool não for necessária ou não cobrir o pedido. Preencha
   somente `resposta`, seguindo o contrato do especialista de RH.
 Nunca responda com dados de usuários sem antes usar a ferramenta específica correta.

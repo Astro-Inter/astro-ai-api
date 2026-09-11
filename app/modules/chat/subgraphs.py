@@ -1,3 +1,6 @@
+import re
+import unicodedata
+
 from langgraph.graph import END, START, StateGraph
 
 from app.infrastructure.llm.models import AgentModel
@@ -9,13 +12,37 @@ from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO, RH_PROMPT_CO
 from app.modules.chat.prompts.sst import SST_PROMPT_COMPLETO
 from app.modules.chat.schemas import SpecialistResult
 from app.modules.chat.state import ChatState
-from app.modules.rh.tools import RhToolDecision, TOOLS_RH
+from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision, TOOLS_RH
 
 
 SPECIALIST_PROMPTS = {
     "rh": RH_PROMPT_COMPLETO, "sst": SST_PROMPT_COMPLETO, "agenda": AGENDA_PROMPT_COMPLETO,
 }
 RH_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_RH}
+
+
+def _pedido_dos_proprios_dados(message: str) -> bool:
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    return bool(re.search(
+        r"\b(meus dados|meus dados pessoais|meus dados profissionais|"
+        r"minhas informacoes|meu cadastro|meu perfil profissional)\b",
+        normalized,
+    ))
+
+
+def _pedido_de_todos_os_usuarios(message: str) -> bool:
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    return bool(re.search(
+        r"\b(todos os usuarios|todos usuarios|todos os funcionarios|"
+        r"todas as pessoas do (?:meu|nosso) sistema)\b",
+        normalized,
+    ))
 
 
 def _formatar_usuarios(result: dict) -> str:
@@ -73,6 +100,21 @@ def build_specialist_graph(domain: str, model: AgentModel):
 
 def build_rh_graph(model: AgentModel):
     async def decide(state: ChatState):
+        if _pedido_dos_proprios_dados(state["mensagem"]):
+            return {
+                "rh_route": "tool",
+                "rh_decision": RhToolDecision(acao="buscar_meus_dados"),
+                "agentes_chamados": state["agentes_chamados"] + ["rh"],
+            }
+        if _pedido_de_todos_os_usuarios(state["mensagem"]):
+            return {
+                "rh_route": "tool",
+                "rh_decision": RhToolDecision(
+                    acao="buscar_outros_usuarios",
+                    filtros=BuscarOutrosUsuariosArgs(limite=50),
+                ),
+                "agentes_chamados": state["agentes_chamados"] + ["rh"],
+            }
         decision = await invoke_agent(
             model, "rh", RH_DECISAO_PROMPT_COMPLETO, state, RhToolDecision,
         )
@@ -91,7 +133,11 @@ def build_rh_graph(model: AgentModel):
     async def use_tool(state: ChatState):
         decision = state["rh_decision"]
         tool_name = decision.acao
-        tool_input = decision.filtros.model_dump() if decision.filtros is not None else {}
+        tool_input = (
+            decision.filtros.model_dump()
+            if tool_name == "buscar_outros_usuarios" and decision.filtros is not None
+            else {}
+        )
         result = await RH_TOOLS[tool_name].ainvoke(
             tool_input,
             config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}},

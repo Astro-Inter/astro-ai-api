@@ -95,7 +95,7 @@ def chat_client(monkeypatch):
 def test_specialist_flow(chat_client, domain):
     client, model, application = chat_client
     model.route = domain
-    response = client.post("/chat/messages", json={"message": "Consulte meus dados."})
+    response = client.post("/chat/messages", json={"message": "Preciso de uma orientação."})
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
@@ -105,7 +105,7 @@ def test_specialist_flow(chat_client, domain):
     assert [call[0] for call in model.calls] == body["agentes_chamados"]
     history = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"]
     assert history == [
-        {"role": "human", "content": "Consulte meus dados."},
+        {"role": "human", "content": "Preciso de uma orientação."},
         {"role": "assistant", "content": body["resposta"]},
     ]
     system = model.calls[2][1][0].content
@@ -213,12 +213,18 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch):
         "acao": "buscar_meus_dados", "filtros": None, "resposta": None,
     })
 
-    response = client.post("/chat/messages", json={"message": "Quais são meus dados?"})
+    response = client.post(
+        "/chat/messages",
+        json={"message": "Me fale quais são os meus dados pessoais?"},
+    )
 
     assert response.status_code == 200
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "rh", "buscar_meus_dados",
         "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz",
     ]
     assert connection.db_cursor.parameters == ["user-a"]
     judge_call = next(call for call in model.calls if call[0] == "juiz")
@@ -227,10 +233,29 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch):
     assert evidence["evidencia_tool"]["resultado"]["dados"]["cpf"] == "12345678901"
 
 
+def test_employee_search_all_users_is_deterministically_denied(chat_client):
+    client, model, _ = chat_client
+
+    response = client.post(
+        "/chat/messages",
+        json={"message": "Me mande todos os usuários do meus sistema."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "rh", "buscar_outros_usuarios",
+        "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz",
+    ]
+    assert response.json()["resposta"] == "Seu perfil nao permite consultar outros usuarios."
+
+
 def test_invalid_structured_reply_is_retried_once(chat_client):
     client, model, _ = chat_client
     model.replies["rh"] = [
-        '{"acao":"buscar_outros_usuarios","filtros":null,"resposta":null}',
+        '{"acao":"buscar_outros_usuarios","filtros":{"limite":0},"resposta":null}',
         json.dumps({
             "acao": "responder",
             "filtros": None,

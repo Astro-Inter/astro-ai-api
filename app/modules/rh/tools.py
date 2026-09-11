@@ -67,6 +67,32 @@ class RhToolDecision(BaseModel):
     filtros: BuscarOutrosUsuariosArgs | None = None
     resposta: SpecialistResult | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalizar_filtros_vazios(cls, data):
+        """Aceita o formato vazio que alguns provedores geram para campos opcionais."""
+        if not isinstance(data, dict):
+            return data
+        if data.get("acao") == "buscar_outros_usuarios" and data.get("filtros") is None:
+            data = dict(data)
+            data["filtros"] = {}
+            return data
+        if data.get("acao") != "buscar_meus_dados":
+            return data
+        filters = data.get("filtros")
+        if filters in (None, {}):
+            data = dict(data)
+            data["filtros"] = None
+            return data
+        if isinstance(filters, dict):
+            empty_filters = {
+                "status": [], "tipos": [], "nome": None, "cargo": None, "limite": 20,
+            }
+            if {**empty_filters, **filters} == empty_filters:
+                data = dict(data)
+                data["filtros"] = None
+        return data
+
     @model_validator(mode="after")
     def validar_acao(self):
         if self.acao == "buscar_outros_usuarios" and (
