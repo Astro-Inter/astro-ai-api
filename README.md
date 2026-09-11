@@ -179,19 +179,27 @@ traces podem conter mensagens, contexto do usuário e respostas. Habilite soment
 quando esse envio de dados estiver autorizado. Bearer e chaves não são incluídos
 nos prompts. Nenhuma variável de ambiente nova é necessária para o chat.
 
-### Primeira tool de RH
+### Tools de consulta de usuários do RH
 
-`app/modules/rh/tools.py` contém a tool LangChain `buscar_outros_usuarios`, uma consulta
-somente leitura de outros usuários no PostgreSQL. Ela recebe `CurrentUser` pelo contexto
+`app/modules/rh/tools.py` contém duas tools LangChain somente leitura. A tool
+`buscar_meus_dados` localiza exclusivamente o usuário autenticado pelo Firebase UID
+do `CurrentUser` e retorna nome, e-mail, CPF, perfil, cargo, unidade, modalidade,
+status e data de cadastro. Ela não expõe filtros ou identificadores ao modelo.
+
+A tool `buscar_outros_usuarios` pesquisa exclusivamente outras pessoas no PostgreSQL.
+Ela recebe `CurrentUser` pelo contexto
 confiável do backend e filtros validados de status, tipo, nome, cargo e limite
 de resultados. Nome e cargo usam busca literal por trecho; curingas `%`, `_` e `\`
 são escapados antes do `ILIKE`. Status, tipos e limite são parâmetros da consulta,
 nunca SQL produzido pelo modelo.
 
-`ADMIN` pode pesquisar todas as unidades. Enquanto a matriz definitiva de
-permissões não for definida, `GESTOR`, `GESTOR_WORKSPACE` e `FUNCIONARIO` ficam
-obrigatoriamente restritos à unidade encontrada pelo Firebase UID autenticado.
-A consulta retorna no máximo 50 registros e apenas nome, e-mail, tipo, cargo,
+`ADMIN` pode pesquisar todos os usuários. `GESTOR_WORKSPACE` pesquisa os perfis
+`GESTOR`, `GESTOR_WORKSPACE` e `FUNCIONARIO` somente no workspace associado à sua
+unidade. `GESTOR` pesquisa apenas `GESTOR` e `FUNCIONARIO` da própria unidade.
+`FUNCIONARIO` não pode executar a consulta de terceiros e acessa somente seus dados
+pela tool `buscar_meus_dados`.
+A consulta de terceiros exclui o próprio Firebase UID, retorna no máximo 50 registros
+e apenas nome, e-mail, tipo, cargo,
 unidade, modalidade e status. A conexão é somente leitura e possui timeout.
 
 A tool está registrada exclusivamente no subgrafo do agente de RH. Antes de responder

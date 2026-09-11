@@ -36,6 +36,22 @@ def _formatar_usuarios(result: dict) -> str:
     return "\n".join([title, *lines])
 
 
+def _formatar_meus_dados(result: dict) -> str:
+    if result.get("status") == "sem_dados":
+        return "Não encontrei seus dados cadastrais."
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar seus dados no momento.")
+
+    data = result["dados"]
+    labels = {
+        "nome": "Nome", "email": "E-mail", "cpf": "CPF", "tipo": "Perfil",
+        "cargo": "Cargo", "unidade": "Unidade", "modalidade": "Modalidade",
+        "status": "Status", "criado_em": "Cadastrado em",
+    }
+    lines = [f"- {labels[field]}: {value}" for field, value in data.items() if value is not None]
+    return "\n".join(["Estes são os seus dados:", *lines])
+
+
 def build_specialist_graph(domain: str, model: AgentModel):
     async def specialist(state: ChatState):
         result = await invoke_agent(
@@ -88,15 +104,23 @@ def build_rh_graph(model: AgentModel):
             "erro": "nao_autorizado",
             "nao_autorizado": "nao_autorizado",
         }
-        messages = {
-            "ok": f"Consulta concluída com {result.get('quantidade', 0)} usuário(s).",
-            "sem_dados": "Nenhum usuário foi encontrado com os filtros informados.",
-            "indisponivel": "Não foi possível consultar os usuários no momento.",
-            "erro": "Não foi possível identificar o usuário autorizado para a consulta.",
-            "nao_autorizado": result.get(
-                "mensagem", "Seu perfil não permite consultar outros usuários."
-            ),
-        }
+        if tool_name == "buscar_meus_dados":
+            messages = {
+                "ok": "Consulta dos dados do usuário autenticado concluída.",
+                "sem_dados": "O usuário autenticado não foi encontrado no cadastro.",
+                "indisponivel": "Não foi possível consultar seus dados no momento.",
+                "erro": "Não foi possível identificar o usuário autenticado.",
+            }
+        else:
+            messages = {
+                "ok": f"Consulta concluída com {result.get('quantidade', 0)} usuário(s).",
+                "sem_dados": "Nenhum usuário foi encontrado com os filtros informados.",
+                "indisponivel": "Não foi possível consultar os usuários no momento.",
+                "erro": "Não foi possível identificar o usuário autorizado para a consulta.",
+                "nao_autorizado": result.get(
+                    "mensagem", "Seu perfil não permite consultar outros usuários."
+                ),
+            }
         specialist_result = {
             "dominio": "rh",
             "intencao": "consultar",
@@ -113,7 +137,11 @@ def build_rh_graph(model: AgentModel):
         return {
             "resultado_tool": result,
             "resultado": specialist_result,
-            "candidato": _formatar_usuarios(result),
+            "candidato": (
+                _formatar_meus_dados(result)
+                if tool_name == "buscar_meus_dados"
+                else _formatar_usuarios(result)
+            ),
             "agentes_chamados": state["agentes_chamados"] + [tool_name],
         }
 

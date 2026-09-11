@@ -113,7 +113,7 @@ def test_specialist_flow(chat_client, domain):
     assert '"fuso": "America/Sao_Paulo"' in system
     assert (
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
-        '"buscar_outros_usuarios"]'
+        '"buscar_outros_usuarios", "buscar_meus_dados"]'
     ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
@@ -178,6 +178,53 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     evidence = json.loads(judge_call[1][-1].content.split("\n", 1)[1])["resultado"]
     assert evidence["evidencia_tool"]["nome"] == "buscar_outros_usuarios"
     assert evidence["evidencia_tool"]["resultado"]["status"] == "ok"
+
+
+def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch):
+    client, model, _ = chat_client
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def execute(self, query, parameters):
+            self.query, self.parameters = query, parameters
+        def fetchone(self):
+            return (
+                "Lucas", "lucas@example.com", "12345678901", "FUNCIONARIO",
+                "Analista", "Matriz", "HIBRIDO", "ATIVO", None,
+            )
+
+    class Connection:
+        def __init__(self):
+            self.db_cursor = Cursor()
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def cursor(self):
+            return self.db_cursor
+
+    connection = Connection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(rh_tools, "get_conn", lambda: connection)
+    model.replies["rh"] = json.dumps({
+        "acao": "buscar_meus_dados", "filtros": None, "resposta": None,
+    })
+
+    response = client.post("/chat/messages", json={"message": "Quais são meus dados?"})
+
+    assert response.status_code == 200
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "rh", "buscar_meus_dados",
+        "juiz", "guardrail_saida",
+    ]
+    assert connection.db_cursor.parameters == ["user-a"]
+    judge_call = next(call for call in model.calls if call[0] == "juiz")
+    evidence = json.loads(judge_call[1][-1].content.split("\n", 1)[1])["resultado"]
+    assert evidence["evidencia_tool"]["nome"] == "buscar_meus_dados"
+    assert evidence["evidencia_tool"]["resultado"]["dados"]["cpf"] == "12345678901"
 
 
 def test_invalid_structured_reply_is_retried_once(chat_client):

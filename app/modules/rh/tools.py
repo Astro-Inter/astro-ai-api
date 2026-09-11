@@ -16,6 +16,10 @@ MANAGER_VISIBLE_TYPES = ["GESTOR", "FUNCIONARIO"]
 WORKSPACE_MANAGER_VISIBLE_TYPES = ["GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"]
 
 OTHER_USER_COLUMNS = ("nome", "email", "tipo", "cargo", "unidade", "modalidade", "status")
+CURRENT_USER_COLUMNS = (
+    "nome", "email", "cpf", "tipo", "cargo", "unidade", "modalidade", "status",
+    "criado_em",
+)
 
 
 class BuscarOutrosUsuariosArgs(BaseModel):
@@ -59,7 +63,7 @@ class RhToolDecision(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    acao: Literal["buscar_outros_usuarios", "responder"]
+    acao: Literal["buscar_outros_usuarios", "buscar_meus_dados", "responder"]
     filtros: BuscarOutrosUsuariosArgs | None = None
     resposta: SpecialistResult | None = None
 
@@ -69,6 +73,10 @@ class RhToolDecision(BaseModel):
             self.filtros is None or self.resposta is not None
         ):
             raise ValueError("A busca de outros usuarios exige filtros e nao aceita resposta.")
+        if self.acao == "buscar_meus_dados" and (
+            self.filtros is not None or self.resposta is not None
+        ):
+            raise ValueError("A busca dos dados pessoais nao aceita filtros nem resposta.")
         if self.acao == "responder" and (self.resposta is None or self.filtros is not None):
             raise ValueError("A resposta direta exige resultado e nao aceita filtros.")
         if self.resposta is not None and self.resposta.dominio != "rh":
@@ -201,4 +209,62 @@ def buscar_outros_usuarios(
         "usuarios": usuarios,
     }
 
-TOOLS_RH = [buscar_outros_usuarios]
+@tool("buscar_meus_dados")
+def buscar_meus_dados(config: RunnableConfig = None) -> dict:
+    """Retorna somente os dados pessoais e profissionais do usuário autenticado.
+
+    A identidade vem do contexto seguro da requisição. A ferramenta não recebe UID,
+    nome, e-mail ou qualquer outro seletor controlado pelo modelo ou pelo usuário.
+    """
+    user = _usuario_do_contexto(config)
+    if user is None:
+        return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
+    if not app_config.DATABASE_URL:
+        return {"status": "indisponivel", "mensagem": "Consulta de dados pessoais indisponivel."}
+
+    if user.role == "ADMIN":
+        query = """
+            SELECT admin.nome AS nome,
+                   admin.email AS email
+              FROM admin
+             WHERE admin.firebase_uid = %s
+             LIMIT 1
+        """
+    else:
+        query = """
+            SELECT usuarios.nome AS nome,
+                   usuarios.email AS email,
+                   usuarios.cpf AS cpf,
+                   usuarios.tipo AS tipo,
+                   cargos.nome AS cargo,
+                   unidades.nome AS unidade,
+                   usuarios.modalidade AS modalidade,
+                   usuarios.status AS status,
+                   usuarios.criado_em AS criado_em
+              FROM usuarios
+              JOIN cargos ON cargos.id_cargo = usuarios.cargo_id
+              JOIN unidades ON unidades.id_unidade = usuarios.unidade_id
+             WHERE usuarios.firebase_uid = %s
+             LIMIT 1
+        """
+    try:
+        with get_conn() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, [user.uid])
+                row = cursor.fetchone()
+    except Exception:
+        return {"status": "indisponivel", "mensagem": "Consulta de dados pessoais indisponivel."}
+
+    if row is None:
+        return {"status": "sem_dados", "dados": None}
+    if user.role == "ADMIN":
+        data = dict.fromkeys(CURRENT_USER_COLUMNS)
+        data.update({"nome": row[0], "email": row[1], "tipo": "ADMIN"})
+    else:
+        data = dict(zip(CURRENT_USER_COLUMNS, row))
+    if hasattr(data["criado_em"], "isoformat"):
+        data["criado_em"] = data["criado_em"].isoformat()
+    return {"status": "ok", "dados": data}
+
+
+TOOLS_RH = [buscar_outros_usuarios, buscar_meus_dados]

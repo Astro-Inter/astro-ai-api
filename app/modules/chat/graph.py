@@ -74,7 +74,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         evidence = state.get("resultado", {}).get("evidencia_tool", {})
         if (
             state["avaliacao_juiz"]["status"] == "aprovado"
-            and evidence.get("nome") == "buscar_outros_usuarios"
+            and evidence.get("nome") in {"buscar_outros_usuarios", "buscar_meus_dados"}
         ):
             return {
                 "resposta": state["candidato"],

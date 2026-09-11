@@ -4,7 +4,11 @@ from pydantic import ValidationError
 
 from app.core import config
 from app.modules.rh import tools as rh_tools
-from app.modules.rh.tools import BuscarOutrosUsuariosArgs, buscar_outros_usuarios
+from app.modules.rh.tools import (
+    BuscarOutrosUsuariosArgs,
+    buscar_meus_dados,
+    buscar_outros_usuarios,
+)
 
 
 class FakeCursor:
@@ -61,11 +65,13 @@ def run_search(monkeypatch, role, filters, rows=None, uid="firebase-owner"):
 
 def test_tools_follow_langchain_pattern_and_hide_authenticated_context():
     assert buscar_outros_usuarios.name == "buscar_outros_usuarios"
-    assert rh_tools.TOOLS_RH == [buscar_outros_usuarios]
+    assert buscar_meus_dados.name == "buscar_meus_dados"
+    assert rh_tools.TOOLS_RH == [buscar_outros_usuarios, buscar_meus_dados]
     for registered_tool in rh_tools.TOOLS_RH:
         schema = registered_tool.args_schema.model_json_schema()["properties"]
         assert "config" not in schema
         assert "uid" not in schema and "role" not in schema
+    assert buscar_meus_dados.args_schema.model_json_schema()["properties"] == {}
 
 
 def test_manager_search_is_limited_to_own_unit_and_allowed_profiles(monkeypatch):
@@ -144,6 +150,57 @@ def test_admin_can_search_all_units_but_never_returns_itself(monkeypatch):
     assert "usuarios.firebase_uid <> %s" in query
     assert connection.db_cursor.parameters == ["firebase-admin", 20]
     assert result == {"status": "sem_dados", "quantidade": 0, "usuarios": []}
+
+
+def test_current_user_tool_returns_only_authenticated_user(monkeypatch):
+    from datetime import datetime
+
+    row = (
+        "Lucas Lima", "lucas@example.com", "12345678901", "FUNCIONARIO",
+        "Analista", "Matriz", "HIBRIDO", "ATIVO", datetime(2026, 9, 10, 10, 30),
+    )
+    connection = FakeConnection([row])
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(rh_tools, "get_conn", lambda: connection)
+
+    result = buscar_meus_dados.invoke(
+        {},
+        config={"configurable": {
+            "usuario_atual": {"uid": "firebase-owner", "role": "FUNCIONARIO"},
+        }},
+    )
+
+    assert "usuarios.firebase_uid = %s" in connection.db_cursor.query
+    assert connection.db_cursor.parameters == ["firebase-owner"]
+    assert result["status"] == "ok"
+    assert result["dados"]["cpf"] == "12345678901"
+    assert result["dados"]["cargo"] == "Analista"
+
+
+def test_current_user_tool_returns_sem_dados(monkeypatch):
+    connection = FakeConnection([])
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(rh_tools, "get_conn", lambda: connection)
+    result = buscar_meus_dados.invoke(
+        {},
+        config={"configurable": {"usuario_atual": {"uid": "missing", "role": "FUNCIONARIO"}}},
+    )
+    assert result == {"status": "sem_dados", "dados": None}
+
+
+def test_current_admin_tool_reads_admin_table(monkeypatch):
+    connection = FakeConnection([("Admin Astro", "admin@example.com")])
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(rh_tools, "get_conn", lambda: connection)
+    result = buscar_meus_dados.invoke(
+        {},
+        config={"configurable": {"usuario_atual": {"uid": "admin-uid", "role": "ADMIN"}}},
+    )
+    assert "FROM admin" in connection.db_cursor.query
+    assert connection.db_cursor.parameters == ["admin-uid"]
+    assert result["dados"]["nome"] == "Admin Astro"
+    assert result["dados"]["tipo"] == "ADMIN"
+    assert result["dados"]["cargo"] is None
 
 
 @pytest.mark.parametrize("payload", [

@@ -94,7 +94,7 @@ class ChatService:
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
                         "ferramentas_disponiveis": [
                             "buscar_historico", "consultar_normas",
-                            "buscar_outros_usuarios",
+                            "buscar_outros_usuarios", "buscar_meus_dados",
                         ],
                         "fontes_disponiveis": ["faq_chunks"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
