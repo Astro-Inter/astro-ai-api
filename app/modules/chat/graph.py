@@ -21,7 +21,7 @@ from app.modules.chat.subgraphs import (
 )
 from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.guardrails.saida import GUARDRAIL_SAIDA_PROMPT_COMPLETO
-from app.modules.roteador.tools import EnviarMensagemArgs, TOOLS_ROTEADOR
+from app.modules.roteador.tools import ConsultarConversasArgs, EnviarMensagemArgs, TOOLS_ROTEADOR
 
 
 ROTEADOR_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_ROTEADOR}
@@ -94,6 +94,43 @@ def _pedido_simples_de_mensagem(message: str) -> EnviarMensagemArgs | None:
         return None
 
 
+def _pedido_simples_de_conversa(message: str) -> ConsultarConversasArgs | None:
+    """Reconhece consultas explícitas com pessoa identificada sem chamar o LLM."""
+    normalized = _sem_acentos(message)
+    if re.search(r"\b(?:nao|mande|mandar|envie|enviar|responda)\b", normalized):
+        return None
+    if not re.search(
+        r"\b(?:mostre|mostrar|liste|listar|veja|ver|consulte|consultar|busque|buscar)\b",
+        normalized,
+    ):
+        return None
+
+    page_match = re.search(r"\b(?:na\s+)?p[aá]gina\s+(\d+)\b", message, re.IGNORECASE)
+    page = int(page_match.group(1)) if page_match else 1
+    without_page = (
+        message[:page_match.start()] + message[page_match.end():]
+        if page_match else message
+    )
+    match = re.search(
+        r"\b(?:mensagens?|conversas?)\s+com\s+(?:(?:a|o)\s+)?"
+        r"(?P<pessoa>[\w@.+\-]+(?:\s+[\w@.+\-]+){0,4})"
+        r"\s*(?:,?\s*por favor)?[.!?]?\s*$",
+        without_page,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    person = match.group("pessoa").strip(" .!?")
+    if _sem_acentos(person) in {
+        "ele", "ela", "meu amigo", "minha amiga", "meu gestor", "minha gestora",
+    }:
+        return None
+    try:
+        return ConsultarConversasArgs(pessoa=person, pagina=page)
+    except ValidationError:
+        return None
+
+
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def input_guard(state: ChatState):
         decision = await invoke_agent(
@@ -137,6 +174,14 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
+        simple_conversation = _pedido_simples_de_conversa(state["mensagem"])
+        if simple_conversation is not None:
+            return {
+                "rota": "conversa",
+                "roteador_decision": simple_conversation,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
+
         text = await invoke_agent(model, "roteador", ROTEADOR_PROMPT_COMPLETO, state)
         if text.startswith("MEMORY="):
             if state.get("memoria_consultada") or search_memory is None:
@@ -158,9 +203,31 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "roteador_decision": decision,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
+        conversation_text = text.strip()
+        code_block = re.fullmatch(
+            r"```(?:json)?\s*(.*?)\s*```", conversation_text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if code_block:
+            conversation_text = code_block.group(1).strip()
+        if conversation_text.startswith("CONVERSATION"):
+            match = re.fullmatch(r"CONVERSATION\s*=\s*(\{.*\})", conversation_text, re.DOTALL)
+            if match is None:
+                raise InvalidAgentResponse("roteador")
+            try:
+                decision = ConsultarConversasArgs.model_validate_json(
+                    match.group(1)
+                )
+            except ValidationError:
+                raise InvalidAgentResponse("roteador") from None
+            return {
+                "rota": "conversa",
+                "roteador_decision": decision,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         route = re.fullmatch(r"ROUTE=(rh|sst|agenda|faq)", text)
         if not route and any(
-            marker in text.upper() for marker in ("ROUTE", "MEMORY=", "MESSAGE=")
+            marker in text.upper() for marker in ("ROUTE", "MEMORY=", "MESSAGE=", "CONVERSATION=")
         ):
             raise InvalidAgentResponse("roteador")
         return {
@@ -225,6 +292,50 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             "agentes_chamados": state["agentes_chamados"] + ["enviar_mensagem"],
         }
 
+    async def consult_conversation(state: ChatState):
+        decision = state["roteador_decision"]
+        result = await ROTEADOR_TOOLS["consultar_conversas"].ainvoke(
+            decision.model_dump(),
+            config={"configurable": {
+                "usuario_atual": state["usuario_atual"].model_dump(),
+            }},
+        )
+        status = result.get("status")
+        if status == "ambiguo":
+            options = "\n".join(
+                f"- {item['nome']} — {item['email']}"
+                for item in result.get("pessoas", [])
+            )
+            candidate = f"{result['mensagem']}\n{options}" if options else result["mensagem"]
+        elif status == "sem_dados":
+            person = result["pessoa"]
+            candidate = f"Não encontrei mensagens trocadas com {person['nome']} ({person['email']})."
+        elif status == "ok":
+            person = result["pessoa"]
+            lines = [f"Mensagens com {person['nome']} ({person['email']}):"]
+            for message in result["mensagens"]:
+                label = "Você" if message["direcao"] == "enviada" else person["nome"]
+                suffix = " [trecho]" if message["trecho"] else ""
+                lines.append(f"- {message['data']} — {label}: {message['mensagem']}{suffix}")
+            if not result["mensagens"]:
+                lines.append("Nenhuma mensagem nesta página. Tente uma página anterior.")
+            elif result["pagina"] < result["total_paginas"]:
+                lines.append(f"Para ver mensagens anteriores, peça a página {result['pagina'] + 1}.")
+            candidate = "\n".join(lines)
+        else:
+            candidate = result.get("mensagem", "Não foi possível consultar as conversas.")
+        return {
+            "resultado_tool": result,
+            "resultado": {
+                "dominio": "roteador",
+                "intencao": "consultar_conversas",
+                "status": status,
+                "evidencia_tool": {"nome": "consultar_conversas", "resultado": result},
+            },
+            "candidato": candidate,
+            "agentes_chamados": state["agentes_chamados"] + ["consultar_conversas"],
+        }
+
     async def memory_lookup(state: ChatState):
         memory = await search_memory(
             state["usuario_atual"].uid, state["session_id"], state["busca_memoria"],
@@ -252,7 +363,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             and evidence.get("nome") in {
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                 "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
-                "enviar_mensagem",
+                "enviar_mensagem", "consultar_conversas",
             }
         ):
             return {
@@ -287,6 +398,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_node("roteador", router)
     graph.add_node("buscar_historico", memory_lookup)
     graph.add_node("enviar_mensagem", send_message)
+    graph.add_node("consultar_conversas", consult_conversation)
     graph.add_edge("buscar_historico", "roteador")
     graph.add_node("rh", build_rh_graph(model))
     graph.add_conditional_edges(
@@ -313,8 +425,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_conditional_edges("roteador", lambda state: state["rota"], {
         "rh": "rh", "sst": "sst", "agenda": "agenda", "faq": "faq", "direta": "juiz",
         "memoria": "buscar_historico", "mensagem": "enviar_mensagem",
+        "conversa": "consultar_conversas",
     })
     graph.add_edge("enviar_mensagem", "juiz")
+    graph.add_edge("consultar_conversas", "juiz")
     graph.add_edge("faq", "juiz")
     graph.add_edge("orquestrador", "juiz")
     graph.add_edge("juiz", "guardrail_saida")

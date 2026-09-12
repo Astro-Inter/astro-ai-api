@@ -38,6 +38,20 @@ class EnviarMensagemArgs(BaseModel):
     )
 
 
+class ConsultarConversasArgs(BaseModel):
+    """Identifica a pessoa e a página de mensagens a consultar."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    pessoa: str = Field(
+        min_length=2,
+        max_length=255,
+        description="Nome ou e-mail da pessoa com quem o usuário conversou.",
+    )
+    pagina: int = Field(default=1, ge=1, le=1000)
+    limite: int = Field(default=5, ge=1, le=10)
+
+
 def get_postgres_connection():
     """Abre uma conexão curta e somente leitura com o PostgreSQL."""
     return psycopg.connect(
@@ -65,6 +79,10 @@ def get_messages_collection():
         _messages_collection.create_index(
             [("id_envia", 1), ("id_recebe", 1), ("data", -1)],
             name="mensagens_participantes_data",
+        )
+        _messages_collection.create_index(
+            [("id_recebe", 1), ("id_envia", 1), ("data", -1)],
+            name="mensagens_participantes_inverso_data",
         )
     return _messages_collection
 
@@ -278,4 +296,89 @@ def enviar_mensagem(
     }
 
 
-TOOLS_ROTEADOR = [enviar_mensagem]
+@tool("consultar_conversas", args_schema=ConsultarConversasArgs)
+def consultar_conversas(
+    pessoa: str,
+    pagina: int = 1,
+    limite: int = 5,
+    config: RunnableConfig = None,
+) -> dict:
+    """Consulta mensagens trocadas com uma pessoa do mesmo workspace.
+
+    Os IDs vêm exclusivamente do PostgreSQL e a busca no MongoDB exige que o
+    usuário autenticado seja remetente ou destinatário de cada mensagem.
+    """
+    user = _usuario_do_contexto(config)
+    if user is None:
+        return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
+    if user.role == "ADMIN":
+        return {
+            "status": "nao_aplicavel",
+            "mensagem": "Administradores nao possuem workspace funcional para mensagens.",
+        }
+    if not app_config.DATABASE_URL:
+        return {"status": "indisponivel", "mensagem": "Consulta de pessoa indisponivel."}
+    if not app_config.MONGODB_URI or not app_config.MONGODB_DATABASE:
+        return {"status": "indisponivel", "mensagem": "Historico de mensagens indisponivel."}
+
+    try:
+        matches = _resolver_destinatarios(user.uid, pessoa)
+    except Exception:
+        return {"status": "indisponivel", "mensagem": "Consulta de pessoa indisponivel."}
+    if not matches:
+        return {
+            "status": "nao_encontrado",
+            "mensagem": "Pessoa ativa nao encontrada no seu workspace.",
+        }
+    if len(matches) > 1:
+        return {
+            "status": "ambiguo",
+            "mensagem": "Existe mais de uma pessoa com esse nome. Informe o e-mail.",
+            "pessoas": [{"nome": row[2], "email": row[3]} for row in matches],
+        }
+
+    my_id, other_id, name, email = matches[0]
+    filter_messages = {"$or": [
+        {"id_envia": my_id, "id_recebe": other_id},
+        {"id_envia": other_id, "id_recebe": my_id},
+    ]}
+    try:
+        collection = get_messages_collection()
+        total = collection.count_documents(filter_messages)
+        documents = list(
+            collection.find(
+                filter_messages,
+                {"_id": 0, "id_envia": 1, "id_recebe": 1, "mensagem": 1, "data": 1},
+            ).sort([("data", -1), ("_id", -1)]).skip((pagina - 1) * limite).limit(limite)
+        ) if total else []
+    except PyMongoError:
+        return {"status": "indisponivel", "mensagem": "Historico de mensagens indisponivel."}
+
+    messages = []
+    for document in documents:
+        content = document.get("mensagem", "")
+        sent_at = document.get("data")
+        if not isinstance(content, str) or not isinstance(sent_at, datetime):
+            continue
+        if sent_at.tzinfo is None:
+            # O PyMongo devolve UTC sem tzinfo por padrão.
+            sent_at = sent_at.replace(tzinfo=timezone.utc)
+        messages.append({
+            "direcao": "enviada" if document["id_envia"] == my_id else "recebida",
+            "mensagem": content[:500],
+            "trecho": len(content) > 500,
+            "data": sent_at.isoformat(),
+        })
+
+    return {
+        "status": "ok" if total else "sem_dados",
+        "pessoa": {"nome": name, "email": email},
+        "pagina": pagina,
+        "limite": limite,
+        "total": total,
+        "total_paginas": (total + limite - 1) // limite,
+        "mensagens": messages,
+    }
+
+
+TOOLS_ROTEADOR = [enviar_mensagem, consultar_conversas]

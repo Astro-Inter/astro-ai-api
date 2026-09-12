@@ -97,7 +97,7 @@ class ChatService:
                             "buscar_historico", "consultar_normas",
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
-                            "enviar_mensagem",
+                            "enviar_mensagem", "consultar_conversas",
                         ],
                         "fontes_disponiveis": ["faq_chunks", "nrs"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
@@ -106,6 +106,8 @@ class ChatService:
                                    "O agente de RH pode consultar somente os dados de usuarios "
                                    "permitidos pelo perfil autenticado. O envio de mensagens exige "
                                    "destinatario do mesmo workspace, previa e confirmacao explicita. "
+                                   "A consulta de conversas acessa apenas mensagens entre o usuario "
+                                   "autenticado e uma pessoa do mesmo workspace. "
                                    "Nao ha outras operacoes de escrita. NRs podem ser consultadas na collection "
                                    "MongoDB autorizada. "
                                    "Historico nao comprova direitos nem execucao. "

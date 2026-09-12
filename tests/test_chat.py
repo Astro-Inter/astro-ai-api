@@ -127,7 +127,7 @@ def test_specialist_flow(chat_client, domain):
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
-        '"enviar_mensagem"]'
+        '"enviar_mensagem", "consultar_conversas"]'
     ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
@@ -434,6 +434,93 @@ def test_router_previews_and_sends_message_only_after_confirmation(chat_client, 
     assert document["id_envia"] == 7 and document["id_recebe"] == 21
     assert document["mensagem"] == "Olá! Podemos conversar amanhã?"
     assert session["acao_pendente"] is None
+
+
+@pytest.mark.parametrize("message,router_reply,expected_model_calls", [
+    (
+        "Mostre minhas últimas mensagens com Rosa Maduda",
+        "ROUTE=desconhecido",
+        ["guardrail_entrada", "juiz"],
+    ),
+    (
+        "Veja o que conversei com Rosa Maduda",
+        '```json\nCONVERSATION = {"pessoa":"Rosa Maduda"}\n```',
+        ["guardrail_entrada", "roteador", "juiz"],
+    ),
+])
+def test_router_consults_conversation_with_specific_person(
+    chat_client, monkeypatch, message, router_reply, expected_model_calls,
+):
+    from datetime import datetime, timezone
+
+    client, model, _ = chat_client
+
+    class Cursor:
+        def sort(self, _):
+            return self
+        def skip(self, _):
+            return self
+        def limit(self, _):
+            return self
+        def __iter__(self):
+            return iter([{
+                "id_envia": 21, "id_recebe": 7,
+                "mensagem": "Oi Lucas", "data": datetime(2026, 9, 12, tzinfo=timezone.utc),
+            }])
+
+    class Collection:
+        def __init__(self):
+            self.query = None
+        def count_documents(self, query):
+            self.query = query
+            return 1
+        def find(self, query, projection):
+            assert query == self.query
+            assert projection["_id"] == 0
+            return Cursor()
+
+    collection = Collection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(
+        router_tools, "_resolver_destinatarios",
+        lambda uid, person: [(7, 21, "Rosa Maduda", "rosa@empresa.com")],
+    )
+    monkeypatch.setattr(router_tools, "get_messages_collection", lambda: collection)
+    model.replies["roteador"] = router_reply
+
+    response = client.post("/chat/messages", json={
+        "message": message,
+    })
+
+    assert response.status_code == 200
+    assert "Mensagens com Rosa Maduda (rosa@empresa.com):" in response.json()["resposta"]
+    assert "Oi Lucas" in response.json()["resposta"]
+    assert "página 1 de 1" not in response.json()["resposta"]
+    assert "no total; mais recentes primeiro" not in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_conversas", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == expected_model_calls
+    assert collection.query == {"$or": [
+        {"id_envia": 7, "id_recebe": 21},
+        {"id_envia": 21, "id_recebe": 7},
+    ]}
+
+
+def test_simple_conversation_request_extracts_person_and_page():
+    from app.modules.chat.graph import _pedido_simples_de_conversa
+
+    decision = _pedido_simples_de_conversa(
+        "Mostre a página 2 das minhas mensagens com Rosa Maduda, por favor"
+    )
+    assert decision.pessoa == "Rosa Maduda"
+    assert decision.pagina == 2
+    assert decision.limite == 5
+    assert _pedido_simples_de_conversa("Não mostre minhas mensagens com Rosa Maduda") is None
+    assert _pedido_simples_de_conversa("Mostre minhas mensagens com meu amigo") is None
+    assert _pedido_simples_de_conversa("Como enviar mensagens com Rosa Maduda?") is None
 
 
 @pytest.mark.parametrize("confirmation", [

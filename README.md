@@ -277,11 +277,29 @@ no destinatário ou no texto, autoriza a gravação. Repetir uma confirmação a
 resposta incerta não duplica o documento. “Sim”, “pode mandar” e “é isso mesmo
 que eu quero enviar” são exemplos de confirmação após a prévia.
 
-As mensagens confirmadas ficam na collection fixa `mensagens`, criada no primeiro
-envio, com `_id`, `id_envia`, `id_recebe`, `mensagem` e `data` em UTC. Os campos
+As mensagens confirmadas ficam na collection fixa `mensagens`, com `_id`,
+`id_envia`, `id_recebe`, `mensagem` e `data` em UTC. Os campos
 `id_envia` e `id_recebe` são IDs do PostgreSQL, não Firebase UIDs. A mesma
 configuração `MONGODB_URI` e `MONGODB_DATABASE` já usada pelo histórico é
 reutilizada; nenhuma variável de ambiente nova é necessária.
+
+### Tool de consulta de conversas do Roteador
+
+`consultar_conversas` lê as mensagens trocadas com uma pessoa identificada por
+nome ou e-mail, sem aceitar IDs informados pelo modelo. A identidade do usuário
+vem da autenticação; o PostgreSQL resolve a outra pessoa somente dentro do mesmo
+workspace. Se houver mais de uma correspondência por nome, a consulta pede o
+e-mail. Administradores, que não possuem workspace funcional de mensagens, não
+usam essa tool.
+
+A busca na collection `mensagens` inclui os dois sentidos da conversa, mas apenas
+registros em que o usuário autenticado é um dos participantes. Os resultados
+vêm do mais recente ao mais antigo, com cinco mensagens por página por padrão
+(máximo de dez). Textos longos são apresentados como trechos de até 500
+caracteres para limitar o contexto da IA. Por exemplo: “Mostre minhas últimas
+mensagens com Rosa Maduda” ou “Mostre a página 2 das minhas mensagens com Rosa
+Maduda”. Pedidos explícitos com nome ou e-mail já seguem direto à consulta, sem
+depender da classificação do modelo.
 
 ## Histórico persistente e sessões (SCRUM-187)
 

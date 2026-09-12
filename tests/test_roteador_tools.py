@@ -1,11 +1,11 @@
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
 from app.core import config
 from app.modules.roteador import tools as router_tools
-from app.modules.roteador.tools import enviar_mensagem
+from app.modules.roteador.tools import consultar_conversas, enviar_mensagem
 
 
 class FakeCursor:
@@ -54,6 +54,40 @@ class FakeCollection:
         if document is None:
             return None
         return document if all(document.get(key) == value for key, value in query.items()) else None
+
+    def _matching(self, query):
+        return [
+            document for document in self.documents.values()
+            if any(all(document.get(key) == value for key, value in pair.items())
+                   for pair in query["$or"])
+        ]
+
+    def count_documents(self, query):
+        return len(self._matching(query))
+
+    def find(self, query, projection):
+        return FakeMessagesCursor(self._matching(query))
+
+
+class FakeMessagesCursor:
+    def __init__(self, documents):
+        self.documents = documents
+
+    def sort(self, fields):
+        for key, direction in reversed(fields):
+            self.documents.sort(key=lambda document: document[key], reverse=direction == -1)
+        return self
+
+    def skip(self, count):
+        self.documents = self.documents[count:]
+        return self
+
+    def limit(self, count):
+        self.documents = self.documents[:count]
+        return self
+
+    def __iter__(self):
+        return iter(self.documents)
 
 
 def tool_config(*, pending=None, explicit=False):
@@ -191,5 +225,121 @@ def test_admin_cannot_use_workspace_message_tool(monkeypatch):
             "usuario_atual": {"uid": "admin", "role": "ADMIN"},
             "session_id": "session-1",
         }},
+    )
+    assert result["status"] == "nao_aplicavel"
+
+
+def test_conversation_tool_exposes_only_name_and_pagination_args():
+    properties = consultar_conversas.args_schema.model_json_schema()["properties"]
+    assert set(properties) == {"pessoa", "pagina", "limite"}
+
+
+def test_conversation_reads_both_directions_only_for_authenticated_pair(monkeypatch):
+    connection, collection = configure_databases(
+        monkeypatch, [(7, 21, "Rosa Maduda", "rosa@empresa.com")],
+    )
+    timestamp = datetime(2026, 9, 12, 12, 0, tzinfo=timezone.utc)
+    for identifier, sender, recipient, body in [
+        ("1", 7, 21, "Oi Rosa"),
+        ("2", 21, 7, "Oi Lucas"),
+        ("3", 99, 21, "Segredo de outra pessoa"),
+        ("4", 7, 99, "Outro contato"),
+    ]:
+        collection.insert_one({
+            "_id": identifier, "id_envia": sender, "id_recebe": recipient,
+            "mensagem": body, "data": timestamp,
+        })
+
+    result = consultar_conversas.invoke(
+        {"pessoa": "rosa@empresa.com"}, config=tool_config(),
+    )
+
+    assert result["status"] == "ok"
+    assert result["total"] == 2
+    assert [message["direcao"] for message in result["mensagens"]] == [
+        "recebida", "enviada",
+    ]
+    assert [message["mensagem"] for message in result["mensagens"]] == [
+        "Oi Lucas", "Oi Rosa",
+    ]
+    assert "Segredo" not in str(result)
+    assert connection.db_cursor.parameters == ["firebase-sender", "rosa@empresa.com"]
+    assert "unidade_destinatario.workspace_id = remetente.workspace_id" in (
+        connection.db_cursor.query
+    )
+
+
+def test_conversation_is_paginated_and_marks_long_excerpts(monkeypatch):
+    _, collection = configure_databases(
+        monkeypatch, [(7, 21, "Rosa Maduda", "rosa@empresa.com")],
+    )
+    for index in range(4):
+        collection.insert_one({
+            "_id": str(index), "id_envia": 7, "id_recebe": 21,
+            "mensagem": "x" * 600 if index == 1 else f"Mensagem {index}",
+            "data": datetime(2026, 9, 12, index, tzinfo=timezone.utc),
+        })
+
+    result = consultar_conversas.invoke(
+        {"pessoa": "Rosa", "pagina": 2, "limite": 2}, config=tool_config(),
+    )
+
+    assert result["total"] == 4
+    assert result["total_paginas"] == 2
+    assert [item["mensagem"] for item in result["mensagens"]] == [
+        "x" * 500, "Mensagem 0",
+    ]
+    assert result["mensagens"][0]["trecho"] is True
+
+
+def test_conversation_requires_unique_person_and_does_not_read_mongo(monkeypatch):
+    _, collection = configure_databases(monkeypatch, [
+        (7, 21, "Rosa Maduda", "rosa1@empresa.com"),
+        (7, 22, "Rosa Maria", "rosa2@empresa.com"),
+    ])
+    monkeypatch.setattr(
+        collection, "count_documents", lambda _: pytest.fail("nao deve ler Mongo"),
+    )
+
+    result = consultar_conversas.invoke({"pessoa": "Rosa"}, config=tool_config())
+
+    assert result["status"] == "ambiguo"
+    assert len(result["pessoas"]) == 2
+
+
+def test_conversation_reports_empty_history_without_inventing_messages(monkeypatch):
+    configure_databases(
+        monkeypatch, [(7, 21, "Rosa Maduda", "rosa@empresa.com")],
+    )
+
+    result = consultar_conversas.invoke({"pessoa": "Rosa"}, config=tool_config())
+
+    assert result["status"] == "sem_dados"
+    assert result["total"] == 0
+    assert result["mensagens"] == []
+
+
+def test_conversation_marks_naive_mongo_datetime_as_utc(monkeypatch):
+    _, collection = configure_databases(
+        monkeypatch, [(7, 21, "Rosa Maduda", "rosa@empresa.com")],
+    )
+    collection.insert_one({
+        "_id": "1", "id_envia": 21, "id_recebe": 7,
+        "mensagem": "Oi", "data": datetime(2026, 9, 12, 12, 0),
+    })
+
+    result = consultar_conversas.invoke({"pessoa": "Rosa"}, config=tool_config())
+
+    assert result["mensagens"][0]["data"] == "2026-09-12T12:00:00+00:00"
+
+
+def test_conversation_admin_cannot_query_workspace(monkeypatch):
+    monkeypatch.setattr(
+        router_tools, "get_postgres_connection",
+        lambda: pytest.fail("admin nao deve abrir conexao"),
+    )
+    result = consultar_conversas.invoke(
+        {"pessoa": "Rosa"},
+        config={"configurable": {"usuario_atual": {"uid": "admin", "role": "ADMIN"}}},
     )
     assert result["status"] == "nao_aplicavel"
