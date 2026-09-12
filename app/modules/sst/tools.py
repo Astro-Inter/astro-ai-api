@@ -1,14 +1,17 @@
 import re
-from math import ceil
 from datetime import date, datetime
+from math import ceil
 from typing import Annotated, Literal
 
+import psycopg
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
-from app.core import config
+from app.core import config as app_config
+from app.core.security import CurrentUser
 from app.modules.chat.schemas import SpecialistResult
 
 
@@ -94,7 +97,7 @@ class SstToolDecision(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    acao: Literal["consultar_nrs", "responder"]
+    acao: Literal["consultar_nrs", "consultar_nrs_obrigatorias", "responder"]
     filtros: ConsultarNrsArgs | None = None
     resposta: SpecialistResult | None = None
 
@@ -105,6 +108,9 @@ class SstToolDecision(BaseModel):
                 and data.get("filtros") is None:
             data = dict(data)
             data["filtros"] = {}
+        if isinstance(data, dict) and data.get("acao") == "consultar_nrs_obrigatorias":
+            data = dict(data)
+            data["filtros"] = None
         return data
 
     @model_validator(mode="after")
@@ -113,6 +119,10 @@ class SstToolDecision(BaseModel):
             self.filtros is None or self.resposta is not None
         ):
             raise ValueError("A consulta de NRs exige filtros e nao aceita resposta.")
+        if self.acao == "consultar_nrs_obrigatorias" and (
+            self.filtros is not None or self.resposta is not None
+        ):
+            raise ValueError("A consulta de NRs obrigatorias nao aceita filtros nem resposta.")
         if self.acao == "responder" and (self.resposta is None or self.filtros is not None):
             raise ValueError("A resposta direta exige resultado e nao aceita filtros.")
         if self.resposta is not None and self.resposta.dominio != "sst":
@@ -125,12 +135,31 @@ def get_collection():
     global _mongo_client
     if _mongo_client is None:
         _mongo_client = MongoClient(
-            config.MONGODB_URI,
+            app_config.MONGODB_URI,
             serverSelectionTimeoutMS=5000,
             connectTimeoutMS=5000,
             timeoutMS=10000,
         )
-    return _mongo_client[config.MONGODB_DATABASE][COLLECTION_NRS]
+    return _mongo_client[app_config.MONGODB_DATABASE][COLLECTION_NRS]
+
+
+def get_postgres_connection():
+    """Abre uma conexão curta e somente leitura com o PostgreSQL."""
+    return psycopg.connect(
+        app_config.DATABASE_URL,
+        autocommit=True,
+        connect_timeout=5,
+        options="-c statement_timeout=5000 -c default_transaction_read_only=on",
+    )
+
+
+def _usuario_do_contexto(runtime_config: RunnableConfig) -> CurrentUser | None:
+    configurable = (runtime_config or {}).get("configurable", {})
+    raw_user = configurable.get("usuario_atual")
+    try:
+        return raw_user if isinstance(raw_user, CurrentUser) else CurrentUser.model_validate(raw_user)
+    except Exception:
+        return None
 
 
 def _valor_publico(value):
@@ -155,7 +184,7 @@ def consultar_nrs(
     Permite buscar pelo número da NR, por texto, vigência e público de uso. Use
     listagem paginada para relações de NRs e detalhamento para conteúdo específico.
     """
-    if not config.MONGODB_URI or not config.MONGODB_DATABASE:
+    if not app_config.MONGODB_URI or not app_config.MONGODB_DATABASE:
         return {"status": "indisponivel", "mensagem": "Consulta de NRs indisponivel."}
 
     query = {}
@@ -228,4 +257,87 @@ def consultar_nrs(
     }
 
 
-TOOLS_SST = [consultar_nrs]
+@tool("consultar_nrs_obrigatorias")
+def consultar_nrs_obrigatorias(config: RunnableConfig = None) -> dict:
+    """Consulta as NRs vigentes obrigatórias para o cargo do usuário autenticado.
+
+    A identidade vem exclusivamente do contexto seguro da requisição. A ferramenta
+    não recebe UID, cargo ou outro seletor controlado pelo modelo ou pelo usuário.
+    """
+    user = _usuario_do_contexto(config)
+    if user is None:
+        return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
+    if user.role == "ADMIN":
+        return {
+            "status": "nao_aplicavel",
+            "mensagem": "Administradores nao possuem cargo funcional associado.",
+        }
+    if not app_config.DATABASE_URL:
+        return {
+            "status": "indisponivel",
+            "mensagem": "Consulta de NRs obrigatorias indisponivel.",
+        }
+
+    query = """
+        SELECT usuario.nome AS usuario,
+               cargo.nome AS cargo,
+               unidade.nome AS unidade,
+               nr_catalogo.codigo_nr AS numero,
+               nr_catalogo.titulo AS titulo,
+               nr_catalogo.tempo_reciclagem_mes AS tempo_reciclagem_meses
+          FROM usuario
+          JOIN cargo
+            ON cargo.id_cargo = usuario.cargo_id
+          JOIN unidade
+            ON unidade.id_unidade = usuario.unidade_id
+          LEFT JOIN cargo_nr
+            ON cargo_nr.cargo_id = cargo.id_cargo
+          LEFT JOIN unidade_nr
+            ON unidade_nr.unidade_id = unidade.id_unidade
+           AND unidade_nr.nr_id = cargo_nr.nr_id
+          LEFT JOIN nr_catalogo
+            ON nr_catalogo.codigo_nr = unidade_nr.nr_id
+           AND nr_catalogo.revogada = FALSE
+         WHERE usuario.firebase_uid = %s
+         ORDER BY nr_catalogo.codigo_nr
+    """
+    try:
+        with get_postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, [user.uid])
+                rows = cursor.fetchall()
+    except Exception:
+        return {
+            "status": "indisponivel",
+            "mensagem": "Consulta de NRs obrigatorias indisponivel.",
+        }
+
+    if not rows:
+        return {
+            "status": "sem_dados",
+            "mensagem": "Usuario autenticado nao encontrado no cadastro funcional.",
+        }
+
+    employee, role_name, unit = rows[0][:3]
+    nrs = [{
+        "numero": row[3],
+        "titulo": row[4],
+        "tempo_reciclagem_meses": row[5],
+    } for row in rows if row[3] is not None]
+    return {
+        "status": "ok",
+        "usuario": employee,
+        "cargo": role_name,
+        "unidade": unit,
+        "quantidade": len(nrs),
+        "nrs": nrs,
+        "fonte": {
+            "tipo": "postgresql",
+            "tabelas": [
+                "usuario", "cargo", "unidade", "cargo_nr", "unidade_nr", "nr_catalogo",
+            ],
+        },
+    }
+
+
+TOOLS_SST = [consultar_nrs, consultar_nrs_obrigatorias]

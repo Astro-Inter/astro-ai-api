@@ -95,6 +95,7 @@ class ChatService:
                         "ferramentas_disponiveis": [
                             "buscar_historico", "consultar_normas",
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
+                            "consultar_nrs_obrigatorias",
                         ],
                         "fontes_disponiveis": ["faq_chunks", "nrs"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "

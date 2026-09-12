@@ -124,7 +124,8 @@ def test_specialist_flow(chat_client, domain):
     assert '"fuso": "America/Sao_Paulo"' in system
     assert (
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
-        '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs"]'
+        '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
+        '"consultar_nrs_obrigatorias"]'
     ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
@@ -259,6 +260,58 @@ def test_sst_agent_lists_all_current_nrs_with_compact_payload(chat_client, monke
     judge_payload = judge_call[1][-1].content
     assert "conteudo muito extenso" not in judge_payload
     assert len(judge_payload) < 12000
+
+
+def test_sst_agent_consults_mandatory_nrs_for_authenticated_user(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    model.route = "sst"
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def execute(self, query, parameters):
+            self.query = query
+            self.parameters = parameters
+        def fetchall(self):
+            return [
+                ("Lucas", "Eletricista", "Matriz", 10, "Eletricidade", 24),
+                ("Lucas", "Eletricista", "Matriz", 18, "Construção", 12),
+            ]
+
+    class Connection:
+        def __init__(self):
+            self.db_cursor = Cursor()
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def cursor(self):
+            return self.db_cursor
+
+    connection = Connection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
+
+    response = client.post("/chat/messages", json={
+        "message": "Quais NRs são obrigatórias para minha função?",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "sst", "consultar_nrs_obrigatorias",
+        "juiz", "guardrail_saida",
+    ]
+    assert "Para o cargo Eletricista" in body["resposta"]
+    assert "NR-10" in body["resposta"] and "NR-18" in body["resposta"]
+    assert "Fonte:" not in body["resposta"]
+    assert "PostgreSQL" not in body["resposta"]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz",
+    ]
+    assert connection.db_cursor.parameters == ["user-a"]
 
 
 def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatch):

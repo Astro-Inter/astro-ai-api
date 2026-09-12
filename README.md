@@ -241,6 +241,21 @@ consulta. A mesma configuração `MONGODB_URI` e
 `MONGODB_DATABASE` usada pelo histórico é reutilizada; nenhuma variável nova é
 necessária.
 
+A tool `consultar_nrs_obrigatorias` usa o Firebase UID injetado pelo backend e
+consulta no PostgreSQL somente as NRs vigentes aplicáveis ao próprio usuário. A
+regra combina o cargo e a unidade atuais: a NR precisa estar vinculada ao cargo em
+`cargo_nr` e à unidade em `unidade_nr`. O resultado contém cargo, unidade, número,
+título e intervalo de reciclagem. A tool não aceita UID, nome ou cargo informados
+pelo modelo, e administradores sem vínculo funcional recebem resultado não aplicável.
+A origem técnica permanece somente na evidência interna enviada ao Juiz e não é
+exibida na resposta ao usuário.
+
+Os joins diretos já usam chaves primárias e relacionamentos pequenos, portanto uma
+view comum não produziria ganho de desempenho por si só. Se essa regra passar a ser
+reutilizada por outras APIs ou relatórios, uma view como
+`vw_nrs_obrigatorias_usuario` pode centralizar a interseção entre cargo e unidade;
+índices continuam sendo o recurso responsável pelo desempenho da consulta.
+
 ## Histórico persistente e sessões (SCRUM-187)
 
 Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY`,

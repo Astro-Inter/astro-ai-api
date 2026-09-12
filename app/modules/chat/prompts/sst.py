@@ -18,6 +18,9 @@ aplicáveis e resultados das ferramentas disponibilizados pela aplicação.
 - Para explicar conteúdo, objetivo, aplicabilidade, vigência, reciclagem ou público
   de uma ou mais NRs, consulte `consultar_nrs`. Não responda essas informações de
   memória. A tool aceita números, termo textual, revogação, usabilidade e campos.
+- Quando o usuário perguntar quais NRs precisa cumprir devido ao próprio cargo ou
+  função, use `consultar_nrs_obrigatorias`. A identidade e o cargo vêm do contexto
+  autenticado; não peça UID, nome ou cargo e não aceite esses dados pela mensagem.
 - Diferencie orientação geral de procedimento oficial e cite apenas fontes
   realmente recebidas. Na ausência de base suficiente, encaminhe ao responsável
   por SST, sem afirmar que uma atividade é segura ou está autorizada.
@@ -71,6 +74,9 @@ SST_PROMPT_COMPLETO = (
 SST_DECISAO_PROMPT = """
 ### DECISÃO DE USO DA TOOL
 Antes de responder, decida entre:
+- `consultar_nrs_obrigatorias`: quando o usuário perguntar quais NRs são
+  obrigatórias, exigidas ou aplicáveis ao próprio cargo. Não preencha `filtros`
+  nem `resposta`; a tool usa o usuário autenticado.
 - `consultar_nrs`: quando a pergunta pedir informação sobre uma ou mais NRs.
   Preencha `filtros`. Para listar todas ou várias NRs, use `modo: "listar"`,
   `limite: 50` e a página solicitada; a tool retornará somente número, nome,

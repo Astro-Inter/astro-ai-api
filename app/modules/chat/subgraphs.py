@@ -113,6 +113,20 @@ def _filtros_deterministicos_nrs(message: str) -> ConsultarNrsArgs | None:
     )
 
 
+def _pedido_nrs_obrigatorias(message: str) -> bool:
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    mentions_nr = bool(re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized))
+    obligation = bool(re.search(
+        r"\b(obrigatori\w*|preciso cumprir|devo cumprir|aplicaveis? (?:ao|a) meu|"
+        r"exigid[ao]s?|para (?:o )?meu cargo|para (?:a )?minha funcao)\b",
+        normalized,
+    ))
+    return mentions_nr and obligation
+
+
 def _formatar_usuarios(result: dict) -> str:
     if result.get("status") == "sem_dados":
         return "Não encontrei usuários com os filtros informados."
@@ -217,6 +231,47 @@ def _evidencia_compacta_nrs(result: dict) -> dict:
         }),
         "fonte": result.get("fonte"),
         "paginacao": result.get("paginacao"),
+        "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
+    }
+
+
+def _formatar_nrs_obrigatorias(result: dict) -> str:
+    if result.get("status") == "nao_aplicavel":
+        return result["mensagem"]
+    if result.get("status") == "sem_dados":
+        return result.get("mensagem", "Não encontrei seu cadastro funcional.")
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar suas NRs obrigatórias.")
+
+    nrs = result["nrs"]
+    header = (
+        f"Para o cargo {result['cargo']}, na unidade {result['unidade']}, "
+        f"encontrei {len(nrs)} NR(s) vigente(s) vinculada(s):"
+    )
+    if not nrs:
+        return "\n".join([
+            header,
+            "Nenhuma NR vigente está vinculada ao seu cargo.",
+        ])
+    lines = []
+    for nr in nrs:
+        recycling = nr.get("tempo_reciclagem_meses")
+        suffix = f" | reciclagem: {recycling} meses" if recycling is not None else ""
+        lines.append(f"- NR-{nr['numero']} — {nr['titulo']}{suffix}")
+    return "\n".join([
+        header,
+        *lines,
+    ])
+
+
+def _evidencia_nrs_obrigatorias(result: dict) -> dict:
+    return {
+        "status": result.get("status"),
+        "cargo": result.get("cargo"),
+        "unidade": result.get("unidade"),
+        "quantidade": result.get("quantidade", 0),
+        "nrs": result.get("nrs", []),
+        "fonte": result.get("fonte"),
         "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
     }
 
@@ -346,6 +401,12 @@ def build_rh_graph(model: AgentModel):
 
 def build_sst_graph(model: AgentModel):
     async def decide(state: ChatState):
+        if _pedido_nrs_obrigatorias(state["mensagem"]):
+            return {
+                "sst_route": "tool",
+                "sst_decision": SstToolDecision(acao="consultar_nrs_obrigatorias"),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
         deterministic_filters = _filtros_deterministicos_nrs(state["mensagem"])
         if deterministic_filters is not None:
             return {
@@ -373,17 +434,29 @@ def build_sst_graph(model: AgentModel):
     async def use_tool(state: ChatState):
         decision = state["sst_decision"]
         tool_name = decision.acao
-        result = await SST_TOOLS[tool_name].ainvoke(decision.filtros.model_dump())
+        tool_input = decision.filtros.model_dump() if decision.filtros is not None else {}
+        result = await SST_TOOLS[tool_name].ainvoke(
+            tool_input,
+            config={"configurable": {
+                "usuario_atual": state["usuario_atual"].model_dump(),
+            }},
+        )
         tool_status = result.get("status")
         statuses = {
             "ok": "concluido",
             "sem_dados": "sem_dados",
             "indisponivel": "indisponivel",
+            "erro": "nao_autorizado",
+            "nao_aplicavel": "nao_autorizado",
         }
         messages = {
             "ok": f"Consulta concluída com {result.get('quantidade', 0)} NR(s).",
             "sem_dados": "Nenhuma NR foi encontrada com os filtros informados.",
             "indisponivel": "Não foi possível consultar as NRs no momento.",
+            "erro": "Não foi possível identificar o usuário autenticado.",
+            "nao_aplicavel": result.get(
+                "mensagem", "A consulta não se aplica ao perfil autenticado.",
+            ),
         }
         specialist_result = {
             "dominio": "sst",
@@ -397,15 +470,20 @@ def build_sst_graph(model: AgentModel):
                 "titulo": "Normas Regulamentadoras",
                 "referencia": "MongoDB: collection nrs",
             }],
-            "evidencia_tool": {
-                "nome": tool_name,
-                "resultado": _evidencia_compacta_nrs(result),
-            },
+            "evidencia_tool": {"nome": tool_name, "resultado": (
+                _evidencia_nrs_obrigatorias(result)
+                if tool_name == "consultar_nrs_obrigatorias"
+                else _evidencia_compacta_nrs(result)
+            )},
         }
         return {
             "resultado_tool": result,
             "resultado": specialist_result,
-            "candidato": _formatar_nrs(result),
+            "candidato": (
+                _formatar_nrs_obrigatorias(result)
+                if tool_name == "consultar_nrs_obrigatorias"
+                else _formatar_nrs(result)
+            ),
             "agentes_chamados": state["agentes_chamados"] + [tool_name],
         }
 

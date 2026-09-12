@@ -8,6 +8,7 @@ from pymongo.errors import ServerSelectionTimeoutError
 from app.core import config
 from app.modules.sst import tools as sst_tools
 from app.modules.sst.tools import ConsultarNrsArgs, SstToolDecision, consultar_nrs
+from app.modules.sst.tools import consultar_nrs_obrigatorias
 
 
 class FakeCursor:
@@ -55,6 +56,40 @@ class FakeCollection:
             raise self.error
         self.count_query = query
         return len(self.documents)
+
+
+class FakePostgresCursor:
+    def __init__(self, rows):
+        self.rows = rows
+        self.query = None
+        self.parameters = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def execute(self, query, parameters):
+        self.query = query
+        self.parameters = parameters
+
+    def fetchall(self):
+        return self.rows
+
+
+class FakePostgresConnection:
+    def __init__(self, rows):
+        self.db_cursor = FakePostgresCursor(rows)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def cursor(self):
+        return self.db_cursor
 
 
 @pytest.fixture
@@ -183,7 +218,84 @@ def test_sst_tool_contract_accepts_empty_query_and_rejects_invalid_payload():
 
 def test_sst_tool_is_registered_with_safe_schema():
     assert consultar_nrs.name == "consultar_nrs"
-    assert sst_tools.TOOLS_SST == [consultar_nrs]
+    assert consultar_nrs_obrigatorias.name == "consultar_nrs_obrigatorias"
+    assert sst_tools.TOOLS_SST == [consultar_nrs, consultar_nrs_obrigatorias]
     properties = consultar_nrs.args_schema.model_json_schema()["properties"]
     assert "collection" not in properties
     assert "query" not in properties
+    assert consultar_nrs_obrigatorias.args_schema.model_json_schema()["properties"] == {}
+
+
+def test_consultar_nrs_obrigatorias_uses_authenticated_user_and_current_schema(monkeypatch):
+    rows = [
+        ("Lucas", "Eletricista", "Unidade Centro", 10, "Segurança em Eletricidade", 24),
+        ("Lucas", "Eletricista", "Unidade Centro", 18, "Construção", 12),
+    ]
+    connection = FakePostgresConnection(rows)
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
+
+    result = consultar_nrs_obrigatorias.invoke(
+        {},
+        config={"configurable": {
+            "usuario_atual": {"uid": "firebase-owner", "role": "FUNCIONARIO"},
+        }},
+    )
+
+    assert result == {
+        "status": "ok",
+        "usuario": "Lucas",
+        "cargo": "Eletricista",
+        "unidade": "Unidade Centro",
+        "quantidade": 2,
+        "nrs": [
+            {"numero": 10, "titulo": "Segurança em Eletricidade", "tempo_reciclagem_meses": 24},
+            {"numero": 18, "titulo": "Construção", "tempo_reciclagem_meses": 12},
+        ],
+        "fonte": {
+            "tipo": "postgresql",
+            "tabelas": [
+                "usuario", "cargo", "unidade", "cargo_nr", "unidade_nr", "nr_catalogo",
+            ],
+        },
+    }
+    assert connection.db_cursor.parameters == ["firebase-owner"]
+    assert "FROM usuario" in connection.db_cursor.query
+    assert "JOIN cargo_nr" in connection.db_cursor.query
+    assert "JOIN unidade_nr" in connection.db_cursor.query
+    assert "nr_catalogo.revogada = FALSE" in connection.db_cursor.query
+    assert "usuarios" not in connection.db_cursor.query
+
+
+def test_consultar_nrs_obrigatorias_returns_empty_assignment(monkeypatch):
+    connection = FakePostgresConnection([
+        ("Lucas", "Analista", "Matriz", None, None, None),
+    ])
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
+
+    result = consultar_nrs_obrigatorias.invoke(
+        {},
+        config={"configurable": {
+            "usuario_atual": {"uid": "firebase-owner", "role": "FUNCIONARIO"},
+        }},
+    )
+
+    assert result["status"] == "ok"
+    assert result["quantidade"] == 0
+    assert result["nrs"] == []
+
+
+def test_consultar_nrs_obrigatorias_does_not_apply_to_admin(monkeypatch):
+    monkeypatch.setattr(
+        sst_tools,
+        "get_postgres_connection",
+        lambda: pytest.fail("admin nao deve consultar o banco"),
+    )
+    result = consultar_nrs_obrigatorias.invoke(
+        {},
+        config={"configurable": {
+            "usuario_atual": {"uid": "admin-uid", "role": "ADMIN"},
+        }},
+    )
+    assert result["status"] == "nao_aplicavel"
