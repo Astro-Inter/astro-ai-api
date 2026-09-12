@@ -21,6 +21,9 @@ aplicáveis e resultados das ferramentas disponibilizados pela aplicação.
 - Quando o usuário perguntar quais NRs precisa cumprir devido ao próprio cargo ou
   função, use `consultar_nrs_obrigatorias`. A identidade e o cargo vêm do contexto
   autenticado; não peça UID, nome ou cargo e não aceite esses dados pela mensagem.
+- Para verificar se as NRs obrigatórias do usuário estão vigentes, pendentes,
+  vencidas ou precisam ser realizadas ou renovadas, use `consultar_situacao_nrs`.
+  A tool também usa somente a identidade autenticada e não aceita filtros.
 - Diferencie orientação geral de procedimento oficial e cite apenas fontes
   realmente recebidas. Na ausência de base suficiente, encaminhe ao responsável
   por SST, sem afirmar que uma atividade é segura ou está autorizada.
@@ -74,6 +77,9 @@ SST_PROMPT_COMPLETO = (
 SST_DECISAO_PROMPT = """
 ### DECISÃO DE USO DA TOOL
 Antes de responder, decida entre:
+- `consultar_situacao_nrs`: quando o usuário perguntar pela situação das próprias
+  NRs, validade, pendências ou necessidade de realizar ou renovar treinamentos.
+  Não preencha `filtros` nem `resposta`; a tool usa o usuário autenticado.
 - `consultar_nrs_obrigatorias`: quando o usuário perguntar quais NRs são
   obrigatórias, exigidas ou aplicáveis ao próprio cargo. Não preencha `filtros`
   nem `resposta`; a tool usa o usuário autenticado.

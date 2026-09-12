@@ -127,6 +127,24 @@ def _pedido_nrs_obrigatorias(message: str) -> bool:
     return mentions_nr and obligation
 
 
+def _pedido_situacao_nrs(message: str) -> bool:
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    mentions_nr = bool(re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized))
+    personal_context = bool(re.search(
+        r"\b(minhas?|meus?|para mim|eu preciso|preciso|devo|tenho que)\b",
+        normalized,
+    ))
+    situation = bool(re.search(
+        r"\b(situacao|status|valid[ao]s?|validade|em dia|pendent\w*|vencid\w*|"
+        r"realizar|renovar|renovacao|reciclagem)\b",
+        normalized,
+    ))
+    return mentions_nr and personal_context and situation
+
+
 def _formatar_usuarios(result: dict) -> str:
     if result.get("status") == "sem_dados":
         return "Não encontrei usuários com os filtros informados."
@@ -276,6 +294,62 @@ def _evidencia_nrs_obrigatorias(result: dict) -> dict:
     }
 
 
+def _formatar_situacao_nrs(result: dict) -> str:
+    if result.get("status") == "nao_aplicavel":
+        return result["mensagem"]
+    if result.get("status") == "sem_dados":
+        return result.get("mensagem", "Não encontrei seu cadastro funcional.")
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar a situação das suas NRs.")
+
+    nrs = result["nrs"]
+    header = (
+        f"Situação das NRs obrigatórias para o cargo {result['cargo']}, "
+        f"na unidade {result['unidade']}:"
+    )
+    if not nrs:
+        return "\n".join([header, "Nenhuma NR vigente está vinculada ao seu cargo."])
+
+    situation_labels = {
+        "VIGENTE": "vigente",
+        "PENDENTE": "pendente",
+        "RENOVACAO_NECESSARIA": "renovação necessária",
+        "REALIZACAO_NECESSARIA": "realização necessária",
+    }
+    action_labels = {
+        "NENHUMA": "nenhuma ação imediata",
+        "CONCLUIR_PENDENCIA": "concluir atividade pendente",
+        "RENOVAR_EM_BREVE": "renovar em breve",
+        "RENOVAR": "renovar",
+        "REALIZAR": "realizar",
+    }
+    lines = []
+    for nr in nrs:
+        details = [
+            f"situação: {situation_labels.get(nr['situacao'], nr['situacao'].lower())}",
+            f"ação: {action_labels.get(nr['acao_necessaria'], nr['acao_necessaria'].lower())}",
+        ]
+        if nr.get("data_validade"):
+            details.append(f"validade: {nr['data_validade']}")
+        if nr.get("data_inicio_pendencia"):
+            details.append(f"atividade prevista: {nr['data_inicio_pendencia']}")
+        lines.append(f"- NR-{nr['numero']} — {nr['titulo']} | " + " | ".join(details))
+    return "\n".join([header, *lines])
+
+
+def _evidencia_situacao_nrs(result: dict) -> dict:
+    return {
+        "status": result.get("status"),
+        "cargo": result.get("cargo"),
+        "unidade": result.get("unidade"),
+        "data_referencia": result.get("data_referencia"),
+        "quantidade": result.get("quantidade", 0),
+        "nrs": result.get("nrs", []),
+        "fonte": result.get("fonte"),
+        "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
+    }
+
+
 def build_specialist_graph(domain: str, model: AgentModel):
     async def specialist(state: ChatState):
         result = await invoke_agent(
@@ -401,6 +475,12 @@ def build_rh_graph(model: AgentModel):
 
 def build_sst_graph(model: AgentModel):
     async def decide(state: ChatState):
+        if _pedido_situacao_nrs(state["mensagem"]):
+            return {
+                "sst_route": "tool",
+                "sst_decision": SstToolDecision(acao="consultar_situacao_nrs"),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
         if _pedido_nrs_obrigatorias(state["mensagem"]):
             return {
                 "sst_route": "tool",
@@ -468,10 +548,16 @@ def build_sst_graph(model: AgentModel):
             "recomendacao": "",
             "fontes": [{
                 "titulo": "Normas Regulamentadoras",
-                "referencia": "MongoDB: collection nrs",
+                "referencia": (
+                    "MongoDB: collection nrs"
+                    if tool_name == "consultar_nrs"
+                    else "PostgreSQL: registros funcionais e de conformidade"
+                ),
             }],
             "evidencia_tool": {"nome": tool_name, "resultado": (
-                _evidencia_nrs_obrigatorias(result)
+                _evidencia_situacao_nrs(result)
+                if tool_name == "consultar_situacao_nrs"
+                else _evidencia_nrs_obrigatorias(result)
                 if tool_name == "consultar_nrs_obrigatorias"
                 else _evidencia_compacta_nrs(result)
             )},
@@ -480,7 +566,9 @@ def build_sst_graph(model: AgentModel):
             "resultado_tool": result,
             "resultado": specialist_result,
             "candidato": (
-                _formatar_nrs_obrigatorias(result)
+                _formatar_situacao_nrs(result)
+                if tool_name == "consultar_situacao_nrs"
+                else _formatar_nrs_obrigatorias(result)
                 if tool_name == "consultar_nrs_obrigatorias"
                 else _formatar_nrs(result)
             ),

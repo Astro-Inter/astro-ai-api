@@ -97,7 +97,12 @@ class SstToolDecision(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    acao: Literal["consultar_nrs", "consultar_nrs_obrigatorias", "responder"]
+    acao: Literal[
+        "consultar_nrs",
+        "consultar_nrs_obrigatorias",
+        "consultar_situacao_nrs",
+        "responder",
+    ]
     filtros: ConsultarNrsArgs | None = None
     resposta: SpecialistResult | None = None
 
@@ -108,7 +113,9 @@ class SstToolDecision(BaseModel):
                 and data.get("filtros") is None:
             data = dict(data)
             data["filtros"] = {}
-        if isinstance(data, dict) and data.get("acao") == "consultar_nrs_obrigatorias":
+        if isinstance(data, dict) and data.get("acao") in {
+            "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+        }:
             data = dict(data)
             data["filtros"] = None
         return data
@@ -123,6 +130,10 @@ class SstToolDecision(BaseModel):
             self.filtros is not None or self.resposta is not None
         ):
             raise ValueError("A consulta de NRs obrigatorias nao aceita filtros nem resposta.")
+        if self.acao == "consultar_situacao_nrs" and (
+            self.filtros is not None or self.resposta is not None
+        ):
+            raise ValueError("A consulta da situacao das NRs nao aceita filtros nem resposta.")
         if self.acao == "responder" and (self.resposta is None or self.filtros is not None):
             raise ValueError("A resposta direta exige resultado e nao aceita filtros.")
         if self.resposta is not None and self.resposta.dominio != "sst":
@@ -340,4 +351,166 @@ def consultar_nrs_obrigatorias(config: RunnableConfig = None) -> dict:
     }
 
 
-TOOLS_SST = [consultar_nrs, consultar_nrs_obrigatorias]
+@tool("consultar_situacao_nrs")
+def consultar_situacao_nrs(config: RunnableConfig = None) -> dict:
+    """Consulta a situação das NRs obrigatórias do usuário autenticado.
+
+    Identifica NRs vigentes, pendentes, vencidas ou ainda não realizadas e
+    informa a ação necessária. A identidade vem exclusivamente do contexto
+    autenticado; a ferramenta não aceita UID ou filtros definidos pelo modelo.
+    """
+    user = _usuario_do_contexto(config)
+    if user is None:
+        return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
+    if user.role == "ADMIN":
+        return {
+            "status": "nao_aplicavel",
+            "mensagem": "Administradores nao possuem cargo funcional associado.",
+        }
+    if not app_config.DATABASE_URL:
+        return {
+            "status": "indisponivel",
+            "mensagem": "Consulta da situacao das NRs indisponivel.",
+        }
+
+    query = """
+        WITH usuario_atual AS (
+            SELECT usuario.id_usuario,
+                   usuario.nome AS usuario,
+                   cargo.id_cargo,
+                   cargo.nome AS cargo,
+                   unidade.id_unidade,
+                   unidade.nome AS unidade
+              FROM usuario
+              JOIN cargo
+                ON cargo.id_cargo = usuario.cargo_id
+              JOIN unidade
+                ON unidade.id_unidade = usuario.unidade_id
+             WHERE usuario.firebase_uid = %s
+             LIMIT 1
+        ),
+        nrs_obrigatorias AS (
+            SELECT usuario_atual.*,
+                   nr_catalogo.codigo_nr AS numero,
+                   nr_catalogo.titulo
+              FROM usuario_atual
+              LEFT JOIN cargo_nr
+                ON cargo_nr.cargo_id = usuario_atual.id_cargo
+              LEFT JOIN unidade_nr
+                ON unidade_nr.unidade_id = usuario_atual.id_unidade
+               AND unidade_nr.nr_id = cargo_nr.nr_id
+              LEFT JOIN nr_catalogo
+                ON nr_catalogo.codigo_nr = unidade_nr.nr_id
+               AND nr_catalogo.revogada = FALSE
+        )
+        SELECT nrs_obrigatorias.usuario,
+               nrs_obrigatorias.cargo,
+               nrs_obrigatorias.unidade,
+               nrs_obrigatorias.numero,
+               nrs_obrigatorias.titulo,
+               conformidade_atual.data_validade,
+               pendencia.data_inicial,
+               pendencia.data_termino,
+               CASE
+                   WHEN nrs_obrigatorias.numero IS NULL THEN NULL
+                   WHEN conformidade_atual.data_validade >= CURRENT_DATE THEN 'VIGENTE'
+                   WHEN pendencia.id_turma_funcionario IS NOT NULL THEN 'PENDENTE'
+                   WHEN conformidade_atual.data_validade < CURRENT_DATE
+                       THEN 'RENOVACAO_NECESSARIA'
+                   ELSE 'REALIZACAO_NECESSARIA'
+               END AS situacao,
+               CASE
+                   WHEN nrs_obrigatorias.numero IS NULL THEN NULL
+                   WHEN pendencia.id_turma_funcionario IS NOT NULL
+                       THEN 'CONCLUIR_PENDENCIA'
+                   WHEN conformidade_atual.data_validade > CURRENT_DATE + 30 THEN 'NENHUMA'
+                   WHEN conformidade_atual.data_validade >= CURRENT_DATE
+                       THEN 'RENOVAR_EM_BREVE'
+                   WHEN conformidade_atual.data_validade < CURRENT_DATE THEN 'RENOVAR'
+                   ELSE 'REALIZAR'
+               END AS acao_necessaria,
+               CURRENT_DATE AS data_referencia
+          FROM nrs_obrigatorias
+          LEFT JOIN LATERAL (
+              SELECT conformidade.data_validade
+                FROM conformidade
+               WHERE conformidade.usuario_id = nrs_obrigatorias.id_usuario
+                 AND conformidade.nr_id = nrs_obrigatorias.numero
+                 AND conformidade.aplicavel IS TRUE
+               ORDER BY conformidade.data_validade DESC NULLS LAST,
+                        conformidade.id_conformidade DESC
+               LIMIT 1
+          ) AS conformidade_atual ON TRUE
+          LEFT JOIN LATERAL (
+              SELECT turma_funcionario.id_turma_funcionario,
+                     turma.data_inicial,
+                     turma.data_termino
+                FROM turma_funcionario
+                JOIN turma
+                  ON turma.id_turma = turma_funcionario.turma_id
+                JOIN evento
+                  ON evento.id_evento = turma.evento_id
+                LEFT JOIN conclusao_evento
+                  ON conclusao_evento.turma_funcionario_id =
+                     turma_funcionario.id_turma_funcionario
+               WHERE turma_funcionario.usuario_id = nrs_obrigatorias.id_usuario
+                 AND evento.nr_id = nrs_obrigatorias.numero
+                 AND evento.status <> 'CANCELADO'
+                 AND COALESCE(conclusao_evento.status, 'PENDENTE') = 'PENDENTE'
+               ORDER BY turma.data_inicial
+               LIMIT 1
+          ) AS pendencia ON TRUE
+         ORDER BY nrs_obrigatorias.numero
+    """
+    try:
+        with get_postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, [user.uid])
+                rows = cursor.fetchall()
+    except Exception:
+        return {
+            "status": "indisponivel",
+            "mensagem": "Consulta da situacao das NRs indisponivel.",
+        }
+
+    if not rows:
+        return {
+            "status": "sem_dados",
+            "mensagem": "Usuario autenticado nao encontrado no cadastro funcional.",
+        }
+
+    employee, role_name, unit = rows[0][:3]
+    nrs = []
+    for row in rows:
+        if row[3] is None:
+            continue
+        nrs.append({
+            "numero": row[3],
+            "titulo": row[4],
+            "situacao": row[8],
+            "acao_necessaria": row[9],
+            "data_validade": _valor_publico(row[5]),
+            "atividade_pendente": row[6] is not None,
+            "data_inicio_pendencia": _valor_publico(row[6]),
+            "data_termino_pendencia": _valor_publico(row[7]),
+        })
+    return {
+        "status": "ok",
+        "usuario": employee,
+        "cargo": role_name,
+        "unidade": unit,
+        "data_referencia": _valor_publico(rows[0][10]),
+        "quantidade": len(nrs),
+        "nrs": nrs,
+        "fonte": {
+            "tipo": "postgresql",
+            "tabelas": [
+                "usuario", "cargo", "unidade", "cargo_nr", "unidade_nr",
+                "nr_catalogo", "conformidade", "turma_funcionario", "turma",
+                "evento", "conclusao_evento",
+            ],
+        },
+    }
+
+
+TOOLS_SST = [consultar_nrs, consultar_nrs_obrigatorias, consultar_situacao_nrs]

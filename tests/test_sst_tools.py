@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import re
 
 import pytest
@@ -8,7 +8,7 @@ from pymongo.errors import ServerSelectionTimeoutError
 from app.core import config
 from app.modules.sst import tools as sst_tools
 from app.modules.sst.tools import ConsultarNrsArgs, SstToolDecision, consultar_nrs
-from app.modules.sst.tools import consultar_nrs_obrigatorias
+from app.modules.sst.tools import consultar_nrs_obrigatorias, consultar_situacao_nrs
 
 
 class FakeCursor:
@@ -219,11 +219,15 @@ def test_sst_tool_contract_accepts_empty_query_and_rejects_invalid_payload():
 def test_sst_tool_is_registered_with_safe_schema():
     assert consultar_nrs.name == "consultar_nrs"
     assert consultar_nrs_obrigatorias.name == "consultar_nrs_obrigatorias"
-    assert sst_tools.TOOLS_SST == [consultar_nrs, consultar_nrs_obrigatorias]
+    assert consultar_situacao_nrs.name == "consultar_situacao_nrs"
+    assert sst_tools.TOOLS_SST == [
+        consultar_nrs, consultar_nrs_obrigatorias, consultar_situacao_nrs,
+    ]
     properties = consultar_nrs.args_schema.model_json_schema()["properties"]
     assert "collection" not in properties
     assert "query" not in properties
     assert consultar_nrs_obrigatorias.args_schema.model_json_schema()["properties"] == {}
+    assert consultar_situacao_nrs.args_schema.model_json_schema()["properties"] == {}
 
 
 def test_consultar_nrs_obrigatorias_uses_authenticated_user_and_current_schema(monkeypatch):
@@ -293,6 +297,79 @@ def test_consultar_nrs_obrigatorias_does_not_apply_to_admin(monkeypatch):
         lambda: pytest.fail("admin nao deve consultar o banco"),
     )
     result = consultar_nrs_obrigatorias.invoke(
+        {},
+        config={"configurable": {
+            "usuario_atual": {"uid": "admin-uid", "role": "ADMIN"},
+        }},
+    )
+    assert result["status"] == "nao_aplicavel"
+
+
+def test_consultar_situacao_nrs_classifies_requirements_for_authenticated_user(monkeypatch):
+    reference_date = date(2026, 9, 12)
+    connection = FakePostgresConnection([
+        (
+            "Lucas", "Eletricista", "Matriz", 10, "Segurança em Eletricidade",
+            date(2027, 9, 12), None, None, "VIGENTE", "NENHUMA", reference_date,
+        ),
+        (
+            "Lucas", "Eletricista", "Matriz", 12, "Máquinas e Equipamentos",
+            date(2026, 8, 1), datetime(2026, 9, 20, 8), datetime(2026, 9, 20, 12),
+            "PENDENTE", "CONCLUIR_PENDENCIA", reference_date,
+        ),
+        (
+            "Lucas", "Eletricista", "Matriz", 18, "Construção",
+            date(2026, 8, 12), None, None, "RENOVACAO_NECESSARIA", "RENOVAR",
+            reference_date,
+        ),
+        (
+            "Lucas", "Eletricista", "Matriz", 35, "Trabalho em Altura",
+            None, None, None, "REALIZACAO_NECESSARIA", "REALIZAR", reference_date,
+        ),
+    ])
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
+
+    result = consultar_situacao_nrs.invoke(
+        {},
+        config={"configurable": {
+            "usuario_atual": {"uid": "firebase-owner", "role": "FUNCIONARIO"},
+        }},
+    )
+
+    assert result["status"] == "ok"
+    assert result["quantidade"] == 4
+    assert result["data_referencia"] == "2026-09-12"
+    assert result["nrs"][0] == {
+        "numero": 10,
+        "titulo": "Segurança em Eletricidade",
+        "situacao": "VIGENTE",
+        "acao_necessaria": "NENHUMA",
+        "data_validade": "2027-09-12",
+        "atividade_pendente": False,
+        "data_inicio_pendencia": None,
+        "data_termino_pendencia": None,
+    }
+    assert result["nrs"][1]["situacao"] == "PENDENTE"
+    assert result["nrs"][1]["atividade_pendente"] is True
+    assert result["nrs"][2]["acao_necessaria"] == "RENOVAR"
+    assert result["nrs"][3]["acao_necessaria"] == "REALIZAR"
+    assert connection.db_cursor.parameters == ["firebase-owner"]
+    query = connection.db_cursor.query
+    assert "FROM usuario" in query
+    assert "FROM conformidade" in query
+    assert "FROM turma_funcionario" in query
+    assert "LEFT JOIN LATERAL" in query
+    assert "CURRENT_DATE + 30" in query
+
+
+def test_consultar_situacao_nrs_does_not_apply_to_admin(monkeypatch):
+    monkeypatch.setattr(
+        sst_tools,
+        "get_postgres_connection",
+        lambda: pytest.fail("admin nao deve consultar o banco"),
+    )
+    result = consultar_situacao_nrs.invoke(
         {},
         config={"configurable": {
             "usuario_atual": {"uid": "admin-uid", "role": "ADMIN"},

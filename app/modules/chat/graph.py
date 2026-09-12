@@ -81,7 +81,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             state["avaliacao_juiz"]["status"] == "aprovado"
             and evidence.get("nome") in {
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
-                "consultar_nrs_obrigatorias",
+                "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
             }
         ):
             return {
