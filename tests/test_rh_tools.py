@@ -115,13 +115,16 @@ def test_manager_search_is_limited_to_own_unit_and_allowed_profiles(monkeypatch)
     result, connection = run_search(monkeypatch, "GESTOR", filters)
 
     query = connection.db_cursor.query
-    assert "usuarios.unidade_id = (" in query
-    assert "unidades.workspace_id = (" not in query
+    assert "FROM usuario" in query
+    assert "JOIN cargo" in query
+    assert "JOIN unidade" in query
+    assert "usuario.unidade_id = (" in query
+    assert "unidade.workspace_id = (" not in query
     assert "WHERE firebase_uid = %s" in query
-    assert "usuarios.status = ANY(%s)" in query
-    assert "usuarios.tipo = ANY(%s)" in query
-    assert "usuarios.nome ILIKE %s" in query
-    assert "cargos.nome ILIKE %s" in query
+    assert "usuario.status = ANY(%s)" in query
+    assert "usuario.tipo = ANY(%s)" in query
+    assert "usuario.nome ILIKE %s" in query
+    assert "cargo.nome ILIKE %s" in query
     assert connection.db_cursor.parameters == [
         "firebase-owner", ["GESTOR", "FUNCIONARIO"], "firebase-owner",
         ["ATIVO", "PRE_CADASTRADO"], ["FUNCIONARIO"],
@@ -143,9 +146,9 @@ def test_workspace_manager_search_is_limited_to_workspace_and_allowed_profiles(m
         monkeypatch, "GESTOR_WORKSPACE", BuscarOutrosUsuariosArgs(), rows=[],
     )
     query = connection.db_cursor.query
-    assert "unidades.workspace_id = (" in query
+    assert "unidade.workspace_id = (" in query
     assert "unidade_atual.workspace_id" in query
-    assert "usuarios.unidade_id = (" not in query
+    assert "usuario.unidade_id = (" not in query
     assert connection.db_cursor.parameters == [
         "firebase-owner", ["GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"],
         "firebase-owner", 20,
@@ -176,8 +179,8 @@ def test_admin_can_search_all_units_but_never_returns_itself(monkeypatch):
         rows=[], uid="firebase-admin",
     )
     query = connection.db_cursor.query
-    assert "usuarios.unidade_id = (" not in query
-    assert "usuarios.firebase_uid <> %s" in query
+    assert "usuario.unidade_id = (" not in query
+    assert "usuario.firebase_uid <> %s" in query
     assert connection.db_cursor.parameters == ["firebase-admin", 20]
     assert result == {"status": "sem_dados", "quantidade": 0, "usuarios": []}
 
@@ -200,7 +203,10 @@ def test_current_user_tool_returns_only_authenticated_user(monkeypatch):
         }},
     )
 
-    assert "usuarios.firebase_uid = %s" in connection.db_cursor.query
+    assert "FROM usuario" in connection.db_cursor.query
+    assert "JOIN cargo" in connection.db_cursor.query
+    assert "JOIN unidade" in connection.db_cursor.query
+    assert "usuario.firebase_uid = %s" in connection.db_cursor.query
     assert connection.db_cursor.parameters == ["firebase-owner"]
     assert result["status"] == "ok"
     assert result["dados"]["cpf"] == "12345678901"
