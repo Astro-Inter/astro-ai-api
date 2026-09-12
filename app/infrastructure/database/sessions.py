@@ -67,6 +67,7 @@ class MongoSessions:
             await collection.update_one({"_id": session_id, "id_user": uid}, {"$setOnInsert": {
                 "iniciada_em": now, "atualizada_em": now, "resumo": "",
                 "mensagens": [], "status": "ativa", "resumo_indexado": False,
+                "acao_pendente": None,
             }}, upsert=True)
         except DuplicateKeyError:
             # Mesmo ID + outro UID ou corrida de criação: nunca sobrescrever dono.

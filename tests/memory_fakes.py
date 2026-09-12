@@ -14,7 +14,7 @@ class FakeSessions:
         if sid not in self.docs:
             self.docs[sid] = {"_id": sid, "id_user": uid, "mensagens": [], "resumo": "",
                 "iniciada_em": utc_now(), "atualizada_em": utc_now(), "status": "ativa",
-                "resumo_indexado": False}
+                "resumo_indexado": False, "acao_pendente": None}
         return await self.get(sid, uid)
 
     async def get(self, sid, uid):

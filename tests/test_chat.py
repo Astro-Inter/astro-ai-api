@@ -17,6 +17,7 @@ from app.modules.chat.errors import ChatError
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
 from app.modules.rh import tools as rh_tools
+from app.modules.roteador import tools as router_tools
 from app.modules.sst import tools as sst_tools
 from memory_fakes import FakeAccessRoles, FakeFaqVectors, FakeSessions, FakeVectors
 
@@ -125,7 +126,8 @@ def test_specialist_flow(chat_client, domain):
     assert (
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
-        '"consultar_nrs_obrigatorias", "consultar_situacao_nrs"]'
+        '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
+        '"enviar_mensagem"]'
     ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
@@ -371,6 +373,132 @@ def test_sst_agent_consults_nr_status_for_authenticated_user(chat_client, monkey
         "guardrail_entrada", "roteador", "juiz",
     ]
     assert connection.db_cursor.parameters == ["user-a"]
+
+
+def test_router_previews_and_sends_message_only_after_confirmation(chat_client, monkeypatch):
+    client, model, application = chat_client
+
+    class Collection:
+        def __init__(self):
+            self.documents = {}
+        def insert_one(self, document):
+            self.documents[document["_id"]] = document
+        def find_one(self, query):
+            return self.documents.get(query["_id"])
+
+    collection = Collection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(
+        router_tools,
+        "_resolver_destinatarios",
+        lambda uid, recipient: [(7, 21, "Lucas Souza", "lucas@empresa.com")],
+    )
+    monkeypatch.setattr(router_tools, "get_messages_collection", lambda: collection)
+    model.replies["roteador"] = (
+        'MESSAGE={"destinatario":"lucas@empresa.com",'
+        '"mensagem":"Olá! Podemos conversar amanhã?","confirmar_envio":true}'
+    )
+
+    preview = client.post("/chat/messages", json={
+        "message": "Melhore e mande oi, podemos conversar amanhã para lucas@empresa.com",
+    })
+
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert "Prévia para Lucas Souza" in preview_body["resposta"]
+    assert "Olá! Podemos conversar amanhã?" in preview_body["resposta"]
+    assert "Confirma o envio?" in preview_body["resposta"]
+    assert collection.documents == {}
+    session = application.state.chat_service.repository.docs[preview_body["session_id"]]
+    pending = session["acao_pendente"]
+    assert pending["id_envia"] == 7 and pending["id_recebe"] == 21
+    assert preview_body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "enviar_mensagem", "juiz", "guardrail_saida",
+    ]
+
+    model.calls.clear()
+    sent = client.post("/chat/messages", json={
+        "message": "Sim, pode enviar.",
+        "session_id": preview_body["session_id"],
+    })
+
+    assert sent.status_code == 200
+    assert sent.json()["resposta"] == "Mensagem enviada para Lucas Souza (lucas@empresa.com)."
+    assert sent.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "enviar_mensagem", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+    document = collection.documents[pending["id_mensagem"]]
+    assert document["id_envia"] == 7 and document["id_recebe"] == 21
+    assert document["mensagem"] == "Olá! Podemos conversar amanhã?"
+    assert session["acao_pendente"] is None
+
+
+@pytest.mark.parametrize("confirmation", [
+    "Sim", "É isso mesmo que eu quero enviar", "Pode mandar", "Confirmo o envio",
+])
+def test_simple_message_previews_immediately_and_accepts_natural_confirmation(
+    chat_client, monkeypatch, confirmation,
+):
+    client, model, application = chat_client
+
+    class Collection:
+        def __init__(self):
+            self.documents = {}
+
+        def insert_one(self, document):
+            self.documents[document["_id"]] = document
+
+    collection = Collection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(
+        router_tools, "_resolver_destinatarios",
+        lambda uid, recipient: [(7, 21, "Rosa Maduda", "rosa@empresa.com")]
+        if recipient == "Rosa Maduda" or recipient == "rosa@empresa.com" else [],
+    )
+    monkeypatch.setattr(router_tools, "get_messages_collection", lambda: collection)
+    model.replies["roteador"] = "ROUTE=rh"  # O pedido evidente dispensa a classificação do LLM.
+
+    preview = client.post("/chat/messages", json={
+        "message": "Mande um oi para a Rosa Maduda, por favor",
+    })
+
+    assert preview.status_code == 200
+    assert "Prévia para Rosa Maduda (rosa@empresa.com):\n\nOi\n\nConfirma" in (
+        preview.json()["resposta"]
+    )
+    assert collection.documents == {}
+    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+
+    session_id = preview.json()["session_id"]
+    pending = application.state.chat_service.repository.docs[session_id]["acao_pendente"]
+    sent = client.post("/chat/messages", json={
+        "message": confirmation, "session_id": session_id,
+    })
+
+    assert sent.status_code == 200
+    assert sent.json()["resposta"] == "Mensagem enviada para Rosa Maduda (rosa@empresa.com)."
+    assert collection.documents[pending["id_mensagem"]]["mensagem"] == "Oi"
+    assert application.state.chat_service.repository.docs[session_id]["acao_pendente"] is None
+
+
+def test_simple_message_does_not_infer_send_from_negation_or_edit_request():
+    from app.modules.chat.graph import _pedido_simples_de_mensagem
+
+    assert _pedido_simples_de_mensagem("Não mande um oi para a Rosa Maduda") is None
+    assert _pedido_simples_de_mensagem("Não quero mandar um oi para Rosa Maduda") is None
+    assert _pedido_simples_de_mensagem("Como mandar um oi para Rosa Maduda?") is None
+    assert _pedido_simples_de_mensagem("Melhore e mande 'oi' para Rosa Maduda") is None
+    assert _pedido_simples_de_mensagem("Mande um oi para meu amigo") is None
+    assert _pedido_simples_de_mensagem("Mande um oi para a Rosa Maduda").mensagem == "Oi"
+    assert _pedido_simples_de_mensagem("Manda um oi pra Rosa Maduda").destinatario \
+        == "Rosa Maduda"
+    assert _pedido_simples_de_mensagem("Envie a mensagem 'Oi Duda' para Rosa Maduda") \
+        .destinatario == "Rosa Maduda"
 
 
 def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatch):

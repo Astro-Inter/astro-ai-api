@@ -1,4 +1,5 @@
 import re
+import unicodedata
 
 from pydantic import ValidationError
 
@@ -20,6 +21,77 @@ from app.modules.chat.subgraphs import (
 )
 from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.guardrails.saida import GUARDRAIL_SAIDA_PROMPT_COMPLETO
+from app.modules.roteador.tools import EnviarMensagemArgs, TOOLS_ROTEADOR
+
+
+ROTEADOR_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_ROTEADOR}
+
+
+def _sem_acentos(message: str) -> str:
+    return "".join(
+        char for char in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(char)
+    )
+
+
+def _confirmacao_explicita(message: str) -> bool:
+    normalized = _sem_acentos(message).strip().rstrip(".!?")
+    return bool(re.fullmatch(
+        r"(sim(?:,? (?:pode (?:enviar|mandar)|envie|manda))?|"
+        r"confirmo(?: o envio)?|pode (?:enviar|mandar)|envie|envia|manda|mande|"
+        r"e isso mesmo(?: que eu quero enviar|,? pode (?:enviar|mandar))?|isso mesmo|"
+        r"esta certo(?:,? pode (?:enviar|mandar))?|pode mandar assim)",
+        normalized,
+    ))
+
+
+def _cancelamento_explicito(message: str) -> bool:
+    normalized = message.casefold().strip().rstrip(".!?")
+    return bool(re.fullmatch(
+        r"(nao|não|cancelar|cancele|nao envie|não envie|desista|pode cancelar)",
+        normalized,
+    ))
+
+
+def _pedido_simples_de_mensagem(message: str) -> EnviarMensagemArgs | None:
+    """Prepara pedidos evidentes sem depender do LLM; nunca confirma o envio."""
+    normalized = _sem_acentos(message)
+    send_verb = re.search(r"\b(manda|mande|mandar|envie|enviar|envia)\b", normalized)
+    if send_verb is None:
+        return None
+    if re.search(r"\b(nao|como|se)\b", normalized[:send_verb.start()]):
+        return None
+    if re.search(r"\b(melhor[ae]|reescrev\w*|corrig\w*|reformul\w*)\b", normalized):
+        return None
+
+    recipient_match = re.search(
+        r"\b(?:para|pra|pro)\s+(?:(?:a|o|ao)\s+)?(?P<destinatario>.+?)"
+        r"(?=\s*,?\s*por favor\b|\s+e\s+(?:quero|gostaria|vou)\s+(?:enviar|mandar)\b|$)",
+        message, re.IGNORECASE,
+    )
+    if recipient_match is None:
+        return None
+    recipient = recipient_match.group("destinatario").strip(" \t\r\n.,!?\"'“”")
+    # Pronomes e relações não identificam um destinatário sem consulta adicional.
+    if _sem_acentos(recipient) in {"ele", "ela", "meu amigo", "minha amiga", "alguem"}:
+        return None
+
+    before_recipient = message[:recipient_match.start()]
+    quoted = re.search(
+        r"\b(?:mensagem|texto|dizendo)\s*[:]?\s*['\"“](?P<texto>[^'\"”]+)['\"”]",
+        before_recipient, re.IGNORECASE,
+    ) or re.search(r"['\"“](?P<texto>[^'\"”]+)['\"”]", before_recipient)
+    if quoted:
+        body = quoted.group("texto").strip()
+    elif re.search(r"\b(?:um\s+)?oi\b", _sem_acentos(before_recipient)):
+        body = "Oi"
+    else:
+        return None
+
+    try:
+        return EnviarMensagemArgs(destinatario=recipient, mensagem=body)
+    except ValidationError:
+        return None
 
 
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
@@ -36,6 +108,35 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     async def router(state: ChatState):
+        pending = state.get("acao_pendente")
+        if isinstance(pending, dict) and pending.get("tipo") == "enviar_mensagem":
+            if _cancelamento_explicito(state["mensagem"]):
+                return {
+                    "rota": "direta",
+                    "candidato": "O envio foi cancelado. Nenhuma mensagem foi enviada.",
+                    "acao_pendente": None,
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+                }
+            if _confirmacao_explicita(state["mensagem"]):
+                decision = EnviarMensagemArgs(
+                    destinatario=pending["destinatario_email"],
+                    mensagem=pending["mensagem"],
+                    confirmar_envio=True,
+                )
+                return {
+                    "rota": "mensagem",
+                    "roteador_decision": decision,
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+                }
+
+        simple_message = _pedido_simples_de_mensagem(state["mensagem"])
+        if simple_message is not None:
+            return {
+                "rota": "mensagem",
+                "roteador_decision": simple_message,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
+
         text = await invoke_agent(model, "roteador", ROTEADOR_PROMPT_COMPLETO, state)
         if text.startswith("MEMORY="):
             if state.get("memoria_consultada") or search_memory is None:
@@ -46,13 +147,82 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 raise InvalidAgentResponse("roteador") from None
             return {"rota": "memoria", "busca_memoria": search.busca,
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if text.startswith("MESSAGE="):
+            try:
+                decision = EnviarMensagemArgs.model_validate_json(text[len("MESSAGE="):])
+            except ValidationError:
+                raise InvalidAgentResponse("roteador") from None
+            decision.confirmar_envio = False
+            return {
+                "rota": "mensagem",
+                "roteador_decision": decision,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         route = re.fullmatch(r"ROUTE=(rh|sst|agenda|faq)", text)
-        if not route and any(marker in text.upper() for marker in ("ROUTE", "MEMORY=")):
+        if not route and any(
+            marker in text.upper() for marker in ("ROUTE", "MEMORY=", "MESSAGE=")
+        ):
             raise InvalidAgentResponse("roteador")
         return {
             "rota": route.group(1) if route else "direta",
             "candidato": "" if route else text,
             "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+        }
+
+    async def send_message(state: ChatState):
+        decision = state["roteador_decision"]
+        result = await ROTEADOR_TOOLS["enviar_mensagem"].ainvoke(
+            decision.model_dump(),
+            config={"configurable": {
+                "usuario_atual": state["usuario_atual"].model_dump(),
+                "session_id": state["session_id"],
+                "acao_pendente": state.get("acao_pendente"),
+                "confirmacao_explicita": (
+                    decision.confirmar_envio and _confirmacao_explicita(state["mensagem"])
+                ),
+            }},
+        )
+        status = result.get("status")
+        if status == "aguardando_confirmacao":
+            draft = result["rascunho"]
+            recipient = draft["destinatario"]
+            candidate = (
+                f"Prévia para {recipient['nome']} ({recipient['email']}):\n\n"
+                f"{draft['mensagem']}\n\nConfirma o envio?"
+            )
+            pending = result["acao_pendente"]
+        elif status == "ambiguo":
+            options = "\n".join(
+                f"- {item['nome']} — {item['email']}"
+                for item in result.get("destinatarios", [])
+            )
+            candidate = f"{result['mensagem']}\n{options}" if options else result["mensagem"]
+            pending = None
+        elif status == "ok":
+            recipient = result["destinatario"]
+            candidate = f"Mensagem enviada para {recipient['nome']} ({recipient['email']})."
+            pending = None
+        else:
+            candidate = result.get("mensagem", "Não foi possível processar o envio.")
+            pending = state.get("acao_pendente") if status == "indisponivel" else None
+
+        public_result = {
+            key: value for key, value in result.items() if key != "acao_pendente"
+        }
+        return {
+            "resultado_tool": public_result,
+            "resultado": {
+                "dominio": "roteador",
+                "intencao": "enviar_mensagem",
+                "status": status,
+                "evidencia_tool": {
+                    "nome": "enviar_mensagem",
+                    "resultado": public_result,
+                },
+            },
+            "candidato": candidate,
+            "acao_pendente": pending,
+            "agentes_chamados": state["agentes_chamados"] + ["enviar_mensagem"],
         }
 
     async def memory_lookup(state: ChatState):
@@ -82,6 +252,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             and evidence.get("nome") in {
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                 "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+                "enviar_mensagem",
             }
         ):
             return {
@@ -101,16 +272,21 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         # "Aprovado" não autoriza o revisor a introduzir novas informações.
         if decision.status == "aprovado" and decision.resposta != state["candidato"]:
             raise InvalidAgentResponse("guardrail_saida")
-        return {
+        result = {
             "resposta": decision.resposta,
             "guardar_turno": decision.status != "bloqueado",
             "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
         }
+        if evidence.get("nome") == "enviar_mensagem":
+            # Uma prévia reprovada não pode permanecer disponível para confirmação.
+            result["acao_pendente"] = None
+        return result
 
     graph = StateGraph(ChatState)
     graph.add_node("guardrail_entrada", input_guard)
     graph.add_node("roteador", router)
     graph.add_node("buscar_historico", memory_lookup)
+    graph.add_node("enviar_mensagem", send_message)
     graph.add_edge("buscar_historico", "roteador")
     graph.add_node("rh", build_rh_graph(model))
     graph.add_conditional_edges(
@@ -136,8 +312,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     })
     graph.add_conditional_edges("roteador", lambda state: state["rota"], {
         "rh": "rh", "sst": "sst", "agenda": "agenda", "faq": "faq", "direta": "juiz",
-        "memoria": "buscar_historico",
+        "memoria": "buscar_historico", "mensagem": "enviar_mensagem",
     })
+    graph.add_edge("enviar_mensagem", "juiz")
     graph.add_edge("faq", "juiz")
     graph.add_edge("orquestrador", "juiz")
     graph.add_edge("juiz", "guardrail_saida")

@@ -92,25 +92,29 @@ class ChatService:
                     "contexto": {
                         "workspace_id": None, "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
+                        "possui_acao_pendente": bool(doc.get("acao_pendente")),
                         "ferramentas_disponiveis": [
                             "buscar_historico", "consultar_normas",
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+                            "enviar_mensagem",
                         ],
                         "fontes_disponiveis": ["faq_chunks", "nrs"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
                                    "Politicas internas podem ser consultadas apenas na base FAQ "
                                    "autorizada. "
                                    "O agente de RH pode consultar somente os dados de usuarios "
-                                   "permitidos pelo perfil autenticado. Nao ha escrita nem outras "
-                                   "operacoes de negocio. NRs podem ser consultadas na collection "
+                                   "permitidos pelo perfil autenticado. O envio de mensagens exige "
+                                   "destinatario do mesmo workspace, previa e confirmacao explicita. "
+                                   "Nao ha outras operacoes de escrita. NRs podem ser consultadas na collection "
                                    "MongoDB autorizada. "
                                    "Historico nao comprova direitos nem execucao. "
-                                   "Nao incluir escrita, fontes ou evento na saida.",
+                                   "Nao expor identificadores internos, fontes ou metadados na saida.",
                     },
                     "memoria": {}, "busca_memoria": "", "memoria_consultada": False,
                     "rota": "", "resultado": {}, "resultado_tool": {}, "rh_decision": None,
                     "rh_route": "", "sst_decision": None, "sst_route": "",
+                    "roteador_decision": None, "acao_pendente": doc.get("acao_pendente"),
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
@@ -119,7 +123,10 @@ class ChatService:
                                         agentes_chamados=result["agentes_chamados"])
                 if result["guardar_turno"]:
                     await self.repository.update(session_id, user.uid, token,
-                        {"ultima_rota": result["rota"]}, messages=[
+                        {
+                            "ultima_rota": result["rota"],
+                            "acao_pendente": result.get("acao_pendente"),
+                        }, messages=[
                             {"role": "human", "content": request.message},
                             {"role": "assistant", "content": response.resposta},
                         ])

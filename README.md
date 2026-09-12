@@ -155,9 +155,10 @@ contexto confiável da aplicação.
 Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
 No fluxo automático atual, a memória acessa o histórico, a tool de RH consulta
 os usuários permitidos pelo perfil autenticado e a tool de SST consulta NRs na
-collection autorizada. Ainda não há escrita operacional nem tools de negócio para
-Agenda. Esses especialistas podem orientar e esclarecer, mas não criar eventos ou
-executar solicitações. Autenticação não
+collection autorizada. O Roteador pode enviar mensagens após uma prévia e uma
+confirmação explícita; ainda não há tools de negócio para Agenda. Os especialistas
+podem orientar e esclarecer, mas não criar eventos ou executar outras solicitações.
+Autenticação não
 concede acesso automático a dados de outras pessoas ou empresas; cada ferramenta
 deve aplicar sua própria regra de autorização.
 
@@ -256,6 +257,32 @@ reutilizada por outras APIs ou relatórios, uma view como
 `vw_nrs_obrigatorias_usuario` pode centralizar a interseção entre cargo e unidade;
 índices continuam sendo o recurso responsável pelo desempenho da consulta.
 
+### Tool de envio de mensagens do Roteador
+
+`app/modules/roteador/tools.py` registra a tool `enviar_mensagem`. O usuário
+informa nome ou e-mail do destinatário e o texto desejado. O backend resolve o
+Firebase UID autenticado para o `id_usuario` do PostgreSQL e restringe a pesquisa
+a pessoas ativas do mesmo workspace. IDs internos nunca são aceitos como entrada
+do modelo. Pesquisa por e-mail é exata; pesquisa por nome é literal por trecho e
+exige o e-mail quando houver mais de uma correspondência.
+
+O primeiro pedido nunca grava a mensagem, mesmo que o modelo tente confirmar o
+envio. Pedidos simples como “mande um oi para a Rosa” já chegam à prévia na
+primeira resposta; “oi” é o texto e o remetente vem da autenticação, sem precisar
+repetir quem é. Se houver complementos na mesma conversa, o roteador usa o
+histórico recente para aproveitar nome e texto já informados. A aplicação mostra
+uma prévia e armazena na sessão um rascunho com ID estável. Somente uma
+confirmação explícita em uma mensagem seguinte, na mesma sessão e sem alterações
+no destinatário ou no texto, autoriza a gravação. Repetir uma confirmação após
+resposta incerta não duplica o documento. “Sim”, “pode mandar” e “é isso mesmo
+que eu quero enviar” são exemplos de confirmação após a prévia.
+
+As mensagens confirmadas ficam na collection fixa `mensagens`, criada no primeiro
+envio, com `_id`, `id_envia`, `id_recebe`, `mensagem` e `data` em UTC. Os campos
+`id_envia` e `id_recebe` são IDs do PostgreSQL, não Firebase UIDs. A mesma
+configuração `MONGODB_URI` e `MONGODB_DATABASE` já usada pelo histórico é
+reutilizada; nenhuma variável de ambiente nova é necessária.
+
 ## Histórico persistente e sessões (SCRUM-187)
 
 Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY`,
@@ -291,9 +318,9 @@ Um documento por sessão, seguindo a modelagem fornecida. Exemplo ilustrativo:
 }
 ```
 
-Campos auxiliares: `ultima_rota`, `encerrada_em`, `resumo_parcial` e `resumo_ate`
-para progresso do resumo; `lock_token` e `lock_ate` enquanto uma operação reserva
-a sessão. Datas são BSON datetime em UTC. Um documento do formato básico, sem
+Campos auxiliares: `ultima_rota`, `acao_pendente`, `encerrada_em`, `resumo_parcial`
+e `resumo_ate` para progresso do resumo; `lock_token` e `lock_ate` enquanto uma
+operação reserva a sessão. Datas são BSON datetime em UTC. Um documento do formato básico, sem
 `status`, é tratado como ativo; `_id` deve ser UUID em string e `id_user` deve ser
 o UID Firebase. Não existe fallback para um usuário de teste.
 
