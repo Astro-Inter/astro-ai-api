@@ -9,16 +9,18 @@ from app.modules.chat.errors import InvalidAgentResponse
 from app.modules.chat.prompts.agenda import AGENDA_PROMPT_COMPLETO
 from app.modules.chat.prompts.faq import FAQ_PROMPT_COMPLETO
 from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO, RH_PROMPT_COMPLETO
-from app.modules.chat.prompts.sst import SST_PROMPT_COMPLETO
+from app.modules.chat.prompts.sst import SST_DECISAO_PROMPT_COMPLETO, SST_PROMPT_COMPLETO
 from app.modules.chat.schemas import SpecialistResult
 from app.modules.chat.state import ChatState
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision, TOOLS_RH
+from app.modules.sst.tools import ConsultarNrsArgs, SstToolDecision, TOOLS_SST
 
 
 SPECIALIST_PROMPTS = {
     "rh": RH_PROMPT_COMPLETO, "sst": SST_PROMPT_COMPLETO, "agenda": AGENDA_PROMPT_COMPLETO,
 }
 RH_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_RH}
+SST_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_SST}
 
 
 def _pedido_dos_proprios_dados(message: str) -> bool:
@@ -43,6 +45,72 @@ def _pedido_de_todos_os_usuarios(message: str) -> bool:
         r"todas as pessoas do (?:meu|nosso) sistema)\b",
         normalized,
     ))
+
+
+def _filtros_deterministicos_nrs(message: str) -> ConsultarNrsArgs | None:
+    """Reconhece consultas objetivas de NR sem depender de um provedor de IA."""
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    if not re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized):
+        return None
+
+    numbers = [int(value) for value in re.findall(r"\bnr\s*-?\s*(\d{1,2})\b", normalized)]
+    grouped = re.search(
+        r"\bnrs?\s*[-:]?\s*((?:\d{1,2}(?:\s*(?:,|e)\s*\d{1,2})+))",
+        normalized,
+    )
+    if grouped:
+        numbers.extend(int(value) for value in re.findall(r"\d{1,2}", grouped.group(1)))
+    numbers = list(dict.fromkeys(numbers))
+    if len(numbers) > 10:
+        return None
+
+    page_match = re.search(r"\bpagina\s+(\d{1,3})\b", normalized)
+    page = int(page_match.group(1)) if page_match else 1
+    field_markers = {
+        "objetivo": ("objetiv", "finalidade"),
+        "descricao": ("descri", "conteudo", "explica", "detalh"),
+        "aplicabilidade": ("aplicab", "aplica"),
+        "revogada": ("revog", "vigent", "vigencia"),
+        "tempo_reciclagem_meses": ("reciclagem", "reciclar"),
+        "ultima_atualizacao": ("ultima atualizacao", "atualizada", "atualizacao"),
+        "data_criacao": ("data de criacao", "criada", "criacao"),
+        "usabilidade": ("usabilidade", "publico", "quem pode usar"),
+    }
+    fields = [
+        field for field, markers in field_markers.items()
+        if any(marker in normalized for marker in markers)
+    ]
+
+    if numbers:
+        mode = "detalhar" if len(numbers) == 1 or fields else "listar"
+        return ConsultarNrsArgs(
+            numeros=numbers,
+            campos=fields,
+            modo=mode,
+            pagina=page,
+            limite=50,
+        )
+
+    listing = re.search(
+        r"\b(quais|liste|listar|listagem|todas|todos)\b", normalized,
+    )
+    status_query = any(marker in normalized for marker in ("revog", "vigent", "vigencia"))
+    if not listing and not status_query:
+        return None
+    revoked = None
+    if any(marker in normalized for marker in ("vigent", "vigencia", "nao revogad")):
+        revoked = False
+    elif "revog" in normalized:
+        revoked = True
+    return ConsultarNrsArgs(
+        revogada=revoked,
+        modo="listar",
+        pagina=page,
+        limite=50,
+    )
 
 
 def _formatar_usuarios(result: dict) -> str:
@@ -77,6 +145,80 @@ def _formatar_meus_dados(result: dict) -> str:
     }
     lines = [f"- {labels[field]}: {value}" for field, value in data.items() if value is not None]
     return "\n".join(["Estes são os seus dados:", *lines])
+
+
+def _formatar_nrs(result: dict) -> str:
+    if result.get("status") == "sem_dados":
+        return "Não encontrei NRs com os filtros informados."
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar as NRs no momento.")
+
+    pagination = result.get("paginacao", {})
+    if result.get("modo") == "listar":
+        total = pagination.get("total", result.get("quantidade", 0))
+        page = pagination.get("pagina", 1)
+        total_pages = pagination.get("total_paginas", 1)
+        lines = []
+        for nr in result["nrs"]:
+            details = [nr.get("situacao")]
+            if nr.get("ultima_atualizacao"):
+                details.append(f"atualizada em {nr['ultima_atualizacao']}")
+            suffix = f" | {' | '.join(details)}" if any(details) else ""
+            lines.append(f"- NR-{nr.get('numero')} — {nr.get('nome', 'Sem nome')}{suffix}")
+        footer = ["Fonte: MongoDB `nrs`."]
+        if pagination.get("tem_proxima_pagina"):
+            footer.insert(0, f"Há mais resultados. Solicite a página {page + 1}.")
+        return "\n".join([
+            f"Encontrei {total} NR(s). Página {page} de {total_pages}:",
+            *lines,
+            *footer,
+        ])
+
+    labels = {
+        "nome": "Nome", "objetivo": "Objetivo", "descricao": "Descrição",
+        "aplicabilidade": "Aplicabilidade", "revogada": "Revogada",
+        "tempo_reciclagem_meses": "Reciclagem (meses)",
+        "ultima_atualizacao": "Última atualização", "data_criacao": "Criada em",
+        "usabilidade": "Usabilidade",
+    }
+    sections = []
+    for nr in result["nrs"]:
+        number = nr.get("numero")
+        title = f"NR-{number}"
+        if nr.get("nome"):
+            title += f" — {nr['nome']}"
+        details = []
+        for field, label in labels.items():
+            if field == "nome" or field not in nr:
+                continue
+            value = nr[field]
+            if value is None:
+                continue
+            if field == "revogada":
+                value = "Sim" if value else "Não"
+            details.append(f"- {label}: {value}")
+        details.append(f"- Fonte: MongoDB `nrs`, documento NR-{number}")
+        sections.append("\n".join([title, *details]))
+    return "\n\n".join(sections)
+
+
+def _evidencia_compacta_nrs(result: dict) -> dict:
+    """Evita repetir no prompt do Juiz os textos já presentes na candidata."""
+    return {
+        "status": result.get("status"),
+        "quantidade": result.get("quantidade", 0),
+        "modo": result.get("modo"),
+        "numeros": [nr.get("numero") for nr in result.get("nrs", [])],
+        "campos_retornados": sorted({
+            field
+            for nr in result.get("nrs", [])
+            for field in nr
+            if field != "numero"
+        }),
+        "fonte": result.get("fonte"),
+        "paginacao": result.get("paginacao"),
+        "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
+    }
 
 
 def build_specialist_graph(domain: str, model: AgentModel):
@@ -200,6 +342,82 @@ def build_rh_graph(model: AgentModel):
     })
     graph.add_edge("usar_tool_rh", END)
     return graph.compile(name="subgrafo_rh")
+
+
+def build_sst_graph(model: AgentModel):
+    async def decide(state: ChatState):
+        deterministic_filters = _filtros_deterministicos_nrs(state["mensagem"])
+        if deterministic_filters is not None:
+            return {
+                "sst_route": "tool",
+                "sst_decision": SstToolDecision(
+                    acao="consultar_nrs", filtros=deterministic_filters,
+                ),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
+        decision = await invoke_agent(
+            model, "sst", SST_DECISAO_PROMPT_COMPLETO, state, SstToolDecision,
+        )
+        if decision.acao == "responder":
+            return {
+                "sst_route": "fim",
+                "resultado": decision.resposta.model_dump(exclude_none=True),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
+        return {
+            "sst_route": "tool",
+            "sst_decision": decision,
+            "agentes_chamados": state["agentes_chamados"] + ["sst"],
+        }
+
+    async def use_tool(state: ChatState):
+        decision = state["sst_decision"]
+        tool_name = decision.acao
+        result = await SST_TOOLS[tool_name].ainvoke(decision.filtros.model_dump())
+        tool_status = result.get("status")
+        statuses = {
+            "ok": "concluido",
+            "sem_dados": "sem_dados",
+            "indisponivel": "indisponivel",
+        }
+        messages = {
+            "ok": f"Consulta concluída com {result.get('quantidade', 0)} NR(s).",
+            "sem_dados": "Nenhuma NR foi encontrada com os filtros informados.",
+            "indisponivel": "Não foi possível consultar as NRs no momento.",
+        }
+        specialist_result = {
+            "dominio": "sst",
+            "intencao": "consultar",
+            "status": statuses.get(tool_status, "indisponivel"),
+            "resposta": messages.get(
+                tool_status, "Não foi possível confirmar o resultado da consulta.",
+            ),
+            "recomendacao": "",
+            "fontes": [{
+                "titulo": "Normas Regulamentadoras",
+                "referencia": "MongoDB: collection nrs",
+            }],
+            "evidencia_tool": {
+                "nome": tool_name,
+                "resultado": _evidencia_compacta_nrs(result),
+            },
+        }
+        return {
+            "resultado_tool": result,
+            "resultado": specialist_result,
+            "candidato": _formatar_nrs(result),
+            "agentes_chamados": state["agentes_chamados"] + [tool_name],
+        }
+
+    graph = StateGraph(ChatState)
+    graph.add_node("decidir", decide)
+    graph.add_node("usar_tool_sst", use_tool)
+    graph.add_edge(START, "decidir")
+    graph.add_conditional_edges("decidir", lambda state: state["sst_route"], {
+        "tool": "usar_tool_sst", "fim": END,
+    })
+    graph.add_edge("usar_tool_sst", END)
+    return graph.compile(name="subgrafo_sst")
 
 
 def build_faq_graph(model: AgentModel, search_faq=None):

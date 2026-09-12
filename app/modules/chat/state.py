@@ -18,6 +18,8 @@ class ChatState(TypedDict, total=False):
     resultado_tool: dict
     rh_decision: object
     rh_route: str
+    sst_decision: object
+    sst_route: str
     candidato: str
     avaliacao_juiz: dict
     resposta: str

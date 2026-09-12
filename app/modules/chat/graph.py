@@ -12,7 +12,12 @@ from app.modules.chat.prompts.orquestrador import ORQUESTRADOR_PROMPT_COMPLETO
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
 from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch, OutputDecision
 from app.modules.chat.state import ChatState
-from app.modules.chat.subgraphs import build_faq_graph, build_rh_graph, build_specialist_graph
+from app.modules.chat.subgraphs import (
+    build_faq_graph,
+    build_rh_graph,
+    build_specialist_graph,
+    build_sst_graph,
+)
 from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.guardrails.saida import GUARDRAIL_SAIDA_PROMPT_COMPLETO
 
@@ -74,7 +79,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         evidence = state.get("resultado", {}).get("evidencia_tool", {})
         if (
             state["avaliacao_juiz"]["status"] == "aprovado"
-            and evidence.get("nome") in {"buscar_outros_usuarios", "buscar_meus_dados"}
+            and evidence.get("nome") in {
+                "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
+            }
         ):
             return {
                 "resposta": state["candidato"],
@@ -110,9 +117,14 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         lambda state: "juiz" if state.get("candidato") else "orquestrador",
         {"juiz": "juiz", "orquestrador": "orquestrador"},
     )
-    for domain in ("sst", "agenda"):
-        graph.add_node(domain, build_specialist_graph(domain, model))
-        graph.add_edge(domain, "orquestrador")
+    graph.add_node("sst", build_sst_graph(model))
+    graph.add_conditional_edges(
+        "sst",
+        lambda state: "juiz" if state.get("candidato") else "orquestrador",
+        {"juiz": "juiz", "orquestrador": "orquestrador"},
+    )
+    graph.add_node("agenda", build_specialist_graph("agenda", model))
+    graph.add_edge("agenda", "orquestrador")
     graph.add_node("faq", build_faq_graph(model, search_faq))
     graph.add_node("orquestrador", orchestrator)
     graph.add_node("juiz", judge)

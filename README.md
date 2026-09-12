@@ -153,10 +153,11 @@ contexto confiável da aplicação.
   que tente ignorar o Juiz.
 
 Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
-No fluxo automático atual, a memória acessa o histórico e a tool de RH consulta
-os usuários permitidos pelo perfil autenticado. Ainda não há escrita operacional
-nem tools de negócio para SST e Agenda. Esses especialistas podem orientar e
-esclarecer, mas não criar eventos ou executar solicitações. Autenticação não
+No fluxo automático atual, a memória acessa o histórico, a tool de RH consulta
+os usuários permitidos pelo perfil autenticado e a tool de SST consulta NRs na
+collection autorizada. Ainda não há escrita operacional nem tools de negócio para
+Agenda. Esses especialistas podem orientar e esclarecer, mas não criar eventos ou
+executar solicitações. Autenticação não
 concede acesso automático a dados de outras pessoas ou empresas; cada ferramenta
 deve aplicar sua própria regra de autorização.
 
@@ -214,6 +215,31 @@ saída preserva deterministicamente a resposta. Casos reprovados continuam usand
 o revisor de saída. O Roteador recebe no máximo seis mensagens anteriores e cada
 especialista, dez. Após uma falha da Mistral, os especialistas usam Groq durante
 cinco minutos antes de tentar a Mistral novamente.
+
+### Tool de consulta de NRs do SST
+
+`app/modules/sst/tools.py` registra a tool LangChain `consultar_nrs`, somente
+leitura, para consultar a collection `nrs` do MongoDB. Ela aceita uma ou várias
+NRs pelos respectivos números, pesquisa textual nos campos `nome`, `objetivo`,
+`descricao`, `aplicabilidade` e `usabilidade`, além de filtros opcionais de
+revogação e público de uso. Também é possível pedir somente campos específicos.
+
+O nome da collection e a estrutura da consulta ficam no backend: o modelo não
+recebe uma query MongoDB livre. Termos de pesquisa são escapados antes do regex,
+listas e limites são validados. O modo de listagem retorna somente número, nome,
+situação e última atualização, com até 50 documentos por página. O detalhamento
+completo é reservado a uma NR específica; comparações retornam somente os campos
+solicitados e no máximo dez documentos. Os resultados são ordenados pelo número
+da NR e datas são serializadas em ISO 8601.
+
+Perguntas sobre NRs são encaminhadas pelo Roteador ao subgrafo de SST. O agente
+decide os filtros, a tool consulta o MongoDB e o backend formata a resposta com a
+referência à collection e ao documento utilizado. A resposta e a evidência da tool
+seguem para o Juiz e o guardrail de saída. Textos extensos não são duplicados na
+evidência do Juiz; ele recebe a resposta determinística e metadados compactos da
+consulta. A mesma configuração `MONGODB_URI` e
+`MONGODB_DATABASE` usada pelo histórico é reutilizada; nenhuma variável nova é
+necessária.
 
 ## Histórico persistente e sessões (SCRUM-187)
 

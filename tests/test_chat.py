@@ -17,6 +17,7 @@ from app.modules.chat.errors import ChatError
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
 from app.modules.rh import tools as rh_tools
+from app.modules.sst import tools as sst_tools
 from memory_fakes import FakeAccessRoles, FakeFaqVectors, FakeSessions, FakeVectors
 
 
@@ -43,6 +44,16 @@ class FakeModel:
                     "dominio": "rh", "intencao": "consultar", "status": "indisponivel",
                     "resposta": "A consulta está indisponível.",
                     "recomendacao": "Consulte a área responsável.",
+                },
+            })
+        if agent == "sst" and '"acao"' in messages[0].content:
+            return json.dumps({
+                "acao": "responder",
+                "filtros": None,
+                "resposta": {
+                    "dominio": "sst", "intencao": "orientar", "status": "concluido",
+                    "resposta": "Orientação geral de segurança.",
+                    "recomendacao": "Procure a equipe de SST.",
                 },
             })
         if agent in {"rh", "sst", "agenda"}:
@@ -113,11 +124,141 @@ def test_specialist_flow(chat_client, domain):
     assert '"fuso": "America/Sao_Paulo"' in system
     assert (
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
-        '"buscar_outros_usuarios", "buscar_meus_dados"]'
+        '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs"]'
     ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
         assert "SAÍDA PARA O ORQUESTRADOR" not in system
+    if domain == "sst":
+        assert "DECISÃO DE USO DA TOOL" in system
+
+
+def test_sst_agent_consults_multiple_nrs(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    model.route = "sst"
+
+    collection = type("Collection", (), {})()
+
+    class Cursor:
+        def sort(self, *_):
+            return self
+        def skip(self, _):
+            return self
+        def limit(self, _):
+            return self
+        def __iter__(self):
+            return iter([
+                {"_id": 1, "nome": "Disposições Gerais", "objetivo": "Objetivo 1"},
+                {"_id": 6, "nome": "EPI", "objetivo": "Objetivo 6"},
+            ])
+
+    def find(query, projection):
+        collection.query = query
+        collection.projection = projection
+        return Cursor()
+
+    collection.find = find
+    collection.count_documents = lambda _: 2
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(sst_tools, "get_collection", lambda: collection)
+    model.replies["sst"] = json.dumps({
+        "acao": "consultar_nrs",
+        "filtros": {"numeros": [1, 6], "campos": ["objetivo"], "limite": 2},
+        "resposta": None,
+    })
+
+    response = client.post(
+        "/chat/messages", json={"message": "Quais os objetivos das NRs 1 e 6?"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "sst", "consultar_nrs",
+        "juiz", "guardrail_saida",
+    ]
+    assert "NR-1" in response.json()["resposta"]
+    assert "Objetivo 6" in response.json()["resposta"]
+    assert "MongoDB `nrs`" in response.json()["resposta"]
+    assert collection.query == {"_id": {"$in": [1, 6]}}
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz",
+    ]
+    judge_call = next(call for call in model.calls if call[0] == "juiz")
+    review = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
+    evidence = review["resultado"]["evidencia_tool"]["resultado"]
+    assert evidence["numeros"] == [1, 6]
+    assert "nrs" not in evidence
+    assert "Objetivo 1" not in json.dumps(evidence)
+
+
+def test_sst_agent_lists_all_current_nrs_with_compact_payload(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    model.route = "sst"
+    documents = [{
+        "_id": number,
+        "nome": f"Norma {number}",
+        "revogada": False,
+        "ultima_atualizacao": "01/01/2026",
+        "descricao": "conteudo muito extenso " * 500,
+    } for number in range(1, 36)]
+
+    class Cursor:
+        def __init__(self):
+            self.offset = 0
+            self.size = 50
+        def sort(self, *_):
+            return self
+        def skip(self, value):
+            self.offset = value
+            return self
+        def limit(self, value):
+            self.size = value
+            return self
+        def __iter__(self):
+            return iter(documents[self.offset:self.offset + self.size])
+
+    class Collection:
+        def count_documents(self, query):
+            self.query = query
+            return len(documents)
+        def find(self, query, projection):
+            self.query = query
+            self.projection = projection
+            return Cursor()
+
+    collection = Collection()
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(sst_tools, "get_collection", lambda: collection)
+    model.replies["sst"] = json.dumps({
+        "acao": "consultar_nrs",
+        "filtros": {
+            "modo": "listar", "revogada": False, "pagina": 1, "limite": 50,
+        },
+        "resposta": None,
+    })
+
+    response = client.post("/chat/messages", json={
+        "message": "Quais são todas as NRs hoje em dia que ainda estão em vigência?",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "Encontrei 35 NR(s). Página 1 de 1" in body["resposta"]
+    assert "NR-35" in body["resposta"]
+    assert "conteudo muito extenso" not in body["resposta"]
+    assert collection.query == {"revogada": False}
+    assert collection.projection == {
+        "_id": 1, "nome": 1, "revogada": 1, "ultima_atualizacao": 1,
+    }
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz",
+    ]
+    judge_call = next(call for call in model.calls if call[0] == "juiz")
+    judge_payload = judge_call[1][-1].content
+    assert "conteudo muito extenso" not in judge_payload
+    assert len(judge_payload) < 12000
 
 
 def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatch):

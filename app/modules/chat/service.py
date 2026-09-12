@@ -94,20 +94,22 @@ class ChatService:
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
                         "ferramentas_disponiveis": [
                             "buscar_historico", "consultar_normas",
-                            "buscar_outros_usuarios", "buscar_meus_dados",
+                            "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                         ],
-                        "fontes_disponiveis": ["faq_chunks"],
+                        "fontes_disponiveis": ["faq_chunks", "nrs"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
-                                   "Normas podem ser consultadas apenas na base FAQ autorizada. "
+                                   "Politicas internas podem ser consultadas apenas na base FAQ "
+                                   "autorizada. "
                                    "O agente de RH pode consultar somente os dados de usuarios "
                                    "permitidos pelo perfil autenticado. Nao ha escrita nem outras "
-                                   "operacoes de negocio. "
+                                   "operacoes de negocio. NRs podem ser consultadas na collection "
+                                   "MongoDB autorizada. "
                                    "Historico nao comprova direitos nem execucao. "
                                    "Nao incluir escrita, fontes ou evento na saida.",
                     },
                     "memoria": {}, "busca_memoria": "", "memoria_consultada": False,
                     "rota": "", "resultado": {}, "resultado_tool": {}, "rh_decision": None,
-                    "rh_route": "",
+                    "rh_route": "", "sst_decision": None, "sst_route": "",
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
