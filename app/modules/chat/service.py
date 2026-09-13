@@ -10,6 +10,7 @@ from app.infrastructure.llm.models import AgentModel, LanguageModels
 from app.infrastructure.vectorstore.faq import FaqVectors
 from app.infrastructure.vectorstore.memory import SummaryVectors
 from app.modules.chat.errors import ChatError
+from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import build_chat_graph
 from app.modules.chat.schemas import ChatRequest, ChatResponse, SessionResponse
 from app.modules.memory.service import ConversationMemory
@@ -75,7 +76,9 @@ class ChatService:
                 raise ChatError(409, "Conversa encerrada ou em encerramento. Use um novo session_id.")
             return SessionResponse(session_id=session_id, status="ativa", resumo=None)
 
-    async def chat(self, request: ChatRequest, user: CurrentUser) -> ChatResponse:
+    async def chat(
+        self, request: ChatRequest, user: CurrentUser, *, markdown: bool = True,
+    ) -> ChatResponse:
         session_id = str(request.session_id or uuid4())
         async with self.operation():
             await self.repository.ensure(session_id, user.uid)
@@ -94,6 +97,7 @@ class ChatService:
                         "workspace_id": None, "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
                         "possui_acao_pendente": bool(doc.get("acao_pendente")),
+                        "formato_resposta": "markdown" if markdown else "texto_simples",
                         "ferramentas_disponiveis": [
                             "buscar_historico", "consultar_normas",
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
@@ -138,12 +142,24 @@ class ChatService:
                     "pdf_solicitado": False, "pdf_url": None,
                 }, config={"recursion_limit": 20})
                 pdf_url = result.get("pdf_url")
-                public_answer = result["resposta"]
+                public_answer = (
+                    result["resposta"]
+                    if markdown
+                    else markdown_para_texto_simples(result["resposta"])
+                )
+                stored_answer = public_answer
                 if pdf_url:
-                    public_answer += (
-                        f"\n\n[Baixar PDF]({pdf_url}) "
-                        f"(link válido por {PDF_LINK_TTL_HOURS} horas)."
-                    )
+                    if markdown:
+                        public_answer += (
+                            f"\n\n[Baixar PDF]({pdf_url}) "
+                            f"(link válido por {PDF_LINK_TTL_HOURS} horas)."
+                        )
+                    else:
+                        public_answer += (
+                            f"\n\nBaixar PDF: {pdf_url}\n"
+                            f"Link válido por {PDF_LINK_TTL_HOURS} horas."
+                        )
+                    stored_answer += "\n\nPDF gerado e link temporário entregue."
                 response = ChatResponse(session_id=session_id, resposta=public_answer,
                                         agentes_chamados=result["agentes_chamados"])
                 if result["guardar_turno"]:
@@ -153,10 +169,7 @@ class ChatService:
                             "acao_pendente": result.get("acao_pendente"),
                         }, messages=[
                             {"role": "human", "content": request.message},
-                            {"role": "assistant", "content": (
-                                result["resposta"] + "\n\nPDF gerado e link temporário entregue."
-                                if pdf_url else result["resposta"]
-                            )},
+                            {"role": "assistant", "content": stored_answer},
                         ])
                 return response
 

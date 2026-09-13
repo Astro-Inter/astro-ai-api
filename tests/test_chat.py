@@ -14,6 +14,7 @@ from app.core.security import CurrentUser
 from app.infrastructure.llm import models
 from app.main import create_app
 from app.modules.chat.errors import ChatError
+from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
 from app.modules.agenda import tools as agenda_tools
@@ -1050,6 +1051,51 @@ def test_direct_and_faq_flows(chat_client):
     assert session["mensagens"][-1]["content"] == faq["resposta"]
 
 
+def test_markdown_to_plain_text_removes_common_syntax():
+    markdown = (
+        "# Resumo\n\n**Astro** e [documentação](https://astro.test/docs).\n"
+        "- Item importante\n1. Primeiro passo\n> Observação\n\n"
+        "| Campo | Valor |\n| --- | --- |\n| Status | Ativo |\n\n"
+        "```text\nconteúdo do bloco\n```"
+    )
+
+    assert markdown_para_texto_simples(markdown) == (
+        "Resumo\n\nAstro e documentação (https://astro.test/docs).\n"
+        "• Item importante\n1) Primeiro passo\nObservação\n\n"
+        "Campo | Valor\nStatus | Ativo\n\nconteúdo do bloco"
+    )
+
+
+@pytest.mark.parametrize(("query", "expected", "context_format"), [
+    ("", "# Resumo\n\n**Astro**\n- Item", "markdown"),
+    ("?markdown=true", "# Resumo\n\n**Astro**\n- Item", "markdown"),
+    ("?markdown=false", "Resumo\n\nAstro\n• Item", "texto_simples"),
+])
+def test_chat_response_format_query_parameter(
+    chat_client, query, expected, context_format,
+):
+    client, model, application = chat_client
+    model.route = "direta"
+    model.replies["roteador"] = "# Resumo\n\n**Astro**\n- Item"
+
+    response = client.post(f"/chat/messages{query}", json={"message": "Oi"})
+
+    assert response.status_code == 200
+    assert response.json()["resposta"] == expected
+    assert f'"formato_resposta": "{context_format}"' in model.calls[0][1][0].content
+    stored = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert stored["mensagens"][-1]["content"] == expected
+
+
+def test_chat_rejects_invalid_markdown_query_value(chat_client):
+    client, model, _ = chat_client
+
+    response = client.post("/chat/messages?markdown=talvez", json={"message": "Oi"})
+
+    assert response.status_code == 422
+    assert not model.calls
+
+
 def test_pdf_request_uses_approved_faq_answer_and_returns_temporary_link(chat_client, monkeypatch):
     from app.modules.chat import graph as chat_graph
 
@@ -1093,6 +1139,34 @@ def test_pdf_request_uses_approved_faq_answer_and_returns_temporary_link(chat_cl
     stored = application.state.chat_service.repository.docs[body["session_id"]]
     assert "assinatura=teste" not in stored["mensagens"][-1]["content"]
     assert "PDF gerado" in stored["mensagens"][-1]["content"]
+
+
+def test_pdf_link_is_plain_text_when_markdown_is_disabled(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, application = chat_client
+    model.route = "faq"
+
+    class PdfTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            return {"status": "ok", "url": "https://r2.example/arquivo.pdf?assinatura=teste"}
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post(
+        "/chat/messages?markdown=false",
+        json={"message": "Gere um PDF com o objetivo do Astro."},
+    )
+
+    assert response.status_code == 200
+    answer = response.json()["resposta"]
+    assert "[Baixar PDF](" not in answer
+    assert "Baixar PDF: https://r2.example/arquivo.pdf?assinatura=teste" in answer
+    assert "Link válido por 5 horas." in answer
+    stored = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert "assinatura=teste" not in stored["mensagens"][-1]["content"]
+    assert stored["mensagens"][-1]["content"].endswith(
+        "PDF gerado e link temporário entregue."
+    )
 
 
 def test_pdf_is_not_uploaded_when_consultation_has_no_data(chat_client, monkeypatch):

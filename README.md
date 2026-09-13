@@ -117,6 +117,16 @@ Exemplo de resposta (o texto e o caminho dependem da mensagem):
 }
 ```
 
+O parâmetro de query opcional `markdown` controla a formatação do campo `resposta`:
+
+- `POST /chat/messages?markdown=true` preserva Markdown e é o comportamento padrão.
+- `POST /chat/messages?markdown=false` retorna texto simples, sem sintaxe Markdown.
+
+Os únicos valores esperados são `true` e `false`; valores inválidos retornam `422`.
+Quando houver um PDF, o modo Markdown entrega um link clicável e o modo texto
+simples entrega a URL completa. A preferência vale somente para a apresentação da
+resposta e não altera a validação do Juiz, os guardrails ou o conteúdo do PDF.
+
 Para continuar, envie o `session_id` retornado junto da próxima `message`.
 Se o ID informado ainda não existir, o chat cria a sessão no MongoDB. Se existir,
 retoma o documento, desde que pertença ao UID autenticado e esteja ativo.
