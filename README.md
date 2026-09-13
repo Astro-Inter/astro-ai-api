@@ -338,6 +338,19 @@ somente inscrições efetivas; uma NR obrigatória para o cargo não comprova qu
 usuário já foi inscrito em uma turma. A tool não cria inscrição, conclusão ou
 evento.
 
+### Tool de consulta dos próprios acessos do Roteador
+
+`consultar_acessos` lê a tabela PostgreSQL `acesso` usando somente o Firebase
+UID autenticado para resolver `usuario.id_usuario`. Permite contar dias com
+acesso neste mês, ano, mês/ano específico, intervalo ou histórico completo;
+também retorna o primeiro e o último dia registrado e lista datas com paginação.
+
+A chave primária `(data, usuario_id)` garante no máximo um registro por dia.
+Logo, “quantas vezes acessei?” é respondido como **quantos dias tiveram acesso**:
+o banco não permite conhecer o total de logins nem seus horários. Consultas de
+período atual usam `CURRENT_DATE` do PostgreSQL. Exemplos no chat: “Quantos
+dias acessei neste mês?” e “Qual foi meu primeiro acesso ao sistema?”.
+
 ## Histórico persistente e sessões (SCRUM-187)
 
 Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY`,

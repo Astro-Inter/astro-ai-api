@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from datetime import date
 
 from pydantic import ValidationError
 
@@ -24,7 +25,8 @@ from app.modules.chat.subgraphs import (
 from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.guardrails.saida import GUARDRAIL_SAIDA_PROMPT_COMPLETO
 from app.modules.roteador.tools import (
-    ConsultarConversasArgs, ConsultarNotificacoesArgs, EnviarMensagemArgs, TOOLS_ROTEADOR,
+    ConsultarAcessosArgs, ConsultarConversasArgs, ConsultarNotificacoesArgs,
+    EnviarMensagemArgs, TOOLS_ROTEADOR,
 )
 
 
@@ -158,6 +160,125 @@ def _pedido_simples_de_notificacoes(message: str) -> ConsultarNotificacoesArgs |
         return None
 
 
+_MESES = {
+    "janeiro": 1, "fevereiro": 2, "marco": 3, "abril": 4, "maio": 5,
+    "junho": 6, "julho": 7, "agosto": 8, "setembro": 9,
+    "outubro": 10, "novembro": 11, "dezembro": 12,
+}
+
+
+def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
+    """Reconhece perguntas inequívocas sobre os próprios dias de acesso."""
+    normalized = _sem_acentos(message)
+    if not re.search(r"\b(?:acess\w*|logins?|entrei)\b", normalized):
+        return None
+    if re.search(
+        r"\b(?:nao\s+(?:quero|consulte|mostrar|mostre|liste|listar|buscar|busque)|"
+        r"permiss\w*|nivel|liberar|conceder|bloquear)\b", normalized,
+    ):
+        return None
+    if re.search(r"\b(?:de|do|da)\s+(?:outro|outra|usuario|funcionario|colega)\b", normalized):
+        return None
+    explicar = bool(
+        re.search(r"\b(?:por que|porque|explique|explica|como|o que significa)\b", normalized)
+        and re.search(
+            r"\b(?:contagem|contad[oa]s?|contabiliz\w*|contar|registr\w*|dias|vezes)\b",
+            normalized,
+        )
+    )
+    if not explicar and not re.search(
+        r"\b(?:meu|meus|minha|minhas|eu|acessei|entrei|tive)\b", normalized,
+    ):
+        return None
+
+    first = bool(re.search(r"\b(?:primeir\w*\s+(?:acesso|vez)|mais antigo)\b", normalized))
+    last = bool(re.search(r"\b(?:ultim\w*\s+(?:acesso|vez)|mais recente)\b", normalized))
+    if re.search(r"\b(?:quais dias|liste|listar|mostre os dias)\b", normalized):
+        consulta = "dias"
+    elif re.search(r"\b(?:quant\w*|vezes|total)\b", normalized):
+        consulta = "contagem"
+    elif first and last:
+        consulta = "resumo"
+    elif first:
+        consulta = "primeiro"
+    elif last:
+        consulta = "ultimo"
+    elif explicar:
+        consulta = "explicacao"
+    elif re.search(r"\b(?:resumo|historico|meus acessos)\b", normalized):
+        consulta = "resumo"
+    else:
+        return None
+
+    if consulta == "explicacao":
+        return ConsultarAcessosArgs(consulta="explicacao")
+
+    periodo = "todo_historico"
+    values = {}
+    relative_month = bool(re.search(
+        r"\b(?:mes passado|mes anterior|ultimo mes|"
+        r"(?:este|esse|neste|nesse) mes|mes atual)\b", normalized,
+    ))
+    relative_year = bool(re.search(
+        r"\b(?:ano passado|ano anterior|ultimo ano|"
+        r"(?:este|esse|neste|nesse) ano|ano atual)\b", normalized,
+    ))
+    explicit_years = re.findall(r"\b(?:19|20)\d{2}\b", normalized)
+    explicit_months = re.findall(r"\b(" + "|".join(_MESES) + r")\b", normalized)
+    if (relative_month and relative_year) or (
+        (relative_month or relative_year) and (explicit_years or explicit_months)
+    ):
+        return None
+    interval = re.search(
+        r"\bentre\s+(\d{2}/\d{2}/\d{4})\s+e\s+(\d{2}/\d{2}/\d{4})\b",
+        normalized,
+    )
+    if interval is None and re.search(r"\bentre\b", normalized):
+        return None
+    if interval:
+        try:
+            values["data_inicio"] = date.fromisoformat(
+                "-".join(reversed(interval.group(1).split("/")))
+            )
+            values["data_fim"] = date.fromisoformat(
+                "-".join(reversed(interval.group(2).split("/")))
+            )
+        except ValueError:
+            return None
+        periodo = "intervalo"
+    elif re.search(r"\b(?:mes passado|mes anterior|ultimo mes)\b", normalized):
+        periodo = "mes_passado"
+    elif re.search(r"\b(?:ano passado|ano anterior|ultimo ano)\b", normalized):
+        periodo = "ano_passado"
+    elif re.search(r"\b(?:este|esse|neste|nesse) mes\b|\bmes atual\b", normalized):
+        periodo = "mes_atual"
+    elif re.search(r"\b(?:este|esse|neste|nesse) ano\b|\bano atual\b", normalized):
+        periodo = "ano_atual"
+    else:
+        if len(set(explicit_years)) > 1 or len(set(explicit_months)) > 1:
+            return None
+        year_match = explicit_years[0] if explicit_years else None
+        month_match = explicit_months[0] if explicit_months else None
+        if month_match and year_match:
+            periodo = "mes_especifico"
+            values.update(ano=int(year_match), mes=_MESES[month_match])
+        elif year_match:
+            periodo = "ano_especifico"
+            values["ano"] = int(year_match)
+        elif month_match or re.search(r"\b(?:mes|ano|periodo|entre)\b", normalized):
+            # Sem ano ou intervalo inequívoco, deixe o modelo pedir esclarecimento.
+            return None
+
+    page = re.search(r"\bpagina\s+(\d+)\b", normalized)
+    try:
+        return ConsultarAcessosArgs(
+            consulta=consulta, explicar=explicar, periodo=periodo,
+            pagina=int(page.group(1)) if page else 1, **values,
+        )
+    except ValidationError:
+        return None
+
+
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def input_guard(state: ChatState):
         decision = await invoke_agent(
@@ -217,6 +338,14 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
+        simple_access = _pedido_simples_de_acessos(state["mensagem"])
+        if simple_access is not None:
+            return {
+                "rota": "acessos",
+                "roteador_decision": simple_access,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
+
         if _filtros_treinamentos(state["mensagem"]) is not None:
             return {
                 "rota": "eventos",
@@ -264,6 +393,19 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "roteador_decision": decision,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
+        if conversation_text.startswith("ACCESSES"):
+            match = re.fullmatch(r"ACCESSES\s*=\s*(\{.*\})", conversation_text, re.DOTALL)
+            if match is None:
+                raise InvalidAgentResponse("roteador")
+            try:
+                decision = ConsultarAcessosArgs.model_validate_json(match.group(1))
+            except ValidationError:
+                raise InvalidAgentResponse("roteador") from None
+            return {
+                "rota": "acessos",
+                "roteador_decision": decision,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         if conversation_text.startswith("CONVERSATION"):
             match = re.fullmatch(r"CONVERSATION\s*=\s*(\{.*\})", conversation_text, re.DOTALL)
             if match is None:
@@ -283,6 +425,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         if not route and any(
             marker in text.upper() for marker in (
                 "ROUTE", "MEMORY=", "MESSAGE=", "CONVERSATION=", "NOTIFICATIONS=",
+                "ACCESSES=",
             )
         ):
             raise InvalidAgentResponse("roteador")
@@ -429,6 +572,83 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             "agentes_chamados": state["agentes_chamados"] + ["consultar_notificacoes"],
         }
 
+    async def consult_accesses(state: ChatState):
+        decision = state["roteador_decision"]
+        result = await ROTEADOR_TOOLS["consultar_acessos"].ainvoke(
+            decision.model_dump(),
+            config={"configurable": {
+                "usuario_atual": state["usuario_atual"].model_dump(),
+            }},
+        )
+        status = result.get("status")
+        explanation = (
+            "A tabela registra no máximo uma data de acesso por usuário a cada dia. "
+            "Por isso, a contagem representa dias com acesso, não cada login; "
+            "ela também não informa horários."
+        )
+        if status == "ok" and result.get("consulta") == "explicacao":
+            candidate = explanation
+        elif status in {"ok", "sem_dados"}:
+            labels = {
+                "todo_historico": "em todo o histórico",
+                "mes_atual": "neste mês",
+                "ano_atual": "neste ano",
+                "mes_passado": "no mês passado",
+                "ano_passado": "no ano passado",
+            }
+            period = result["periodo"]
+            if period == "mes_especifico":
+                label = f"em {result['mes']:02d}/{result['ano']}"
+            elif period == "ano_especifico":
+                label = f"em {result['ano']}"
+            elif period == "intervalo":
+                label = f"entre {result['data_inicio']} e {result['data_fim']}"
+            else:
+                label = labels[period]
+            if status == "sem_dados":
+                candidate = f"Não encontrei dias de acesso registrados {label}."
+            elif result["consulta"] == "primeiro":
+                candidate = (
+                    f"Seu primeiro dia de acesso registrado {label} foi "
+                    f"{result['primeiro_dia_registrado']}."
+                )
+            elif result["consulta"] == "ultimo":
+                candidate = (
+                    f"Seu último dia de acesso registrado {label} foi "
+                    f"{result['ultimo_dia_registrado']}."
+                )
+            elif result["consulta"] == "dias":
+                lines = [f"Dias com acesso registrado {label} (mais recentes primeiro):"]
+                lines.extend(f"- {day}" for day in result["dias"])
+                if not result["dias"]:
+                    lines.append("Não há dias nesta página. Tente uma página anterior.")
+                elif result["pagina"] < result["total_paginas"]:
+                    lines.append(f"Para ver mais dias, peça a página {result['pagina'] + 1}.")
+                candidate = "\n".join(lines)
+            else:
+                count = result["total_dias_com_acesso"]
+                candidate = f"Há registros de acesso em {count} dia(s) {label}."
+                if result["consulta"] == "resumo":
+                    candidate += (
+                        f" O primeiro dia foi {result['primeiro_dia_registrado']} "
+                        f"e o último, {result['ultimo_dia_registrado']}."
+                    )
+            if result.get("explicar"):
+                candidate += f" {explanation}"
+        else:
+            candidate = result.get("mensagem", "Não foi possível consultar os acessos.")
+        return {
+            "resultado_tool": result,
+            "resultado": {
+                "dominio": "roteador",
+                "intencao": "consultar_acessos",
+                "status": status,
+                "evidencia_tool": {"nome": "consultar_acessos", "resultado": result},
+            },
+            "candidato": candidate,
+            "agentes_chamados": state["agentes_chamados"] + ["consultar_acessos"],
+        }
+
     async def memory_lookup(state: ChatState):
         memory = await search_memory(
             state["usuario_atual"].uid, state["session_id"], state["busca_memoria"],
@@ -457,6 +677,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                 "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
                 "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
+                "consultar_acessos",
                 "consultar_treinamentos",
             }
         ):
@@ -494,6 +715,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_node("enviar_mensagem", send_message)
     graph.add_node("consultar_conversas", consult_conversation)
     graph.add_node("consultar_notificacoes", consult_notifications)
+    graph.add_node("consultar_acessos", consult_accesses)
     graph.add_edge("buscar_historico", "roteador")
     graph.add_node("rh", build_rh_graph(model))
     graph.add_conditional_edges(
@@ -529,10 +751,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         "memoria": "buscar_historico", "mensagem": "enviar_mensagem",
         "conversa": "consultar_conversas",
         "notificacoes": "consultar_notificacoes",
+        "acessos": "consultar_acessos",
     })
     graph.add_edge("enviar_mensagem", "juiz")
     graph.add_edge("consultar_conversas", "juiz")
     graph.add_edge("consultar_notificacoes", "juiz")
+    graph.add_edge("consultar_acessos", "juiz")
     graph.add_edge("faq", "juiz")
     graph.add_edge("orquestrador", "juiz")
     graph.add_edge("juiz", "guardrail_saida")

@@ -139,7 +139,7 @@ def test_specialist_flow(chat_client, domain):
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
         '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
-        '"consultar_treinamentos"]'
+        '"consultar_acessos", "consultar_treinamentos"]'
     ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
@@ -681,6 +681,123 @@ def test_simple_notification_request_never_targets_someone_else():
     assert _pedido_simples_de_notificacoes("Mostre notificações da Rosa") is None
     assert _pedido_simples_de_notificacoes("Não mostre minhas notificações") is None
     assert _pedido_simples_de_notificacoes("Crie notificações para mim") is None
+
+
+@pytest.mark.parametrize("message,expected_period,expected_consult", [
+    ("Quantas vezes acessei o sistema neste mês?", "mes_atual", "contagem"),
+    ("Qual foi meu primeiro acesso ao sistema?", "todo_historico", "primeiro"),
+    ("Qual foi meu último acesso em setembro de 2026?", "mes_especifico", "ultimo"),
+    ("Quantos acessos tive no ano de 2025?", "ano_especifico", "contagem"),
+    ("Quantos acessos tive no último mês?", "mes_passado", "contagem"),
+    ("Quais dias acessei no último mês?", "mes_passado", "dias"),
+    ("Quais dias acessei entre 01/09/2026 e 30/09/2026?", "intervalo", "dias"),
+])
+def test_simple_access_request_extracts_intent_and_period(
+    message, expected_period, expected_consult,
+):
+    from app.modules.chat.graph import _pedido_simples_de_acessos
+
+    decision = _pedido_simples_de_acessos(message)
+    assert decision.periodo == expected_period
+    assert decision.consulta == expected_consult
+
+
+def test_simple_access_request_does_not_confuse_permissions_or_other_users():
+    from app.modules.chat.graph import _pedido_simples_de_acessos
+
+    assert _pedido_simples_de_acessos("Qual é meu nível de acesso?") is None
+    assert _pedido_simples_de_acessos("Não consulte meus acessos") is None
+    assert _pedido_simples_de_acessos("Quantos acessos teve o usuário Lucas?") is None
+    assert _pedido_simples_de_acessos("Quais foram meus acessos em maio?") is None
+    assert _pedido_simples_de_acessos("Quantos acessos tive em janeiro e fevereiro de 2026?") is None
+    assert _pedido_simples_de_acessos("Quantos acessos tive em 2025 e 2026?") is None
+    assert _pedido_simples_de_acessos("Quantos acessos tive neste mês e neste ano?") is None
+
+
+@pytest.mark.parametrize("message,router_reply,expected_calls,explained", [
+    (
+        "Quantas vezes acessei o sistema neste mês?", None,
+        ["guardrail_entrada", "juiz"], False,
+    ),
+    (
+        "Quantos dias acessei entre 2026-09-01 e 2026-09-30?",
+        'ACCESSES={"consulta":"contagem","periodo":"intervalo",'
+        '"data_inicio":"2026-09-01","data_fim":"2026-09-30"}',
+        ["guardrail_entrada", "roteador", "juiz"], False,
+    ),
+    (
+        "Quantas vezes acessei neste mês e como é feita a contagem?", None,
+        ["guardrail_entrada", "juiz"], True,
+    ),
+])
+def test_router_consults_own_access_days_without_claiming_login_count(
+    chat_client, monkeypatch, message, router_reply, expected_calls, explained,
+):
+    from datetime import date
+
+    client, model, _ = chat_client
+    model.route = "faq"  # Consulta evidente dispensa a classificação pelo modelo.
+    if router_reply:
+        model.replies["roteador"] = router_reply
+    queries = []
+
+    class Cursor:
+        def __init__(self):
+            self.query = ""
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def execute(self, query, params):
+            queries.append((query, params))
+            self.query = query
+        def fetchone(self):
+            if "FROM usuario" in self.query:
+                return (7,)
+            return (2, date(2026, 9, 1), date(2026, 9, 12))
+
+    class Connection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test/test")
+    monkeypatch.setattr(router_tools, "get_postgres_connection", Connection)
+    response = client.post(
+        "/chat/messages", json={"message": message},
+    )
+    assert response.status_code == 200
+    assert "2 dia(s)" in response.json()["resposta"]
+    assert ("não cada login" in response.json()["resposta"]) is explained
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_acessos", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == expected_calls
+    assert queries[0][1] == ["user-a"]
+    assert queries[1][1][0] == 7
+
+
+def test_access_counting_explanation_is_available_only_on_request(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    monkeypatch.setattr(
+        router_tools, "get_postgres_connection",
+        lambda: pytest.fail("Explicação do esquema não deve consultar o banco"),
+    )
+
+    response = client.post(
+        "/chat/messages", json={"message": "Por que você conta dias e não logins?"},
+    )
+
+    assert response.status_code == 200
+    assert "não cada login" in response.json()["resposta"]
+    assert "não informa horários" in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_acessos", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
 
 
 @pytest.mark.parametrize("confirmation", [

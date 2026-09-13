@@ -98,6 +98,7 @@ class ChatService:
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
                             "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
+                            "consultar_acessos",
                             "consultar_treinamentos",
                         ],
                         "fontes_disponiveis": ["faq_chunks", "nrs"],
@@ -111,6 +112,8 @@ class ChatService:
                                    "autenticado e uma pessoa do mesmo workspace. "
                                    "Notificacoes podem ser consultadas somente para o usuario "
                                    "autenticado, sem inferir leitura ou pendencia. "
+                                   "Acessos mostram apenas dias registrados para o proprio "
+                                   "usuario, sem contar logins individuais ou horarios. "
                                    "Treinamentos atribuidos ao usuario podem ser consultados "
                                    "pelo agente de eventos, sem inferir inscricoes a partir da NR. "
                                    "Nao ha outras operacoes de escrita. NRs podem ser consultadas na collection "
