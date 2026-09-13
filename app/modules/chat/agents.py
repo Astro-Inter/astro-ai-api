@@ -20,6 +20,7 @@ def _history_for_agent(name: str, history: list[dict[str, str]]):
         "rh": (10, 12000),
         "sst": (10, 12000),
         "agenda": (10, 12000),
+        "eventos": (10, 12000),
     }
     if name not in limits:
         return []

@@ -77,7 +77,7 @@ class JudgeDecision(BaseModel):
 class SpecialistResult(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    dominio: Literal["rh", "sst", "agenda"]
+    dominio: Literal["rh", "sst", "agenda", "eventos"]
     intencao: Literal[
         "consultar", "orientar", "solicitar", "atualizar", "registrar", "criar",
         "cancelar", "listar", "disponibilidade", "conflitos",

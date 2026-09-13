@@ -16,6 +16,7 @@ from app.main import create_app
 from app.modules.chat.errors import ChatError
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
+from app.modules.eventos import tools as event_tools
 from app.modules.rh import tools as rh_tools
 from app.modules.roteador import tools as router_tools
 from app.modules.sst import tools as sst_tools
@@ -55,6 +56,16 @@ class FakeModel:
                     "dominio": "sst", "intencao": "orientar", "status": "concluido",
                     "resposta": "Orientação geral de segurança.",
                     "recomendacao": "Procure a equipe de SST.",
+                },
+            })
+        if agent == "eventos" and '"acao"' in messages[0].content:
+            return json.dumps({
+                "acao": "responder",
+                "filtros": None,
+                "resposta": {
+                    "dominio": "eventos", "intencao": "consultar", "status": "indisponivel",
+                    "resposta": "Esta operação de eventos ainda não está disponível.",
+                    "recomendacao": "",
                 },
             })
         if agent in {"rh", "sst", "agenda"}:
@@ -103,7 +114,7 @@ def chat_client(monkeypatch):
         yield client, model, application
 
 
-@pytest.mark.parametrize("domain", ["rh", "sst", "agenda"])
+@pytest.mark.parametrize("domain", ["rh", "sst", "agenda", "eventos"])
 def test_specialist_flow(chat_client, domain):
     client, model, application = chat_client
     model.route = domain
@@ -127,13 +138,90 @@ def test_specialist_flow(chat_client, domain):
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
-        '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes"]'
+        '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
+        '"consultar_treinamentos"]'
     ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
         assert "SAÍDA PARA O ORQUESTRADOR" not in system
     if domain == "sst":
         assert "DECISÃO DE USO DA TOOL" in system
+
+
+def test_eventos_agent_consults_training_instead_of_sst(chat_client, monkeypatch):
+    from datetime import datetime
+
+    client, model, _ = chat_client
+    model.route = "sst"  # Pedido pessoal inequívoco dispensa a classificação do LLM.
+
+    class Cursor:
+        def __init__(self):
+            self.query = ""
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def execute(self, query, params):
+            self.query = query
+            assert params[0] == ("user-a" if "firebase_uid" in query else 7)
+        def fetchone(self):
+            return (7,) if "firebase_uid" in self.query else (1,)
+        def fetchall(self):
+            return [(
+                "Operação segura", "Treinamento de máquinas", None,
+                "GESTOR", False, "ATIVO", "Turma A",
+                datetime(2026, 9, 20, 8), datetime(2026, 9, 20, 12),
+                12, "Máquinas", "PENDENTE", None, None, None, None,
+            )]
+
+    class Connection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(event_tools, "get_postgres_connection", lambda: Connection())
+
+    response = client.post("/chat/messages", json={
+        "message": "Quais treinamentos eu preciso realizar?",
+    })
+
+    assert response.status_code == 200
+    assert "Operação segura" in response.json()["resposta"]
+    assert "participação: pendente" in response.json()["resposta"]
+    assert "2026-09-20T08:00:00" in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "eventos", "consultar_treinamentos",
+        "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+
+
+def test_training_filters_and_judge_evidence_stay_compact():
+    from app.modules.chat.subgraphs import _evidencia_treinamentos, _filtros_treinamentos
+
+    assert _filtros_treinamentos("Quais treinamentos preciso realizar?").situacao == "a_realizar"
+    assert _filtros_treinamentos("Mostre todos os meus treinamentos").situacao == "todos"
+    completed = _filtros_treinamentos("Mostre a página 2 dos treinamentos que concluí")
+    assert completed.situacao == "concluidos"
+    assert completed.pagina == 2
+    assert _filtros_treinamentos("Explique a NR-12") is None
+
+    evidence = _evidencia_treinamentos({
+        "status": "ok", "situacao": "a_realizar", "pagina": 1,
+        "total_paginas": 1,
+        "treinamentos": [{
+            "titulo": "Teste", "descricao": "x" * 300,
+            "link_externo": "https://astro.test/" + "x" * 1000,
+            "motivo_rejeicao": "y" * 300,
+        }],
+    })
+    assert len(evidence["treinamentos"][0]["descricao"]) == 160
+    assert "link_externo" not in evidence["treinamentos"][0]
+    assert len(evidence["treinamentos"][0]["motivo_rejeicao"]) == 160
 
 
 def test_sst_agent_consults_multiple_nrs(chat_client, monkeypatch):

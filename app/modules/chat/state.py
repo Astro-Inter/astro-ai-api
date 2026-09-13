@@ -20,6 +20,8 @@ class ChatState(TypedDict, total=False):
     rh_route: str
     sst_decision: object
     sst_route: str
+    eventos_decision: object
+    eventos_route: str
     roteador_decision: object
     acao_pendente: dict | None
     candidato: str

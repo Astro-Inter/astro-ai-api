@@ -82,7 +82,7 @@ class LanguageModels:
     async def complete(
         self, agent: str, messages: list[BaseMessage], *, json_mode: bool = False,
     ) -> str:
-        specialist = agent in {"rh", "sst", "agenda"}
+        specialist = agent in {"rh", "sst", "agenda", "eventos"}
         mistral_available = (
             specialist
             and bool(config.MISTRAL_API_KEY)

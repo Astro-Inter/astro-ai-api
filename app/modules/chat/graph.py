@@ -14,6 +14,8 @@ from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
 from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch, OutputDecision
 from app.modules.chat.state import ChatState
 from app.modules.chat.subgraphs import (
+    _filtros_treinamentos,
+    build_eventos_graph,
     build_faq_graph,
     build_rh_graph,
     build_specialist_graph,
@@ -215,6 +217,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
+        if _filtros_treinamentos(state["mensagem"]) is not None:
+            return {
+                "rota": "eventos",
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
+
         text = await invoke_agent(model, "roteador", ROTEADOR_PROMPT_COMPLETO, state)
         if text.startswith("MEMORY="):
             if state.get("memoria_consultada") or search_memory is None:
@@ -271,7 +279,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "roteador_decision": decision,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
-        route = re.fullmatch(r"ROUTE=(rh|sst|agenda|faq)", text)
+        route = re.fullmatch(r"ROUTE=(rh|sst|agenda|eventos|faq)", text)
         if not route and any(
             marker in text.upper() for marker in (
                 "ROUTE", "MEMORY=", "MESSAGE=", "CONVERSATION=", "NOTIFICATIONS=",
@@ -449,6 +457,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                 "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
                 "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
+                "consultar_treinamentos",
             }
         ):
             return {
@@ -500,6 +509,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     )
     graph.add_node("agenda", build_specialist_graph("agenda", model))
     graph.add_edge("agenda", "orquestrador")
+    graph.add_node("eventos", build_eventos_graph(model))
+    graph.add_conditional_edges(
+        "eventos",
+        lambda state: "juiz" if state.get("candidato") else "orquestrador",
+        {"juiz": "juiz", "orquestrador": "orquestrador"},
+    )
     graph.add_node("faq", build_faq_graph(model, search_faq))
     graph.add_node("orquestrador", orchestrator)
     graph.add_node("juiz", judge)
@@ -509,7 +524,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         "roteador": "roteador", "fim": END,
     })
     graph.add_conditional_edges("roteador", lambda state: state["rota"], {
-        "rh": "rh", "sst": "sst", "agenda": "agenda", "faq": "faq", "direta": "juiz",
+        "rh": "rh", "sst": "sst", "agenda": "agenda", "eventos": "eventos",
+        "faq": "faq", "direta": "juiz",
         "memoria": "buscar_historico", "mensagem": "enviar_mensagem",
         "conversa": "consultar_conversas",
         "notificacoes": "consultar_notificacoes",

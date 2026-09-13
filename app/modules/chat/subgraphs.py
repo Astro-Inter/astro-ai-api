@@ -7,11 +7,15 @@ from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.agents import invoke_agent
 from app.modules.chat.errors import InvalidAgentResponse
 from app.modules.chat.prompts.agenda import AGENDA_PROMPT_COMPLETO
+from app.modules.chat.prompts.eventos import EVENTOS_PROMPT_COMPLETO
 from app.modules.chat.prompts.faq import FAQ_PROMPT_COMPLETO
 from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO, RH_PROMPT_COMPLETO
 from app.modules.chat.prompts.sst import SST_DECISAO_PROMPT_COMPLETO, SST_PROMPT_COMPLETO
 from app.modules.chat.schemas import SpecialistResult
 from app.modules.chat.state import ChatState
+from app.modules.eventos.tools import (
+    ConsultarTreinamentosArgs, EventosToolDecision, TOOLS_EVENTOS,
+)
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision, TOOLS_RH
 from app.modules.sst.tools import ConsultarNrsArgs, SstToolDecision, TOOLS_SST
 
@@ -21,6 +25,7 @@ SPECIALIST_PROMPTS = {
 }
 RH_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_RH}
 SST_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_SST}
+EVENTOS_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_EVENTOS}
 
 
 def _pedido_dos_proprios_dados(message: str) -> bool:
@@ -143,6 +148,36 @@ def _pedido_situacao_nrs(message: str) -> bool:
         normalized,
     ))
     return mentions_nr and personal_context and situation
+
+
+def _filtros_treinamentos(message: str) -> ConsultarTreinamentosArgs | None:
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    if not re.search(r"\b(treinamentos?|capacitac(?:ao|oes))\b", normalized):
+        return None
+    if not re.search(
+        r"\b(meus?|minhas?|preciso|tenho|devo|fazer|realizar|"
+        r"pendentes?|atribuidos?|inscritos?|conclui|concluidos?)\b", normalized,
+    ):
+        return None
+    if re.search(r"\b(conclui|concluidos?|ja fiz|finalizei)\b", normalized):
+        situation = "concluidos"
+    elif re.search(r"\b(todos|historico)\b", normalized) and not re.search(
+        r"\b(preciso|pendentes?|realizar|fazer)\b", normalized,
+    ):
+        situation = "todos"
+    else:
+        situation = "a_realizar"
+    page_match = re.search(r"\bpagina\s+(\d+)\b", normalized)
+    try:
+        return ConsultarTreinamentosArgs(
+            situacao=situation,
+            pagina=int(page_match.group(1)) if page_match else 1,
+        )
+    except ValueError:
+        return None
 
 
 def _formatar_usuarios(result: dict) -> str:
@@ -335,6 +370,77 @@ def _formatar_situacao_nrs(result: dict) -> str:
             details.append(f"atividade prevista: {nr['data_inicio_pendencia']}")
         lines.append(f"- NR-{nr['numero']} — {nr['titulo']} | " + " | ".join(details))
     return "\n".join([header, *lines])
+
+
+def _formatar_treinamentos(result: dict) -> str:
+    if result.get("status") == "sem_dados":
+        labels = {
+            "a_realizar": "Não encontrei treinamentos ativos pendentes atribuídos a você.",
+            "concluidos": "Não encontrei treinamentos concluídos atribuídos a você.",
+            "todos": "Não encontrei treinamentos atribuídos a você.",
+        }
+        return labels.get(result.get("situacao"), "Não encontrei treinamentos.")
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar seus treinamentos.")
+
+    lines = ["Seus treinamentos atribuídos:"]
+    status_labels = {
+        "PENDENTE": "pendente", "REJEITADO": "rejeitado", "CONCLUIDO": "concluído",
+    }
+    for training in result["treinamentos"]:
+        details = [
+            f"turma: {training['turma']}",
+            f"início: {training['data_inicio']}",
+            f"término: {training['data_termino']}",
+            f"participação: {status_labels.get(training['status_participacao'], training['status_participacao'])}",
+            f"evento: {training['status_evento'].lower()}",
+        ]
+        if training.get("nr"):
+            details.append(f"NR-{training['nr']['numero']} — {training['nr']['titulo']}")
+        details.append(f"conclusão por: {training['modo_conclusao'].lower().replace('_', ' ')}")
+        if training["evidencia_obrigatoria"]:
+            details.append("evidência obrigatória")
+        if training.get("data_validade"):
+            details.append(f"validade: {training['data_validade']}")
+        lines.append(f"- {training['titulo']} | " + " | ".join(details))
+        if training.get("descricao"):
+            lines.append(f"  {training['descricao'][:160]}")
+        if training.get("motivo_rejeicao"):
+            lines.append(f"  Motivo da rejeição: {training['motivo_rejeicao'][:160]}")
+        if training.get("link_externo") and len(training["link_externo"]) <= 300:
+            lines.append(f"  Link: {training['link_externo']}")
+    if not result["treinamentos"]:
+        lines.append("Nenhum treinamento nesta página. Tente uma página anterior.")
+    elif result["pagina"] < result["total_paginas"]:
+        lines.append(f"Para ver mais treinamentos, peça a página {result['pagina'] + 1}.")
+    return "\n".join(lines)
+
+
+def _evidencia_treinamentos(result: dict) -> dict:
+    """Envia ao Juiz só os campos que podem aparecer na resposta formatada."""
+    visible_fields = (
+        "titulo", "turma", "data_inicio", "data_termino", "nr",
+        "status_evento", "status_participacao", "modo_conclusao",
+        "evidencia_obrigatoria", "data_validade",
+    )
+    trainings = []
+    for training in result.get("treinamentos", []):
+        item = {field: training.get(field) for field in visible_fields}
+        if training.get("descricao"):
+            item["descricao"] = training["descricao"][:160]
+        if training.get("motivo_rejeicao"):
+            item["motivo_rejeicao"] = training["motivo_rejeicao"][:160]
+        if training.get("link_externo") and len(training["link_externo"]) <= 300:
+            item["link_externo"] = training["link_externo"]
+        trainings.append(item)
+    return {
+        "status": result.get("status"),
+        "situacao": result.get("situacao"),
+        "pagina": result.get("pagina"),
+        "total_paginas": result.get("total_paginas"),
+        "treinamentos": trainings,
+        "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
+    }
 
 
 def _evidencia_situacao_nrs(result: dict) -> dict:
@@ -584,6 +690,69 @@ def build_sst_graph(model: AgentModel):
     })
     graph.add_edge("usar_tool_sst", END)
     return graph.compile(name="subgrafo_sst")
+
+
+def build_eventos_graph(model: AgentModel):
+    async def decide(state: ChatState):
+        filters = _filtros_treinamentos(state["mensagem"])
+        if filters is not None:
+            decision = EventosToolDecision(acao="consultar_treinamentos", filtros=filters)
+        else:
+            decision = await invoke_agent(
+                model, "eventos", EVENTOS_PROMPT_COMPLETO, state, EventosToolDecision,
+            )
+        if decision.acao == "responder":
+            return {
+                "eventos_route": "fim",
+                "resultado": decision.resposta.model_dump(exclude_none=True),
+                "agentes_chamados": state["agentes_chamados"] + ["eventos"],
+            }
+        return {
+            "eventos_route": "tool",
+            "eventos_decision": decision,
+            "agentes_chamados": state["agentes_chamados"] + ["eventos"],
+        }
+
+    async def use_tool(state: ChatState):
+        filters = state["eventos_decision"].filtros
+        result = await EVENTOS_TOOLS["consultar_treinamentos"].ainvoke(
+            filters.model_dump(),
+            config={"configurable": {
+                "usuario_atual": state["usuario_atual"].model_dump(),
+            }},
+        )
+        tool_status = result.get("status")
+        statuses = {
+            "ok": "concluido", "sem_dados": "sem_dados", "sem_perfil": "sem_dados",
+            "indisponivel": "indisponivel", "erro": "nao_autorizado",
+            "nao_aplicavel": "nao_autorizado",
+        }
+        return {
+            "resultado_tool": result,
+            "resultado": {
+                "dominio": "eventos",
+                "intencao": "consultar",
+                "status": statuses.get(tool_status, "indisponivel"),
+                "resposta": "Consulta dos treinamentos atribuídos ao usuário autenticado.",
+                "recomendacao": "",
+                "evidencia_tool": {
+                    "nome": "consultar_treinamentos",
+                    "resultado": _evidencia_treinamentos(result),
+                },
+            },
+            "candidato": _formatar_treinamentos(result),
+            "agentes_chamados": state["agentes_chamados"] + ["consultar_treinamentos"],
+        }
+
+    graph = StateGraph(ChatState)
+    graph.add_node("decidir", decide)
+    graph.add_node("usar_tool_eventos", use_tool)
+    graph.add_edge(START, "decidir")
+    graph.add_conditional_edges("decidir", lambda state: state["eventos_route"], {
+        "tool": "usar_tool_eventos", "fim": END,
+    })
+    graph.add_edge("usar_tool_eventos", END)
+    return graph.compile(name="subgrafo_eventos")
 
 
 def build_faq_graph(model: AgentModel, search_faq=None):

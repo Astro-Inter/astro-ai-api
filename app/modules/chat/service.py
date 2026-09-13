@@ -98,6 +98,7 @@ class ChatService:
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
                             "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
+                            "consultar_treinamentos",
                         ],
                         "fontes_disponiveis": ["faq_chunks", "nrs"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
@@ -110,6 +111,8 @@ class ChatService:
                                    "autenticado e uma pessoa do mesmo workspace. "
                                    "Notificacoes podem ser consultadas somente para o usuario "
                                    "autenticado, sem inferir leitura ou pendencia. "
+                                   "Treinamentos atribuidos ao usuario podem ser consultados "
+                                   "pelo agente de eventos, sem inferir inscricoes a partir da NR. "
                                    "Nao ha outras operacoes de escrita. NRs podem ser consultadas na collection "
                                    "MongoDB autorizada. "
                                    "Historico nao comprova direitos nem execucao. "
@@ -118,6 +121,7 @@ class ChatService:
                     "memoria": {}, "busca_memoria": "", "memoria_consultada": False,
                     "rota": "", "resultado": {}, "resultado_tool": {}, "rh_decision": None,
                     "rh_route": "", "sst_decision": None, "sst_route": "",
+                    "eventos_decision": None, "eventos_route": "",
                     "roteador_decision": None, "acao_pendente": doc.get("acao_pendente"),
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",

@@ -79,6 +79,8 @@ valores e compromissos. A prévia sempre será mostrada antes da gravação.
   incidentes, EPIs e treinamentos de segurança; inclui dúvidas sobre uma ou várias NRs.
 - agenda: consultar, criar, alterar ou cancelar compromissos, reuniões e lembretes;
   verificar horários, disponibilidade e conflitos.
+- eventos: consultar treinamentos atribuídos ao usuário, com datas, turma,
+  status da participação e informações do evento.
 - faq: consultar o conteúdo das normas, políticas, procedimentos e perguntas
   frequentes oficiais disponibilizados ao Astro, sem executar operações.
 - enviar_mensagem: preparar e, após confirmação explícita, enviar uma mensagem
@@ -87,10 +89,13 @@ valores e compromissos. A prévia sempre será mostrada antes da gravação.
 - consultar_notificacoes: ler as notificações do próprio usuário autenticado.
 
 ### CRITÉRIOS DE ENCAMINHAMENTO
-- Priorize a intenção: marcar um treinamento de segurança é agenda; relatar um
-  risco no trabalho é sst; consultar uma política interna desse treinamento é faq.
+- Priorize a intenção: consultar treinamentos atribuídos é eventos; pedir para
+  marcar um compromisso é agenda; relatar um risco no trabalho é sst; consultar
+  uma política interna de treinamento é faq.
 - Uma pergunta sobre NR é sst. Uma pergunta sobre o texto de outra política interna
   é faq, mesmo que mencione RH ou SST.
+  A consulta da situação das NRs obrigatórias continua com sst; a consulta de
+  turmas e treinamentos em que o usuário foi inscrito pertence a eventos.
   Uma consulta sobre a situação individual de férias é rh.
 - Se o usuário completar uma pergunta anterior, mantenha o domínio quando a
   mensagem realmente continuar o mesmo assunto. Uma nova intenção muda a rota.
@@ -111,6 +116,7 @@ Para encaminhar, responda somente uma linha com um dos valores exatos:
 ROUTE=rh
 ROUTE=sst
 ROUTE=agenda
+ROUTE=eventos
 ROUTE=faq
 Para preparar mensagem, responda somente `MESSAGE=` seguido do JSON definido
 acima. Não combine `MESSAGE=` com rota ou texto livre.
@@ -139,6 +145,9 @@ Roteador: ROUTE=sst
 
 Usuário: Quero marcar uma reunião com o RH amanhã.
 Roteador: ROUTE=agenda
+
+Usuário: Quais treinamentos eu preciso realizar?
+Roteador: ROUTE=eventos
 
 Usuário: O que diz a política de férias da empresa?
 Roteador: ROUTE=faq
