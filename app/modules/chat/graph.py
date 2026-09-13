@@ -21,7 +21,9 @@ from app.modules.chat.subgraphs import (
 )
 from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.guardrails.saida import GUARDRAIL_SAIDA_PROMPT_COMPLETO
-from app.modules.roteador.tools import ConsultarConversasArgs, EnviarMensagemArgs, TOOLS_ROTEADOR
+from app.modules.roteador.tools import (
+    ConsultarConversasArgs, ConsultarNotificacoesArgs, EnviarMensagemArgs, TOOLS_ROTEADOR,
+)
 
 
 ROTEADOR_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_ROTEADOR}
@@ -131,6 +133,29 @@ def _pedido_simples_de_conversa(message: str) -> ConsultarConversasArgs | None:
         return None
 
 
+def _pedido_simples_de_notificacoes(message: str) -> ConsultarNotificacoesArgs | None:
+    """Consulta própria explícita sem depender da classificação do modelo."""
+    normalized = _sem_acentos(message)
+    if not re.search(r"\bnotificacoes?\b", normalized):
+        return None
+    if not re.search(
+        r"\b(?:mostre|mostrar|liste|listar|veja|ver|consulte|consultar|"
+        r"busque|buscar|quais|tenho)\b", normalized,
+    ):
+        return None
+    if re.search(r"\b(?:nao|apague|exclua|marque|crie|envie)\b", normalized):
+        return None
+    if re.search(r"\bnotificacoes?\s+(?:de|do|da|para)\s+(?!mim\b)\w+", normalized):
+        return None
+    page_match = re.search(r"\bp[aá]gina\s+(\d+)\b", message, re.IGNORECASE)
+    try:
+        return ConsultarNotificacoesArgs(
+            pagina=int(page_match.group(1)) if page_match else 1,
+        )
+    except ValidationError:
+        return None
+
+
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def input_guard(state: ChatState):
         decision = await invoke_agent(
@@ -182,6 +207,14 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
+        simple_notifications = _pedido_simples_de_notificacoes(state["mensagem"])
+        if simple_notifications is not None:
+            return {
+                "rota": "notificacoes",
+                "roteador_decision": simple_notifications,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
+
         text = await invoke_agent(model, "roteador", ROTEADOR_PROMPT_COMPLETO, state)
         if text.startswith("MEMORY="):
             if state.get("memoria_consultada") or search_memory is None:
@@ -210,6 +243,19 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         )
         if code_block:
             conversation_text = code_block.group(1).strip()
+        if conversation_text.startswith("NOTIFICATIONS"):
+            match = re.fullmatch(r"NOTIFICATIONS\s*=\s*(\{.*\})", conversation_text, re.DOTALL)
+            if match is None:
+                raise InvalidAgentResponse("roteador")
+            try:
+                decision = ConsultarNotificacoesArgs.model_validate_json(match.group(1))
+            except ValidationError:
+                raise InvalidAgentResponse("roteador") from None
+            return {
+                "rota": "notificacoes",
+                "roteador_decision": decision,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         if conversation_text.startswith("CONVERSATION"):
             match = re.fullmatch(r"CONVERSATION\s*=\s*(\{.*\})", conversation_text, re.DOTALL)
             if match is None:
@@ -227,7 +273,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
         route = re.fullmatch(r"ROUTE=(rh|sst|agenda|faq)", text)
         if not route and any(
-            marker in text.upper() for marker in ("ROUTE", "MEMORY=", "MESSAGE=", "CONVERSATION=")
+            marker in text.upper() for marker in (
+                "ROUTE", "MEMORY=", "MESSAGE=", "CONVERSATION=", "NOTIFICATIONS=",
+            )
         ):
             raise InvalidAgentResponse("roteador")
         return {
@@ -336,6 +384,43 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             "agentes_chamados": state["agentes_chamados"] + ["consultar_conversas"],
         }
 
+    async def consult_notifications(state: ChatState):
+        decision = state["roteador_decision"]
+        result = await ROTEADOR_TOOLS["consultar_notificacoes"].ainvoke(
+            decision.model_dump(),
+            config={"configurable": {
+                "usuario_atual": state["usuario_atual"].model_dump(),
+            }},
+        )
+        status = result.get("status")
+        if status == "sem_dados":
+            candidate = "Você não tem notificações cadastradas."
+        elif status == "ok":
+            lines = ["Suas notificações:"]
+            for notification in result["notificacoes"]:
+                suffix = " [trecho]" if notification["trecho"] else ""
+                lines.append(
+                    f"- {notification['data_criacao']} — {notification['mensagem']}{suffix}"
+                )
+            if not result["notificacoes"]:
+                lines.append("Nenhuma notificação nesta página. Tente uma página anterior.")
+            elif result["pagina"] < result["total_paginas"]:
+                lines.append(f"Para ver notificações anteriores, peça a página {result['pagina'] + 1}.")
+            candidate = "\n".join(lines)
+        else:
+            candidate = result.get("mensagem", "Não foi possível consultar as notificações.")
+        return {
+            "resultado_tool": result,
+            "resultado": {
+                "dominio": "roteador",
+                "intencao": "consultar_notificacoes",
+                "status": status,
+                "evidencia_tool": {"nome": "consultar_notificacoes", "resultado": result},
+            },
+            "candidato": candidate,
+            "agentes_chamados": state["agentes_chamados"] + ["consultar_notificacoes"],
+        }
+
     async def memory_lookup(state: ChatState):
         memory = await search_memory(
             state["usuario_atual"].uid, state["session_id"], state["busca_memoria"],
@@ -363,7 +448,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             and evidence.get("nome") in {
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                 "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
-                "enviar_mensagem", "consultar_conversas",
+                "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
             }
         ):
             return {
@@ -399,6 +484,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_node("buscar_historico", memory_lookup)
     graph.add_node("enviar_mensagem", send_message)
     graph.add_node("consultar_conversas", consult_conversation)
+    graph.add_node("consultar_notificacoes", consult_notifications)
     graph.add_edge("buscar_historico", "roteador")
     graph.add_node("rh", build_rh_graph(model))
     graph.add_conditional_edges(
@@ -426,9 +512,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         "rh": "rh", "sst": "sst", "agenda": "agenda", "faq": "faq", "direta": "juiz",
         "memoria": "buscar_historico", "mensagem": "enviar_mensagem",
         "conversa": "consultar_conversas",
+        "notificacoes": "consultar_notificacoes",
     })
     graph.add_edge("enviar_mensagem", "juiz")
     graph.add_edge("consultar_conversas", "juiz")
+    graph.add_edge("consultar_notificacoes", "juiz")
     graph.add_edge("faq", "juiz")
     graph.add_edge("orquestrador", "juiz")
     graph.add_edge("juiz", "guardrail_saida")

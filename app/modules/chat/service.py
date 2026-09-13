@@ -97,7 +97,7 @@ class ChatService:
                             "buscar_historico", "consultar_normas",
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
-                            "enviar_mensagem", "consultar_conversas",
+                            "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                         ],
                         "fontes_disponiveis": ["faq_chunks", "nrs"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
@@ -108,6 +108,8 @@ class ChatService:
                                    "destinatario do mesmo workspace, previa e confirmacao explicita. "
                                    "A consulta de conversas acessa apenas mensagens entre o usuario "
                                    "autenticado e uma pessoa do mesmo workspace. "
+                                   "Notificacoes podem ser consultadas somente para o usuario "
+                                   "autenticado, sem inferir leitura ou pendencia. "
                                    "Nao ha outras operacoes de escrita. NRs podem ser consultadas na collection "
                                    "MongoDB autorizada. "
                                    "Historico nao comprova direitos nem execucao. "

@@ -13,8 +13,10 @@ from app.core.security import CurrentUser
 
 
 COLLECTION_MESSAGES = "mensagens"
+COLLECTION_NOTIFICATIONS = "notificacoes"
 _mongo_client = None
 _messages_collection = None
+_notifications_collection = None
 
 
 class EnviarMensagemArgs(BaseModel):
@@ -52,6 +54,15 @@ class ConsultarConversasArgs(BaseModel):
     limite: int = Field(default=5, ge=1, le=10)
 
 
+class ConsultarNotificacoesArgs(BaseModel):
+    """Paginação permitida para as notificações do usuário autenticado."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pagina: int = Field(default=1, ge=1, le=1000)
+    limite: int = Field(default=5, ge=1, le=10)
+
+
 def get_postgres_connection():
     """Abre uma conexão curta e somente leitura com o PostgreSQL."""
     return psycopg.connect(
@@ -66,13 +77,14 @@ def get_messages_collection():
     """Obtém a collection fixa de mensagens e prepara seu índice de consulta."""
     global _mongo_client, _messages_collection
     if _messages_collection is None:
-        _mongo_client = MongoClient(
-            app_config.MONGODB_URI,
-            serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=5000,
-            timeoutMS=10000,
-            w="majority",
-        )
+        if _mongo_client is None:
+            _mongo_client = MongoClient(
+                app_config.MONGODB_URI,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+                timeoutMS=10000,
+                w="majority",
+            )
         _messages_collection = _mongo_client[
             app_config.MONGODB_DATABASE
         ][COLLECTION_MESSAGES]
@@ -85,6 +97,24 @@ def get_messages_collection():
             name="mensagens_participantes_inverso_data",
         )
     return _messages_collection
+
+
+def get_notifications_collection():
+    """Obtém a collection de notificações sem modificar seus documentos."""
+    global _mongo_client, _notifications_collection
+    if _notifications_collection is None:
+        if _mongo_client is None:
+            _mongo_client = MongoClient(
+                app_config.MONGODB_URI,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+                timeoutMS=10000,
+                w="majority",
+            )
+        _notifications_collection = _mongo_client[
+            app_config.MONGODB_DATABASE
+        ][COLLECTION_NOTIFICATIONS]
+    return _notifications_collection
 
 
 def _usuario_do_contexto(runtime_config: RunnableConfig) -> CurrentUser | None:
@@ -139,6 +169,18 @@ def _resolver_destinatarios(firebase_uid: str, destinatario: str):
         with connection.cursor() as cursor:
             cursor.execute(query, [firebase_uid, recipient_value])
             return cursor.fetchall()
+
+
+def _resolver_id_usuario(firebase_uid: str) -> int | None:
+    """Resolve o ID interno sem aceitar um ID vindo do modelo ou da requisição."""
+    with get_postgres_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id_usuario FROM usuario WHERE firebase_uid = %s LIMIT 1",
+                [firebase_uid],
+            )
+            row = cursor.fetchone()
+    return row[0] if row else None
 
 
 def _rascunho_pendente(
@@ -381,4 +423,71 @@ def consultar_conversas(
     }
 
 
-TOOLS_ROTEADOR = [enviar_mensagem, consultar_conversas]
+@tool("consultar_notificacoes", args_schema=ConsultarNotificacoesArgs)
+def consultar_notificacoes(
+    pagina: int = 1,
+    limite: int = 5,
+    config: RunnableConfig = None,
+) -> dict:
+    """Lista as notificações mais recentes do usuário autenticado.
+
+    A collection usa `id_usuario` do PostgreSQL. Não existe filtro de lida ou
+    vencimento no esquema atual; a consulta somente ordena por criação.
+    """
+    user = _usuario_do_contexto(config)
+    if user is None:
+        return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
+    if not app_config.DATABASE_URL:
+        return {"status": "indisponivel", "mensagem": "Consulta de notificacoes indisponivel."}
+    if not app_config.MONGODB_URI or not app_config.MONGODB_DATABASE:
+        return {"status": "indisponivel", "mensagem": "Consulta de notificacoes indisponivel."}
+
+    try:
+        user_id = _resolver_id_usuario(user.uid)
+    except Exception:
+        return {"status": "indisponivel", "mensagem": "Consulta de notificacoes indisponivel."}
+    if user_id is None:
+        return {
+            "status": "sem_perfil",
+            "mensagem": "Seu perfil de usuario nao foi encontrado para consultar notificacoes.",
+        }
+
+    notification_filter = {"id_usuario": user_id}
+    try:
+        collection = get_notifications_collection()
+        total = collection.count_documents(notification_filter)
+        documents = list(
+            collection.find(
+                notification_filter,
+                {"_id": 0, "mensagem": 1, "data_criacao": 1},
+            ).sort([("data_criacao", -1), ("_id", -1)])
+            .skip((pagina - 1) * limite).limit(limite)
+        ) if total else []
+    except PyMongoError:
+        return {"status": "indisponivel", "mensagem": "Consulta de notificacoes indisponivel."}
+
+    notifications = []
+    for document in documents:
+        content = document.get("mensagem")
+        created_at = document.get("data_criacao")
+        if not isinstance(content, str) or not isinstance(created_at, datetime):
+            continue
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        notifications.append({
+            "mensagem": content[:500],
+            "trecho": len(content) > 500,
+            "data_criacao": created_at.isoformat(),
+        })
+
+    return {
+        "status": "ok" if total else "sem_dados",
+        "pagina": pagina,
+        "limite": limite,
+        "total": total,
+        "total_paginas": (total + limite - 1) // limite,
+        "notificacoes": notifications,
+    }
+
+
+TOOLS_ROTEADOR = [enviar_mensagem, consultar_conversas, consultar_notificacoes]

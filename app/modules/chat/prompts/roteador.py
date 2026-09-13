@@ -42,6 +42,14 @@ Se o usuário pedir a próxima página, mantenha a pessoa da conversa recente e
 incremente a página. Se faltar a pessoa e não houver contexto claro, pergunte
 apenas com quem ele quer consultar a conversa.
 
+### CONSULTA DE NOTIFICAÇÕES
+Quando o usuário pedir suas notificações, use `consultar_notificacoes`:
+NOTIFICATIONS={"pagina":1,"limite":5}
+O backend identifica o usuário autenticado e lista somente as notificações dele,
+da mais recente para a mais antiga. Nunca aceite um ID de usuário informado na
+mensagem. Se ele pedir outra página, ajuste `pagina`. O esquema atual não possui
+marcação de lida, vencimento ou pendência; não invente essas situações.
+
 ### ENVIO DE MENSAGENS
 Para enviar uma mensagem a outro funcionário, use `enviar_mensagem`. Basta o
 nome ou e-mail do destinatário e um texto, mesmo simples: "mande um oi para a
@@ -76,6 +84,7 @@ valores e compromissos. A prévia sempre será mostrada antes da gravação.
 - enviar_mensagem: preparar e, após confirmação explícita, enviar uma mensagem
   para uma pessoa ativa do mesmo workspace.
 - consultar_conversas: ler mensagens trocadas com uma pessoa do mesmo workspace.
+- consultar_notificacoes: ler as notificações do próprio usuário autenticado.
 
 ### CRITÉRIOS DE ENCAMINHAMENTO
 - Priorize a intenção: marcar um treinamento de segurança é agenda; relatar um
@@ -107,6 +116,8 @@ Para preparar mensagem, responda somente `MESSAGE=` seguido do JSON definido
 acima. Não combine `MESSAGE=` com rota ou texto livre.
 Para consultar mensagens, responda somente `CONVERSATION=` seguido do JSON
 definido acima. Não combine `CONVERSATION=` com rota, `MEMORY=` ou texto livre.
+Para consultar notificações, responda somente `NOTIFICATIONS=` seguido do JSON
+definido acima. Não combine `NOTIFICATIONS=` com rota ou texto livre.
 Não combine ROUTE com uma resposta ao usuário. A aplicação deve preservar a
 mensagem original e fornecer o contexto ao especialista escolhido.
 Para saudação, esclarecimento, histórico consultado ou fora de escopo, responda em linguagem natural,
@@ -156,6 +167,9 @@ Roteador: MESSAGE={"destinatario":"Rosa Maduda","mensagem":"Oi Duda","confirmar_
 
 Usuário: Mostre minhas últimas mensagens com a Rosa Maduda.
 Roteador: CONVERSATION={"pessoa":"Rosa Maduda","pagina":1,"limite":5}
+
+Usuário: Quais são minhas notificações?
+Roteador: NOTIFICATIONS={"pagina":1,"limite":5}
 
 FIM DOS EXEMPLOS. Use apenas os dados reais fornecidos pela aplicação.
 """

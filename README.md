@@ -301,6 +301,19 @@ mensagens com Rosa Maduda” ou “Mostre a página 2 das minhas mensagens com R
 Maduda”. Pedidos explícitos com nome ou e-mail já seguem direto à consulta, sem
 depender da classificação do modelo.
 
+### Tool de consulta de notificações do Roteador
+
+`consultar_notificacoes` lê a collection `notificacoes` usando o `id_usuario`
+resolvido no PostgreSQL a partir do Firebase UID autenticado. A ferramenta não
+aceita identificadores de usuário na entrada e nunca consulta notificações de
+outras pessoas. Os resultados são ordenados por `data_criacao`, do mais recente
+ao mais antigo, e paginados (cinco por página, no máximo dez). Textos longos são
+apresentados como trechos de até 500 caracteres. Exemplo: “Mostre minhas
+notificações” ou “Mostre a página 2 das minhas notificações”. O esquema atual
+contém apenas `id_usuario`, `mensagem` e `data_criacao`; portanto, a tool não
+classifica notificações como lidas, pendentes ou vencidas. Para uma collection
+grande, recomenda-se um índice composto em `id_usuario` e `data_criacao`.
+
 ## Histórico persistente e sessões (SCRUM-187)
 
 Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY`,

@@ -5,7 +5,9 @@ import pytest
 
 from app.core import config
 from app.modules.roteador import tools as router_tools
-from app.modules.roteador.tools import consultar_conversas, enviar_mensagem
+from app.modules.roteador.tools import (
+    consultar_conversas, consultar_notificacoes, enviar_mensagem,
+)
 
 
 class FakeCursor:
@@ -26,6 +28,9 @@ class FakeCursor:
 
     def fetchall(self):
         return self.rows
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
 
 
 class FakeConnection:
@@ -67,6 +72,14 @@ class FakeCollection:
 
     def find(self, query, projection):
         return FakeMessagesCursor(self._matching(query))
+
+
+class FakeNotificationsCollection(FakeCollection):
+    def _matching(self, query):
+        return [
+            document for document in self.documents.values()
+            if document.get("id_usuario") == query["id_usuario"]
+        ]
 
 
 class FakeMessagesCursor:
@@ -343,3 +356,90 @@ def test_conversation_admin_cannot_query_workspace(monkeypatch):
         config={"configurable": {"usuario_atual": {"uid": "admin", "role": "ADMIN"}}},
     )
     assert result["status"] == "nao_aplicavel"
+
+
+def test_notification_tool_never_accepts_a_user_id():
+    properties = consultar_notificacoes.args_schema.model_json_schema()["properties"]
+    assert set(properties) == {"pagina", "limite"}
+
+
+def test_notifications_use_authenticated_postgres_id_and_latest_creation_first(monkeypatch):
+    connection, _ = configure_databases(monkeypatch, [(7,)])
+    collection = FakeNotificationsCollection()
+    monkeypatch.setattr(router_tools, "get_notifications_collection", lambda: collection)
+    for identifier, user_id, hour, text in [
+        ("old", 7, 8, "Primeira notificação"),
+        ("other", 99, 12, "Notificação privada de outra pessoa"),
+        ("new", 7, 10, "Segunda notificação"),
+    ]:
+        collection.insert_one({
+            "_id": identifier, "id_usuario": user_id, "mensagem": text,
+            "data_criacao": datetime(2026, 9, 13, hour, tzinfo=timezone.utc),
+        })
+
+    result = consultar_notificacoes.invoke({}, config=tool_config())
+
+    assert result["status"] == "ok"
+    assert result["total"] == 2
+    assert [item["mensagem"] for item in result["notificacoes"]] == [
+        "Segunda notificação", "Primeira notificação",
+    ]
+    assert "privada" not in str(result)
+    assert "id_usuario" not in str(result)
+    assert connection.db_cursor.parameters == ["firebase-sender"]
+    assert "FROM usuario WHERE firebase_uid = %s" in connection.db_cursor.query
+
+
+def test_notifications_are_paginated_and_mark_long_excerpts(monkeypatch):
+    configure_databases(monkeypatch, [(7,)])
+    collection = FakeNotificationsCollection()
+    monkeypatch.setattr(router_tools, "get_notifications_collection", lambda: collection)
+    for index in range(4):
+        collection.insert_one({
+            "_id": str(index), "id_usuario": 7,
+            "mensagem": "x" * 600 if index == 1 else f"Notificação {index}",
+            "data_criacao": datetime(2026, 9, 13, index, tzinfo=timezone.utc),
+        })
+
+    result = consultar_notificacoes.invoke(
+        {"pagina": 2, "limite": 2}, config=tool_config(),
+    )
+
+    assert result["total_paginas"] == 2
+    assert [item["mensagem"] for item in result["notificacoes"]] == [
+        "x" * 500, "Notificação 0",
+    ]
+    assert result["notificacoes"][0]["trecho"] is True
+
+
+def test_notification_empty_history_and_missing_profile(monkeypatch):
+    configure_databases(monkeypatch, [(7,)])
+    collection = FakeNotificationsCollection()
+    monkeypatch.setattr(router_tools, "get_notifications_collection", lambda: collection)
+
+    result = consultar_notificacoes.invoke({}, config=tool_config())
+
+    assert result["status"] == "sem_dados"
+    assert result["notificacoes"] == []
+
+    configure_databases(monkeypatch, [])
+    monkeypatch.setattr(
+        router_tools, "get_notifications_collection",
+        lambda: pytest.fail("sem perfil nao deve consultar Mongo"),
+    )
+    missing = consultar_notificacoes.invoke({}, config=tool_config())
+    assert missing["status"] == "sem_perfil"
+
+
+def test_notifications_interpret_naive_mongo_timestamp_as_utc(monkeypatch):
+    configure_databases(monkeypatch, [(7,)])
+    collection = FakeNotificationsCollection()
+    monkeypatch.setattr(router_tools, "get_notifications_collection", lambda: collection)
+    collection.insert_one({
+        "_id": "one", "id_usuario": 7, "mensagem": "Olá",
+        "data_criacao": datetime(2026, 9, 13, 12),
+    })
+
+    result = consultar_notificacoes.invoke({}, config=tool_config())
+
+    assert result["notificacoes"][0]["data_criacao"] == "2026-09-13T12:00:00+00:00"

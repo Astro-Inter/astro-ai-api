@@ -127,7 +127,7 @@ def test_specialist_flow(chat_client, domain):
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
-        '"enviar_mensagem", "consultar_conversas"]'
+        '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes"]'
     ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
@@ -521,6 +521,78 @@ def test_simple_conversation_request_extracts_person_and_page():
     assert _pedido_simples_de_conversa("Não mostre minhas mensagens com Rosa Maduda") is None
     assert _pedido_simples_de_conversa("Mostre minhas mensagens com meu amigo") is None
     assert _pedido_simples_de_conversa("Como enviar mensagens com Rosa Maduda?") is None
+
+
+@pytest.mark.parametrize("message,router_reply,expected_model_calls", [
+    (
+        "Mostre minhas notificações",
+        "ROUTE=desconhecido",
+        ["guardrail_entrada", "juiz"],
+    ),
+    (
+        "Existem notificações para mim?",
+        '```json\nNOTIFICATIONS = {"pagina":1,"limite":5}\n```',
+        ["guardrail_entrada", "roteador", "juiz"],
+    ),
+])
+def test_router_consults_only_authenticated_users_notifications(
+    chat_client, monkeypatch, message, router_reply, expected_model_calls,
+):
+    from datetime import datetime, timezone
+
+    client, model, _ = chat_client
+
+    class Cursor:
+        def sort(self, _):
+            return self
+        def skip(self, _):
+            return self
+        def limit(self, _):
+            return self
+        def __iter__(self):
+            return iter([{
+                "mensagem": "Você tem um evento pendente!",
+                "data_criacao": datetime(2026, 9, 13, tzinfo=timezone.utc),
+            }])
+
+    class Collection:
+        def __init__(self):
+            self.query = None
+        def count_documents(self, query):
+            self.query = query
+            return 1
+        def find(self, query, projection):
+            assert query == self.query
+            assert projection == {"_id": 0, "mensagem": 1, "data_criacao": 1}
+            return Cursor()
+
+    collection = Collection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(router_tools, "_resolver_id_usuario", lambda uid: 7)
+    monkeypatch.setattr(router_tools, "get_notifications_collection", lambda: collection)
+    model.replies["roteador"] = router_reply
+
+    response = client.post("/chat/messages", json={"message": message})
+
+    assert response.status_code == 200
+    assert "Você tem um evento pendente!" in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_notificacoes", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == expected_model_calls
+    assert collection.query == {"id_usuario": 7}
+
+
+def test_simple_notification_request_never_targets_someone_else():
+    from app.modules.chat.graph import _pedido_simples_de_notificacoes
+
+    assert _pedido_simples_de_notificacoes("Mostre minhas notificações").pagina == 1
+    assert _pedido_simples_de_notificacoes("Mostre a página 2 das minhas notificações").pagina == 2
+    assert _pedido_simples_de_notificacoes("Mostre notificações da Rosa") is None
+    assert _pedido_simples_de_notificacoes("Não mostre minhas notificações") is None
+    assert _pedido_simples_de_notificacoes("Crie notificações para mim") is None
 
 
 @pytest.mark.parametrize("confirmation", [
