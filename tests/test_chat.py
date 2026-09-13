@@ -139,7 +139,7 @@ def test_specialist_flow(chat_client, domain):
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
         '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
-        '"consultar_acessos", "consultar_treinamentos"]'
+        '"consultar_acessos", "consultar_treinamentos", "gerar_pdf"]'
     ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
@@ -1050,6 +1050,135 @@ def test_direct_and_faq_flows(chat_client):
     assert session["mensagens"][-1]["content"] == faq["resposta"]
 
 
+def test_pdf_request_uses_approved_faq_answer_and_returns_temporary_link(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, application = chat_client
+    model.route = "faq"
+    model.replies["guardrail_saida"] = json.dumps({
+        "status": "aprovado", "motivo": "Resposta validada.",
+        "resposta": "Paráfrase indevida sem citação.",
+    })
+    calls = []
+
+    async def fake_pdf(args, config):
+        calls.append((args, config))
+        assert args["resposta"] == "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
+        return {"status": "ok", "url": "https://r2.example/arquivo.pdf?assinatura=teste"}
+
+    class PdfTool:
+        ainvoke = staticmethod(fake_pdf)
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post(
+        "/chat/messages", json={"message": (
+            "Qual é o objetivo do Astro? Gere um PDF com a explicação e as fontes utilizadas."
+        )},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "[Baixar PDF](https://r2.example/arquivo.pdf?assinatura=teste)" in body["resposta"]
+    assert "link válido por 5 horas" in body["resposta"]
+    assert "Fonte: normas.pdf, página 1." in body["resposta"]
+    assert "Paráfrase indevida" not in body["resposta"]
+    assert body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_normas", "faq", "juiz",
+        "guardrail_saida", "gerar_pdf",
+    ]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "faq", "juiz", "guardrail_saida",
+    ]
+    assert calls[0][1]["configurable"]["usuario_atual"]["uid"] == "user-a"
+    stored = application.state.chat_service.repository.docs[body["session_id"]]
+    assert "assinatura=teste" not in stored["mensagens"][-1]["content"]
+    assert "PDF gerado" in stored["mensagens"][-1]["content"]
+
+
+def test_pdf_is_not_uploaded_when_consultation_has_no_data(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, application = chat_client
+    model.route = "faq"
+    application.state.chat_service.faq_vectors.results = []
+
+    async def unexpected_pdf(*_args, **_kwargs):
+        pytest.fail("Não deve gerar PDF sem dados confirmados")
+
+    class PdfTool:
+        ainvoke = staticmethod(unexpected_pdf)
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post(
+        "/chat/messages", json={"message": "Gere um PDF sobre esta norma ausente."},
+    )
+    assert response.status_code == 200
+    assert "Não gerei o PDF" in response.json()["resposta"]
+    assert "Baixar PDF" not in response.json()["resposta"]
+
+
+def test_pdf_upload_failure_keeps_the_approved_answer(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, _ = chat_client
+    model.route = "faq"
+
+    class PdfTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            return {"status": "indisponivel"}
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post(
+        "/chat/messages", json={"message": "Gere um PDF com o objetivo do Astro."},
+    )
+    assert response.status_code == 200
+    assert "O Astro centraliza orientações internas." in response.json()["resposta"]
+    assert "Não consegui gerar o PDF agora." in response.json()["resposta"]
+    assert "Baixar PDF" not in response.json()["resposta"]
+
+
+def test_pdf_is_not_generated_when_guardrail_ignores_negative_judge(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, _ = chat_client
+    model.route = "faq"
+    model.replies["juiz"] = json.dumps({
+        "status": "revisar", "motivo": "Fonte não confirma a afirmação.",
+        "problemas": ["Afirmação sem evidência."],
+    })
+    model.replies["guardrail_saida"] = json.dumps({
+        "status": "aprovado", "motivo": "Sem revisão.",
+        "resposta": "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1.",
+    })
+
+    class PdfTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            pytest.fail("Resposta não aprovada não pode ser enviada ao R2")
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post("/chat/messages", json={"message": (
+        "Qual é o objetivo do Astro? Gere um PDF com a explicação e as fontes utilizadas."
+    )})
+    assert response.status_code == 200
+    assert response.json()["resposta"] == (
+        "Não consegui validar esta resposta com as informações disponíveis."
+    )
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("Gere um PDF sobre minhas NRs", True),
+    ("Quero um relatório em PDF", True),
+    ("PDF das minhas NRs", True),
+    ("Não quero PDF", False),
+    ("Como gerar um PDF?", False),
+    ("Isso está em PDF?", False),
+])
+def test_pdf_request_requires_creation_intent(message, expected):
+    from app.modules.chat.graph import _pedido_pdf
+
+    assert _pedido_pdf(message) is expected
+
+
 def test_faq_without_relevant_chunks_does_not_call_model(chat_client):
     client, model, application = chat_client
     model.route = "faq"
@@ -1107,7 +1236,6 @@ def test_output_guard_replaces_candidate(chat_client, status):
     ("orquestrador", "   "),
     ("juiz", "não é JSON"),
     ("juiz", json.dumps({"status": "aprovado", "motivo": "ok", "problemas": ["erro"]})),
-    ("guardrail_saida", json.dumps({"status": "aprovado", "motivo": "ok", "resposta": "Alterada"})),
     ("guardrail_saida", "```json\n{}\n```"),
 ])
 def test_invalid_agent_reply_fails_closed(chat_client, agent, reply):
@@ -1204,7 +1332,10 @@ def test_guardrail_cannot_ignore_negative_judge(chat_client, guard_status):
         "resposta": "Olá! Como posso ajudar?",
     })
     response = client.post("/chat/messages", json={"message": "Pedido"})
-    assert response.status_code == 502
+    assert response.status_code == 200
+    assert response.json()["resposta"] == (
+        "Não consegui validar esta resposta com as informações disponíveis."
+    )
     assert all(not doc["mensagens"] for doc in application.state.chat_service.repository.docs.values())
 
 

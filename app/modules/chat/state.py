@@ -29,3 +29,5 @@ class ChatState(TypedDict, total=False):
     resposta: str
     agentes_chamados: list[str]
     guardar_turno: bool
+    pdf_solicitado: bool
+    pdf_url: str | None

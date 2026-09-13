@@ -1,3 +1,4 @@
+import logging
 import re
 import unicodedata
 from datetime import date
@@ -27,9 +28,11 @@ from app.modules.roteador.tools import (
     ConsultarAcessosArgs, ConsultarConversasArgs, ConsultarNotificacoesArgs,
     EnviarMensagemArgs, TOOLS_ROTEADOR,
 )
+from app.modules.shared.tools import gerar_pdf
 
 
 ROTEADOR_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_ROTEADOR}
+logger = logging.getLogger(__name__)
 
 
 def _sem_acentos(message: str) -> str:
@@ -37,6 +40,22 @@ def _sem_acentos(message: str) -> str:
         char for char in unicodedata.normalize("NFKD", message.casefold())
         if not unicodedata.combining(char)
     )
+
+
+def _pedido_pdf(message: str) -> bool:
+    """Distingue pedido de arquivo de uma pergunta genérica sobre PDFs."""
+    normalized = _sem_acentos(message)
+    if not re.search(r"\bpdfs?\b", normalized):
+        return False
+    if re.search(r"\b(?:sem\s+pdf|nao\s+(?:quero|preciso|gere|gerar|crie|criar|faca|envie)\b)", normalized):
+        return False
+    if re.search(r"\bcomo\s+(?:gerar|criar|fazer|exportar)\b", normalized):
+        return False
+    return bool(re.search(
+        r"\b(?:gere|gerar|crie|criar|faca|fazer|exporte|exportar|"
+        r"salve|salvar|produza|quero|preciso|gostaria|mande|envie)\b|^pdf\b",
+        normalized,
+    ))
 
 
 def _confirmacao_explicita(message: str) -> bool:
@@ -288,6 +307,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             "rota": "roteador" if approved else "fim",
             "resposta": "" if approved else decision.mensagem,
             "guardar_turno": decision.decisao != "bloquear",
+            "pdf_solicitado": approved and _pedido_pdf(state["mensagem"]),
             "agentes_chamados": ["guardrail_entrada"],
         }
 
@@ -689,16 +709,35 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             model, "guardrail_saida", GUARDRAIL_SAIDA_PROMPT_COMPLETO, state, OutputDecision,
         )
         judge_status = state["avaliacao_juiz"]["status"]
-        if judge_status != "aprovado" and decision.status == "aprovado":
-            raise InvalidAgentResponse("guardrail_saida")
-        if (judge_status != "aprovado" and decision.status == "corrigido"
-                and decision.resposta == state["candidato"]):
-            raise InvalidAgentResponse("guardrail_saida")
-        # "Aprovado" não autoriza o revisor a introduzir novas informações.
+        if judge_status != "aprovado" and (
+            decision.status == "aprovado"
+            or (decision.status == "corrigido" and decision.resposta == state["candidato"])
+        ):
+            logger.warning(
+                "Guardrail de saida nao corrigiu resposta apontada pelo juiz; "
+                "juiz=%s guardrail=%s",
+                judge_status, decision.status,
+            )
+            result = {
+                "resposta": "Não consegui validar esta resposta com as informações disponíveis.",
+                "guardar_turno": False,
+                "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
+            }
+            if evidence.get("nome") == "enviar_mensagem":
+                result["acao_pendente"] = None
+            return result
+        # Se o Juiz aprovou e o guardrail também marcou aprovado, o texto
+        # autorizado é a candidata original. Ignorar paráfrases evita que uma
+        # alteração acidental do modelo vire erro 502 ou introduza fatos novos.
         if decision.status == "aprovado" and decision.resposta != state["candidato"]:
-            raise InvalidAgentResponse("guardrail_saida")
+            logger.warning("Guardrail de saida marcou aprovado mas alterou o texto; preservando candidata")
+        response = (
+            state["candidato"]
+            if judge_status == "aprovado" and decision.status == "aprovado"
+            else decision.resposta
+        )
         result = {
-            "resposta": decision.resposta,
+            "resposta": response,
             "guardar_turno": decision.status != "bloqueado",
             "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
         }
@@ -706,6 +745,40 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             # Uma prévia reprovada não pode permanecer disponível para confirmação.
             result["acao_pendente"] = None
         return result
+
+    async def generate_pdf(state: ChatState):
+        if state.get("resultado", {}).get("status") in {
+            "indisponivel", "sem_dados", "nao_autorizado", "esclarecer",
+            "aguardando_confirmacao", "erro", "bloqueado",
+        }:
+            return {
+                "resposta": state["resposta"] + (
+                    "\n\nNão gerei o PDF porque a consulta não trouxe informações confirmadas."
+                ),
+                "agentes_chamados": state["agentes_chamados"],
+            }
+        try:
+            result = await gerar_pdf.ainvoke(
+                {
+                    "titulo": f"Consulta Astro: {state['mensagem'][:110]}",
+                    "pergunta": state["mensagem"],
+                    "resposta": state["resposta"],
+                },
+                config={"configurable": {
+                    "usuario_atual": state["usuario_atual"].model_dump(),
+                }},
+            )
+        except Exception:
+            result = {"status": "indisponivel"}
+        if result.get("status") == "ok":
+            return {
+                "pdf_url": result["url"],
+                "agentes_chamados": state["agentes_chamados"] + ["gerar_pdf"],
+            }
+        return {
+            "resposta": state["resposta"] + "\n\nNão consegui gerar o PDF agora.",
+            "agentes_chamados": state["agentes_chamados"] + ["gerar_pdf"],
+        }
 
     graph = StateGraph(ChatState)
     graph.add_node("guardrail_entrada", input_guard)
@@ -738,6 +811,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_node("orquestrador", orchestrator)
     graph.add_node("juiz", judge)
     graph.add_node("guardrail_saida", output_guard)
+    graph.add_node("gerar_pdf", generate_pdf)
     graph.add_edge(START, "guardrail_entrada")
     graph.add_conditional_edges("guardrail_entrada", lambda state: state["rota"], {
         "roteador": "roteador", "fim": END,
@@ -757,6 +831,19 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_edge("faq", "juiz")
     graph.add_edge("orquestrador", "juiz")
     graph.add_edge("juiz", "guardrail_saida")
-    graph.add_edge("guardrail_saida", END)
+    graph.add_conditional_edges(
+        "guardrail_saida",
+        lambda state: "gerar_pdf" if (
+            state.get("pdf_solicitado")
+            and state.get("guardar_turno")
+            and state.get("avaliacao_juiz", {}).get("status") == "aprovado"
+            and state.get("rota") in {
+                "rh", "sst", "agenda", "eventos", "faq", "conversa",
+                "notificacoes", "acessos",
+            }
+        ) else "fim",
+        {"gerar_pdf": "gerar_pdf", "fim": END},
+    )
+    graph.add_edge("gerar_pdf", END)
     # Sem checkpoints do grafo: o serviço persiste somente turnos públicos no Mongo.
     return graph.compile(name="astro_chat")

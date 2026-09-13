@@ -9,6 +9,7 @@ description = "API de inteligencia artificial do Astro"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "boto3>=1.40,<2.0",
     "fastapi>=0.135,<1.0",
     "firebase-admin>=7.5,<8.0",
     "httpx>=0.28,<1.0",
@@ -17,6 +18,7 @@ dependencies = [
     "langchain-groq>=1.1.2,<2.0",
     "langchain-mistralai>=1.0,<2.0",
     "pypdf>=6.0,<7.0",
+    "reportlab>=4.2,<5.0",
     "psycopg[binary]>=3.3,<4.0",
     "tzdata>=2025.2",
     "pydantic>=2.12,<3.0",
@@ -38,3 +40,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.modules.shared" = ["assets/*.png", "assets/*.ttf", "assets/*.txt"]

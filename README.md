@@ -352,6 +352,29 @@ o banco não permite conhecer o total de logins nem seus horários. Consultas de
 período atual usam `CURRENT_DATE` do PostgreSQL. Exemplos no chat: “Quantos
 dias acessei neste mês?” e “Qual foi meu primeiro acesso ao sistema?”.
 
+### Geração compartilhada de PDF
+
+`app/modules/shared/tools.py` implementa `gerar_pdf` para os agentes do chat.
+Quando a mensagem pede explicitamente um PDF, o agente responde à consulta
+normalmente. Somente depois da validação pelo Juiz e pelo guardrail de saída, a
+aplicação transforma a pergunta e a resposta aprovada em um relatório com
+conteúdo variável. Pedidos sem dados confirmados ou bloqueados não enviam
+arquivo ao R2. O modelo não escolhe o conteúdo final nem inventa o link.
+Os relatórios usam a fonte MuseoModerno e a paleta Astro (`#1C1839`,
+`#8F00C4` e branco), com a logo translúcida no cabeçalho de todas as páginas.
+
+Configure `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` (endpoint S3
+do Cloudflare) e `R2_BUCKET_NAME` no `.env`; instale as dependências atualizadas
+com `pip install -e .`. O arquivo é gravado no bucket sem exigir acesso público,
+e a resposta do chat inclui um link de download assinado, válido por cinco
+horas. Esse link não é persistido no histórico da conversa. Exemplo: “Gere um PDF explicando quais
+treinamentos eu preciso realizar”.
+
+O token R2 precisa de **Object Read & Write** para o bucket configurado, incluindo
+upload e leitura do objeto. Se o R2 negar a operação, a resposta da consulta é
+preservada e o usuário recebe um aviso de que o PDF não foi gerado; o log registra
+apenas a etapa e o código do erro, sem URL assinada ou credenciais.
+
 ## Histórico persistente e sessões (SCRUM-187)
 
 Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY`,

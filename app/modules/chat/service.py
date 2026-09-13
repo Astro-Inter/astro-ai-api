@@ -13,6 +13,7 @@ from app.modules.chat.errors import ChatError
 from app.modules.chat.graph import build_chat_graph
 from app.modules.chat.schemas import ChatRequest, ChatResponse, SessionResponse
 from app.modules.memory.service import ConversationMemory
+from app.modules.shared.tools import PDF_LINK_TTL_HOURS
 
 
 CHAT_TIMEZONE = ZoneInfo("America/Sao_Paulo")
@@ -100,6 +101,7 @@ class ChatService:
                             "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                             "consultar_acessos",
                             "consultar_treinamentos",
+                            "gerar_pdf",
                         ],
                         "fontes_disponiveis": ["faq_chunks", "nrs"],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
@@ -116,10 +118,14 @@ class ChatService:
                                    "usuario, sem contar logins individuais ou horarios. "
                                    "Treinamentos atribuidos ao usuario podem ser consultados "
                                    "pelo agente de agenda, sem inferir inscricoes a partir da NR. "
+                                   "PDFs podem ser gerados da resposta revisada quando pedidos "
+                                   "explicitamente; a aplicacao fornece o link temporario. "
                                    "Nao ha outras operacoes de escrita. NRs podem ser consultadas na collection "
                                    "MongoDB autorizada. "
                                    "Historico nao comprova direitos nem execucao. "
-                                   "Nao expor identificadores internos, fontes ou metadados na saida.",
+                                   "Nao expor identificadores internos nem metadados tecnicos. "
+                                   "Em respostas do FAQ, citar documento e pagina quando "
+                                   "fornecidos pelos trechos autorizados.",
                     },
                     "memoria": {}, "busca_memoria": "", "memoria_consultada": False,
                     "rota": "", "resultado": {}, "resultado_tool": {}, "rh_decision": None,
@@ -129,8 +135,16 @@ class ChatService:
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
+                    "pdf_solicitado": False, "pdf_url": None,
                 }, config={"recursion_limit": 20})
-                response = ChatResponse(session_id=session_id, resposta=result["resposta"],
+                pdf_url = result.get("pdf_url")
+                public_answer = result["resposta"]
+                if pdf_url:
+                    public_answer += (
+                        f"\n\n[Baixar PDF]({pdf_url}) "
+                        f"(link válido por {PDF_LINK_TTL_HOURS} horas)."
+                    )
+                response = ChatResponse(session_id=session_id, resposta=public_answer,
                                         agentes_chamados=result["agentes_chamados"])
                 if result["guardar_turno"]:
                     await self.repository.update(session_id, user.uid, token,
@@ -139,7 +153,10 @@ class ChatService:
                             "acao_pendente": result.get("acao_pendente"),
                         }, messages=[
                             {"role": "human", "content": request.message},
-                            {"role": "assistant", "content": response.resposta},
+                            {"role": "assistant", "content": (
+                                result["resposta"] + "\n\nPDF gerado e link temporário entregue."
+                                if pdf_url else result["resposta"]
+                            )},
                         ])
                 return response
 
