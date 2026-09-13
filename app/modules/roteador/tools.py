@@ -1,10 +1,11 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Literal
 from uuid import uuid4
 
 import psycopg
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
@@ -61,6 +62,38 @@ class ConsultarNotificacoesArgs(BaseModel):
 
     pagina: int = Field(default=1, ge=1, le=1000)
     limite: int = Field(default=5, ge=1, le=10)
+
+
+class ConsultarAcessosArgs(BaseModel):
+    """Consulta apenas os dias de acesso do usuário autenticado."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    consulta: Literal["resumo", "contagem", "primeiro", "ultimo", "dias", "explicacao"] = "resumo"
+    explicar: bool = False
+    periodo: Literal[
+        "todo_historico", "mes_atual", "ano_atual", "mes_passado", "ano_passado",
+        "mes_especifico", "ano_especifico", "intervalo",
+    ] = "todo_historico"
+    ano: int | None = Field(default=None, ge=1900, le=2100)
+    mes: int | None = Field(default=None, ge=1, le=12)
+    data_inicio: date | None = None
+    data_fim: date | None = None
+    pagina: int = Field(default=1, ge=1, le=1000)
+    limite: int = Field(default=10, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validar_periodo(self):
+        if self.periodo == "mes_especifico" and (self.ano is None or self.mes is None):
+            raise ValueError("Mês específico exige ano e mês.")
+        if self.periodo == "ano_especifico" and self.ano is None:
+            raise ValueError("Ano específico exige ano.")
+        if self.periodo == "intervalo" and (
+            self.data_inicio is None or self.data_fim is None
+            or self.data_inicio > self.data_fim
+        ):
+            raise ValueError("Intervalo exige início e fim válidos.")
+        return self
 
 
 def get_postgres_connection():
@@ -490,4 +523,138 @@ def consultar_notificacoes(
     }
 
 
-TOOLS_ROTEADOR = [enviar_mensagem, consultar_conversas, consultar_notificacoes]
+def _filtro_periodo_acesso(args: ConsultarAcessosArgs) -> tuple[str, list]:
+    """Produz SQL fixo por período; datas e identificador vão como parâmetros."""
+    if args.periodo == "todo_historico":
+        return "", []
+    if args.periodo == "mes_atual":
+        return (
+            "AND acesso.data >= date_trunc('month', CURRENT_DATE)::date "
+            "AND acesso.data < (date_trunc('month', CURRENT_DATE) + INTERVAL '1 month')::date",
+            [],
+        )
+    if args.periodo == "ano_atual":
+        return (
+            "AND acesso.data >= date_trunc('year', CURRENT_DATE)::date "
+            "AND acesso.data < (date_trunc('year', CURRENT_DATE) + INTERVAL '1 year')::date",
+            [],
+        )
+    if args.periodo == "mes_passado":
+        return (
+            "AND acesso.data >= (date_trunc('month', CURRENT_DATE) - INTERVAL '1 month')::date "
+            "AND acesso.data < date_trunc('month', CURRENT_DATE)::date",
+            [],
+        )
+    if args.periodo == "ano_passado":
+        return (
+            "AND acesso.data >= (date_trunc('year', CURRENT_DATE) - INTERVAL '1 year')::date "
+            "AND acesso.data < date_trunc('year', CURRENT_DATE)::date",
+            [],
+        )
+    if args.periodo == "mes_especifico":
+        start = date(args.ano, args.mes, 1)
+        end = date(args.ano + (args.mes == 12), args.mes % 12 + 1, 1)
+        return (
+            "AND acesso.data >= %s AND acesso.data < %s",
+            [start, end],
+        )
+    if args.periodo == "ano_especifico":
+        return (
+            "AND acesso.data >= %s AND acesso.data < %s",
+            [date(args.ano, 1, 1), date(args.ano + 1, 1, 1)],
+        )
+    return "AND acesso.data >= %s AND acesso.data <= %s", [args.data_inicio, args.data_fim]
+
+
+@tool("consultar_acessos", args_schema=ConsultarAcessosArgs)
+def consultar_acessos(
+    consulta: Literal["resumo", "contagem", "primeiro", "ultimo", "dias", "explicacao"] = "resumo",
+    explicar: bool = False,
+    periodo: Literal[
+        "todo_historico", "mes_atual", "ano_atual", "mes_passado", "ano_passado",
+        "mes_especifico", "ano_especifico", "intervalo",
+    ] = "todo_historico",
+    ano: int | None = None,
+    mes: int | None = None,
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    pagina: int = 1,
+    limite: int = 10,
+    config: RunnableConfig = None,
+) -> dict:
+    """Conta dias com acesso e informa o primeiro/último dia registrado.
+
+    `acesso` tem chave primária (data, usuario_id): não registra múltiplos
+    logins no mesmo dia nem a hora de cada login.
+    """
+    user = _usuario_do_contexto(config)
+    if user is None:
+        return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
+    if consulta == "explicacao":
+        return {
+            "status": "ok",
+            "consulta": "explicacao",
+            "granularidade": "um registro por usuario por dia; nao contabiliza logins individuais nem horarios",
+        }
+    if not app_config.DATABASE_URL:
+        return {"status": "indisponivel", "mensagem": "Consulta de acessos indisponivel."}
+
+    args = ConsultarAcessosArgs(
+        consulta=consulta, explicar=explicar, periodo=periodo, ano=ano, mes=mes,
+        data_inicio=data_inicio, data_fim=data_fim, pagina=pagina, limite=limite,
+    )
+    period_filter, period_params = _filtro_periodo_acesso(args)
+    where = f"WHERE acesso.usuario_id = %s {period_filter}"
+    try:
+        with get_postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id_usuario FROM usuario WHERE firebase_uid = %s LIMIT 1",
+                    [user.uid],
+                )
+                profile = cursor.fetchone()
+                if profile is None:
+                    return {
+                        "status": "sem_perfil",
+                        "mensagem": "Seu perfil de usuario nao foi encontrado para consultar acessos.",
+                    }
+                params = [profile[0], *period_params]
+                cursor.execute(
+                    f"SELECT COUNT(*), MIN(acesso.data), MAX(acesso.data) FROM acesso {where}",
+                    params,
+                )
+                total, primeiro, ultimo = cursor.fetchone()
+                if consulta == "dias" and total:
+                    cursor.execute(
+                        f"SELECT acesso.data FROM acesso {where} "
+                        "ORDER BY acesso.data DESC LIMIT %s OFFSET %s",
+                        [*params, limite, (pagina - 1) * limite],
+                    )
+                    dias = [row[0].isoformat() for row in cursor.fetchall()]
+                else:
+                    dias = []
+    except Exception:
+        return {"status": "indisponivel", "mensagem": "Consulta de acessos indisponivel."}
+
+    return {
+        "status": "ok" if total else "sem_dados",
+        "consulta": consulta,
+        "explicar": explicar,
+        "periodo": periodo,
+        "ano": ano if periodo in {"mes_especifico", "ano_especifico"} else None,
+        "mes": mes if periodo == "mes_especifico" else None,
+        "data_inicio": data_inicio.isoformat() if periodo == "intervalo" else None,
+        "data_fim": data_fim.isoformat() if periodo == "intervalo" else None,
+        "total_dias_com_acesso": total,
+        "primeiro_dia_registrado": primeiro.isoformat() if primeiro else None,
+        "ultimo_dia_registrado": ultimo.isoformat() if ultimo else None,
+        "dias": dias,
+        "pagina": pagina if consulta == "dias" else None,
+        "total_paginas": (total + limite - 1) // limite if consulta == "dias" else None,
+        "granularidade": "um registro por usuario por dia; nao contabiliza logins individuais nem horarios",
+    }
+
+
+TOOLS_ROTEADOR = [
+    enviar_mensagem, consultar_conversas, consultar_notificacoes, consultar_acessos,
+]
