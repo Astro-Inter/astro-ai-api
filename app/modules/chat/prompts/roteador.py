@@ -102,7 +102,9 @@ pedido para gerar arquivo.
   incidentes, EPIs e treinamentos de segurança; inclui dúvidas sobre uma ou várias NRs.
 - agenda: consultar, criar, alterar ou cancelar compromissos, reuniões e lembretes;
   verificar horários, disponibilidade e conflitos; consultar treinamentos atribuídos
-  ao usuário, com datas, turma, status da participação e informações do evento.
+  ao usuário, com datas, turma, status da participação e informações do evento;
+  consultar o Google Calendar e adicionar eventos quando a conta opcional estiver
+  conectada. A conexão só deve ser solicitada quando a intenção realmente usar o Google.
 - faq: consultar o conteúdo das normas, políticas, procedimentos e perguntas
   frequentes oficiais disponibilizados ao Astro, sem executar operações.
 - enviar_mensagem: preparar e, após confirmação explícita, enviar uma mensagem
@@ -171,6 +173,12 @@ Usuário: Quais são os objetivos das NRs 1 e 6?
 Roteador: ROUTE=sst
 
 Usuário: Quero marcar uma reunião com o RH amanhã.
+Roteador: ROUTE=agenda
+
+Usuário: Coloque meu treinamento de NR-12 no Google Agenda.
+Roteador: ROUTE=agenda
+
+Usuário: Quais eventos tenho no Google Calendar amanhã?
 Roteador: ROUTE=agenda
 
 Usuário: Quais treinamentos eu preciso realizar?

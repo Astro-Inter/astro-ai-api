@@ -166,10 +166,10 @@ Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
 No fluxo automático atual, a memória acessa o histórico, a tool de RH consulta
 os usuários permitidos pelo perfil autenticado, a tool de SST consulta NRs na
 collection autorizada e a tool de Agenda lê treinamentos atribuídos ao usuário.
-O Roteador pode enviar mensagens após uma prévia e uma
-confirmação explícita; a única tool de negócio atual da Agenda consulta treinamentos.
-Os especialistas podem orientar e esclarecer, mas não criar eventos ou executar
-outras solicitações.
+O Roteador pode enviar mensagens após uma prévia e uma confirmação explícita. A
+Agenda consulta treinamentos no PostgreSQL e pode consultar ou criar eventos no
+Google Calendar por MCP quando o próprio usuário conectar a conta. Os especialistas
+continuam sem autorização para afirmar operações não confirmadas por ferramentas.
 Autenticação não
 concede acesso automático a dados de outras pessoas ou empresas; cada ferramenta
 deve aplicar sua própria regra de autorização.
@@ -191,7 +191,46 @@ quando houver busca semântica de histórico ou FAQ, com custos e latência
 dos provedores. `LANGSMITH_*` é lido pelo SDK quando o tracing está habilitado;
 traces podem conter mensagens, contexto do usuário e respostas. Habilite somente
 quando esse envio de dados estiver autorizado. Bearer e chaves não são incluídos
-nos prompts. Nenhuma variável de ambiente nova é necessária para o chat.
+nos prompts. As variáveis do Google Calendar são opcionais; sem elas, todo o chat
+continua funcionando, exceto as operações que dependem do calendário.
+
+### Google Calendar por MCP
+
+A integração é sob demanda. O login Firebase não conecta automaticamente uma conta
+Google e consultas como "quais treinamentos preciso realizar?" continuam usando
+somente o PostgreSQL. Quando o usuário pedir para consultar ou criar algo no Google
+Calendar sem ter uma conta conectada, o chat informa a rota de conexão e mantém a
+prévia da criação pendente na sessão.
+
+Configure um cliente OAuth do tipo aplicação Web no Google Cloud, habilite a Google
+Calendar API e cadastre exatamente a URI de callback usada pela API. Depois preencha:
+
+```dotenv
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/integracoes/google-calendar/callback
+GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY=
+```
+
+Gere uma chave Fernet exclusiva para o ambiente, sem versioná-la:
+
+```powershell
+.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Após reiniciar a API, as rotas são:
+
+- `GET /integracoes/google-calendar/status`: informa se o usuário autenticado conectou a conta.
+- `GET /integracoes/google-calendar/conectar`: retorna `authorization_url`; o front-end deve abrir essa URL.
+- `GET /integracoes/google-calendar/callback`: callback público validado por `state` OAuth de uso único.
+- `DELETE /integracoes/google-calendar`: revoga quando possível e remove a conexão local.
+
+Os tokens ficam criptografados no MongoDB e associados somente ao Firebase UID. Eles
+não entram no `CurrentUser`, no LangGraph nem nos prompts. O agente de Agenda acessa
+uma allowlist de tools por um servidor MCP interno em transporte `stdio`:
+`google_calendar_status`, `google_calendar_list_events` e
+`google_calendar_create_event`. Criar evento sempre exige prévia e confirmação em
+uma mensagem posterior; o ID estável evita duplicar o evento em um retry.
 
 ### Tools de consulta de usuários do RH
 

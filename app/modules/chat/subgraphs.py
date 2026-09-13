@@ -151,6 +151,11 @@ def _filtros_treinamentos(message: str) -> ConsultarTreinamentosArgs | None:
     )
     if not re.search(r"\b(treinamentos?|capacitac(?:ao|oes))\b", normalized):
         return None
+    if re.search(
+        r"\b(google (?:calendar|agenda)|coloque|adicion\w*|agend\w*|marque|crie)\b",
+        normalized,
+    ):
+        return None
     if not re.search(
         r"\b(meus?|minhas?|preciso|tenho|devo|fazer|realizar|"
         r"pendentes?|atribuidos?|inscritos?|conclui|concluidos?)\b", normalized,
@@ -437,6 +442,68 @@ def _evidencia_treinamentos(result: dict) -> dict:
     }
 
 
+def _formatar_eventos_google(result: dict) -> str:
+    if result.get("status") == "conexao_necessaria":
+        return (
+            "Para consultar sua agenda, conecte sua conta Google pelo endpoint "
+            f"`{result['rota_conexao']}`. O restante do Astro continua disponível sem essa conexão."
+        )
+    if result.get("status") == "sem_dados":
+        return "Não encontrei eventos no seu Google Calendar nesse período."
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar seu Google Calendar.")
+    lines = ["Eventos no seu Google Calendar:"]
+    for event in result.get("eventos", []):
+        lines.append(f"- {event['titulo']} | início: {event['inicio']} | fim: {event['fim']}")
+        if event.get("link"):
+            lines.append(f"  Link: {event['link']}")
+    return "\n".join(lines)
+
+
+def _formatar_criacao_evento_google(result: dict) -> str:
+    event = result.get("evento", {})
+    preview = (
+        f"Prévia do evento: {event.get('titulo')} | início: {event.get('inicio')} | "
+        f"fim: {event.get('fim')}."
+    )
+    status = result.get("status")
+    if status == "conexao_necessaria":
+        return (
+            preview
+            + " Para continuar, conecte sua conta Google pelo endpoint "
+            + f"`{result['rota_conexao']}`. Depois volte a esta conversa e confirme a criação."
+        )
+    if status == "aguardando_confirmacao":
+        return preview + " Confirma a criação no seu Google Calendar?"
+    if status == "ok":
+        text = f"Evento {event.get('titulo')} criado no seu Google Calendar."
+        if event.get("link"):
+            text += f" Link: {event['link']}"
+        return text
+    return result.get("mensagem", "Não foi possível criar o evento no Google Calendar.")
+
+
+def _evidencia_google_calendar(tool_name: str, result: dict) -> dict:
+    evidence = {
+        "status": result.get("status"),
+        "ferramenta_mcp": tool_name,
+        "protocolo": "MCP",
+    }
+    if tool_name == "consultar_google_calendar":
+        evidence["eventos"] = [
+            {
+                "titulo": item.get("titulo"),
+                "inicio": item.get("inicio"),
+                "fim": item.get("fim"),
+                "status": item.get("status"),
+            }
+            for item in result.get("eventos", [])
+        ]
+    else:
+        evidence["evento"] = result.get("evento")
+    return evidence
+
+
 def _evidencia_situacao_nrs(result: dict) -> dict:
     return {
         "status": result.get("status"),
@@ -669,8 +736,11 @@ def build_sst_graph(model: AgentModel):
 
 def build_agenda_graph(model: AgentModel):
     async def decide(state: ChatState):
+        prepared_decision = state.get("agenda_decision")
         filters = _filtros_treinamentos(state["mensagem"])
-        if filters is not None:
+        if isinstance(prepared_decision, AgendaToolDecision):
+            decision = prepared_decision
+        elif filters is not None:
             decision = AgendaToolDecision(acao="consultar_treinamentos", filtros=filters)
         else:
             decision = await invoke_agent(
@@ -690,10 +760,16 @@ def build_agenda_graph(model: AgentModel):
 
     async def use_tool(state: ChatState):
         filters = state["agenda_decision"].filtros
-        result = await AGENDA_TOOLS["consultar_treinamentos"].ainvoke(
+        decision = state["agenda_decision"]
+        tool_name = decision.acao
+        result = await AGENDA_TOOLS[tool_name].ainvoke(
             filters.model_dump(),
             config={"configurable": {
                 "usuario_atual": state["usuario_atual"].model_dump(),
+                "session_id": state["session_id"],
+                "acao_pendente": state.get("acao_pendente"),
+                "confirmacao_explicita": state.get("confirmacao_explicita", False),
+                "fuso": state.get("contexto", {}).get("fuso", "America/Sao_Paulo"),
             }},
         )
         tool_status = result.get("status")
@@ -701,22 +777,41 @@ def build_agenda_graph(model: AgentModel):
             "ok": "concluido", "sem_dados": "sem_dados", "sem_perfil": "sem_dados",
             "indisponivel": "indisponivel", "erro": "nao_autorizado",
             "nao_aplicavel": "nao_autorizado",
+            "conexao_necessaria": "aguardando_confirmacao",
+            "aguardando_confirmacao": "aguardando_confirmacao",
+            "confirmacao_invalida": "esclarecer",
         }
+        if tool_name == "consultar_treinamentos":
+            candidate = _formatar_treinamentos(result)
+            evidence = _evidencia_treinamentos(result)
+            intention = "consultar"
+        elif tool_name == "consultar_google_calendar":
+            candidate = _formatar_eventos_google(result)
+            evidence = _evidencia_google_calendar(tool_name, result)
+            intention = "listar"
+        else:
+            candidate = _formatar_criacao_evento_google(result)
+            evidence = _evidencia_google_calendar(tool_name, result)
+            intention = "criar"
+        pending = result.get("acao_pendente")
+        if pending is None and tool_status in {"indisponivel", "conexao_necessaria"}:
+            pending = state.get("acao_pendente")
         return {
             "resultado_tool": result,
             "resultado": {
                 "dominio": "agenda",
-                "intencao": "consultar",
+                "intencao": intention,
                 "status": statuses.get(tool_status, "indisponivel"),
-                "resposta": "Consulta dos treinamentos atribuídos ao usuário autenticado.",
+                "resposta": "Operação de Agenda executada por ferramenta autorizada.",
                 "recomendacao": "",
                 "evidencia_tool": {
-                    "nome": "consultar_treinamentos",
-                    "resultado": _evidencia_treinamentos(result),
+                    "nome": tool_name,
+                    "resultado": evidence,
                 },
             },
-            "candidato": _formatar_treinamentos(result),
-            "agentes_chamados": state["agentes_chamados"] + ["consultar_treinamentos"],
+            "candidato": candidate,
+            "acao_pendente": pending,
+            "agentes_chamados": state["agentes_chamados"] + [tool_name],
         }
 
     graph = StateGraph(ChatState)

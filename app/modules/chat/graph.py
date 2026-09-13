@@ -1,13 +1,14 @@
 import logging
 import re
 import unicodedata
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import ValidationError
 
 from langgraph.graph import END, START, StateGraph
 
 from app.infrastructure.llm.models import AgentModel
+from app.modules.agenda.tools import AgendaToolDecision, CriarEventoGoogleArgs
 from app.modules.chat.agents import invoke_agent
 from app.modules.chat.errors import InvalidAgentResponse
 from app.modules.chat.prompts.juiz import JUIZ_PROMPT_COMPLETO
@@ -60,11 +61,20 @@ def _pedido_pdf(message: str) -> bool:
 
 def _confirmacao_explicita(message: str) -> bool:
     normalized = _sem_acentos(message).strip().rstrip(".!?")
+    if normalized in {
+        "sim", "confirmo", "isso mesmo", "e isso mesmo", "esta certo",
+        "sim, eu confirmo", "sim eu confirmo", "pode mandar assim",
+    }:
+        return True
+    action = r"(?:enviar|mandar|criar|adicionar|agendar|envie|envia|manda|mande|crie|adicione|agende)"
+    object_detail = (
+        r"(?:\s+(?:a mensagem|o evento|a criacao|o agendamento|isso))?"
+        r"(?:\s+no meu google (?:calendar|agenda))?"
+    )
     return bool(re.fullmatch(
-        r"(sim(?:,? (?:pode (?:enviar|mandar)|envie|manda))?|"
-        r"confirmo(?: o envio)?|pode (?:enviar|mandar)|envie|envia|manda|mande|"
-        r"e isso mesmo(?: que eu quero enviar|,? pode (?:enviar|mandar))?|isso mesmo|"
-        r"esta certo(?:,? pode (?:enviar|mandar))?|pode mandar assim)",
+        rf"(?:sim,?\s+)?(?:eu\s+)?(?:confirmo(?:\s+(?:o envio|a criacao|o agendamento))?|"
+        rf"pode\s+{action}{object_detail}|{action}{object_detail}|"
+        rf"e isso mesmo que eu quero enviar|esta certo,? pode\s+(?:enviar|mandar))",
         normalized,
     ))
 
@@ -299,6 +309,26 @@ def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
 
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def input_guard(state: ChatState):
+        pending = state.get("acao_pendente")
+        if (
+            isinstance(pending, dict)
+            and pending.get("tipo") in {
+                "enviar_mensagem", "criar_evento_google_calendar",
+            }
+            and (
+                _confirmacao_explicita(state["mensagem"])
+                or _cancelamento_explicito(state["mensagem"])
+            )
+        ):
+            # A mensagem curta é contextualizada por uma ação criada pelo backend.
+            # A tool ainda revalida sessão, conteúdo, prazo e confirmação exatos.
+            return {
+                "rota": "roteador",
+                "resposta": "",
+                "guardar_turno": False,
+                "pdf_solicitado": False,
+                "agentes_chamados": ["guardrail_entrada"],
+            }
         decision = await invoke_agent(
             model, "guardrail_entrada", GUARDRAIL_ENTRADA_PROMPT_COMPLETO, state, InputDecision,
         )
@@ -330,6 +360,40 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 return {
                     "rota": "mensagem",
                     "roteador_decision": decision,
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+                }
+
+        if isinstance(pending, dict) and pending.get("tipo") == "criar_evento_google_calendar":
+            if _cancelamento_explicito(state["mensagem"]):
+                return {
+                    "rota": "direta",
+                    "candidato": "A criação foi cancelada. Nenhum evento foi adicionado à agenda.",
+                    "acao_pendente": None,
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+                }
+            if _confirmacao_explicita(state["mensagem"]):
+                try:
+                    filters = CriarEventoGoogleArgs(
+                        titulo=pending["titulo"],
+                        inicio=datetime.fromisoformat(pending["inicio"]),
+                        fim=datetime.fromisoformat(pending["fim"]),
+                        descricao=pending.get("descricao"),
+                        confirmar=True,
+                    )
+                    decision = AgendaToolDecision(
+                        acao="criar_evento_google_calendar", filtros=filters,
+                    )
+                except (KeyError, TypeError, ValueError, ValidationError):
+                    return {
+                        "rota": "direta",
+                        "candidato": "A prévia do evento expirou. Prepare o agendamento novamente.",
+                        "acao_pendente": None,
+                        "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+                    }
+                return {
+                    "rota": "agenda",
+                    "agenda_decision": decision,
+                    "confirmacao_explicita": True,
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"],
                 }
 
@@ -698,6 +762,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                 "consultar_acessos",
                 "consultar_treinamentos",
+                "consultar_google_calendar", "criar_evento_google_calendar",
             }
         ):
             return {
@@ -723,7 +788,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "guardar_turno": False,
                 "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
             }
-            if evidence.get("nome") == "enviar_mensagem":
+            if evidence.get("nome") in {
+                "enviar_mensagem", "criar_evento_google_calendar",
+            }:
                 result["acao_pendente"] = None
             return result
         # Se o Juiz aprovou e o guardrail também marcou aprovado, o texto
@@ -741,7 +808,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             "guardar_turno": decision.status != "bloqueado",
             "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
         }
-        if evidence.get("nome") == "enviar_mensagem":
+        if evidence.get("nome") in {
+            "enviar_mensagem", "criar_evento_google_calendar",
+        }:
             # Uma prévia reprovada não pode permanecer disponível para confirmação.
             result["acao_pendente"] = None
         return result

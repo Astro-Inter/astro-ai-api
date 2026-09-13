@@ -139,9 +139,10 @@ def test_specialist_flow(chat_client, domain):
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
-        '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
-        '"consultar_acessos", "consultar_treinamentos", "gerar_pdf"]'
-    ) in system
+            '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
+            '"consultar_acessos", "consultar_treinamentos", '
+            '"consultar_google_calendar", "criar_evento_google_calendar", "gerar_pdf"]'
+        ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
         assert "SAÍDA PARA O ORQUESTRADOR" not in system
@@ -199,6 +200,81 @@ def test_agenda_agent_consults_training_instead_of_sst(chat_client, monkeypatch)
         "juiz", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+
+
+def test_google_calendar_is_connected_on_demand_and_event_stays_pending(
+    chat_client, monkeypatch,
+):
+    client, model, application = chat_client
+    model.route = "agenda"
+
+    class CalendarClient:
+        def __init__(self):
+            self.connected = False
+            self.calls = []
+
+        async def call_tool(self, name, arguments):
+            self.calls.append((name, arguments))
+            if name == "google_calendar_status":
+                return {"status": "ok", "conectado": self.connected, "escopos": []}
+            if name == "google_calendar_create_event" and self.connected:
+                return {
+                    "status": "ok",
+                    "evento": {
+                        "id": arguments["id_evento"],
+                        "titulo": arguments["titulo"],
+                        "inicio": arguments["inicio"],
+                        "fim": arguments["fim"],
+                        "link": "https://calendar.google.com/event?test",
+                    },
+                }
+            return {
+                "status": "conexao_necessaria",
+                "rota_conexao": "/integracoes/google-calendar/conectar",
+            }
+
+    calendar = CalendarClient()
+    monkeypatch.setattr(
+        agenda_tools, "get_google_calendar_mcp_client", lambda: calendar,
+    )
+    model.replies["agenda"] = json.dumps({
+        "acao": "criar_evento_google_calendar",
+        "filtros": {
+            "titulo": "Treinamento NR-12",
+            "inicio": "2026-09-20T08:00:00-03:00",
+            "fim": "2026-09-20T12:00:00-03:00",
+            "descricao": "Treinamento atribuído no Astro.",
+            "confirmar": False,
+        },
+        "resposta": None,
+    })
+
+    preview_response = client.post("/chat/messages", json={
+        "message": "Coloque o treinamento NR-12 no meu Google Calendar.",
+    })
+
+    assert preview_response.status_code == 200
+    preview_body = preview_response.json()
+    assert "/integracoes/google-calendar/conectar" in preview_body["resposta"]
+    session_id = preview_body["session_id"]
+    pending = application.state.chat_service.repository.docs[session_id]["acao_pendente"]
+    assert pending["tipo"] == "criar_evento_google_calendar"
+    assert [call[0] for call in calendar.calls] == ["google_calendar_status"]
+
+    calendar.connected = True
+    confirmation_response = client.post("/chat/messages", json={
+        "message": "Sim, pode criar.", "session_id": session_id,
+    })
+
+    assert confirmation_response.status_code == 200
+    assert "criado no seu Google Calendar" in confirmation_response.json()["resposta"]
+    assert application.state.chat_service.repository.docs[session_id]["acao_pendente"] is None
+    assert [call[0] for call in calendar.calls] == [
+        "google_calendar_status", "google_calendar_create_event",
+    ]
+    # A confirmação curta é validada pelo pending confiável antes do LLM; o
+    # guardrail não pode tratá-la como mensagem sem contexto.
+    assert [call[0] for call in model.calls].count("guardrail_entrada") == 1
 
 
 def test_training_filters_and_judge_evidence_stay_compact():
@@ -518,7 +594,7 @@ def test_router_previews_and_sends_message_only_after_confirmation(chat_client, 
     assert sent.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "enviar_mensagem", "juiz", "guardrail_saida",
     ]
-    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+    assert [call[0] for call in model.calls] == ["juiz"]
     document = collection.documents[pending["id_mensagem"]]
     assert document["id_envia"] == 7 and document["id_recebe"] == 21
     assert document["mensagem"] == "Olá! Podemos conversar amanhã?"

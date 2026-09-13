@@ -105,6 +105,7 @@ class ChatService:
                             "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                             "consultar_acessos",
                             "consultar_treinamentos",
+                            "consultar_google_calendar", "criar_evento_google_calendar",
                             "gerar_pdf",
                         ],
                         "fontes_disponiveis": ["faq_chunks", "nrs"],
@@ -122,6 +123,9 @@ class ChatService:
                                    "usuario, sem contar logins individuais ou horarios. "
                                    "Treinamentos atribuidos ao usuario podem ser consultados "
                                    "pelo agente de agenda, sem inferir inscricoes a partir da NR. "
+                                   "O Google Calendar e opcional e conectado sob demanda por OAuth. "
+                                   "Consultar ou criar eventos usa apenas o calendario principal "
+                                   "do usuario; criacao exige previa e confirmacao explicita. "
                                    "PDFs podem ser gerados da resposta revisada quando pedidos "
                                    "explicitamente; a aplicacao fornece o link temporario. "
                                    "Nao ha outras operacoes de escrita. NRs podem ser consultadas na collection "
@@ -136,6 +140,7 @@ class ChatService:
                     "rh_route": "", "sst_decision": None, "sst_route": "",
                     "agenda_decision": None, "agenda_route": "",
                     "roteador_decision": None, "acao_pendente": doc.get("acao_pendente"),
+                    "confirmacao_explicita": False,
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
