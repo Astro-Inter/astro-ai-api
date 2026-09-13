@@ -154,10 +154,12 @@ contexto confiável da aplicação.
 
 Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
 No fluxo automático atual, a memória acessa o histórico, a tool de RH consulta
-os usuários permitidos pelo perfil autenticado e a tool de SST consulta NRs na
-collection autorizada. O Roteador pode enviar mensagens após uma prévia e uma
-confirmação explícita; ainda não há tools de negócio para Agenda. Os especialistas
-podem orientar e esclarecer, mas não criar eventos ou executar outras solicitações.
+os usuários permitidos pelo perfil autenticado, a tool de SST consulta NRs na
+collection autorizada e a tool de Agenda lê treinamentos atribuídos ao usuário.
+O Roteador pode enviar mensagens após uma prévia e uma
+confirmação explícita; a única tool de negócio atual da Agenda consulta treinamentos.
+Os especialistas podem orientar e esclarecer, mas não criar eventos ou executar
+outras solicitações.
 Autenticação não
 concede acesso automático a dados de outras pessoas ou empresas; cada ferramenta
 deve aplicar sua própria regra de autorização.
@@ -313,6 +315,29 @@ notificações” ou “Mostre a página 2 das minhas notificações”. O esque
 contém apenas `id_usuario`, `mensagem` e `data_criacao`; portanto, a tool não
 classifica notificações como lidas, pendentes ou vencidas. Para uma collection
 grande, recomenda-se um índice composto em `id_usuario` e `data_criacao`.
+
+### Tool de consulta de treinamentos do agente de Agenda
+
+`app/modules/agenda/tools.py` registra `consultar_treinamentos`, disponível
+somente no subgrafo de Agenda. A ferramenta resolve o Firebase UID autenticado
+para `usuario.id_usuario` no PostgreSQL e lê suas inscrições em
+`turma_funcionario`, juntando `turma`, `evento`, `conclusao_evento` e o título da
+NR quando houver. Não aceita UID ou ID de outra pessoa como filtro.
+
+Por padrão, lista treinamentos atribuídos em eventos `ATIVO` cuja conclusão
+está pendente, rejeitada ou ainda não foi registrada. Filtros opcionais permitem
+ver os concluídos ou todos os treinamentos atribuídos, incluindo eventos
+encerrados e cancelados quando for solicitado o histórico completo. Cada item
+mostra título, turma, início e término, status do evento e da participação,
+NR vinculada, modo de conclusão, exigência de evidência e dados úteis disponíveis.
+Os resultados são paginados (cinco por página, no máximo dez). Como as colunas
+de horário do banco são `TIMESTAMP` sem fuso, a resposta não atribui UTC ou outro
+fuso a essas datas.
+
+Exemplo no chat: “Quais treinamentos eu preciso realizar?”. Essa consulta mostra
+somente inscrições efetivas; uma NR obrigatória para o cargo não comprova que o
+usuário já foi inscrito em uma turma. A tool não cria inscrição, conclusão ou
+evento.
 
 ## Histórico persistente e sessões (SCRUM-187)
 

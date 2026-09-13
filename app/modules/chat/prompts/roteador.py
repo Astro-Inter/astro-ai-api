@@ -78,7 +78,8 @@ valores e compromissos. A prévia sempre será mostrada antes da gravação.
 - sst: Normas Regulamentadoras (NRs), saúde e segurança do trabalho, riscos,
   incidentes, EPIs e treinamentos de segurança; inclui dúvidas sobre uma ou várias NRs.
 - agenda: consultar, criar, alterar ou cancelar compromissos, reuniões e lembretes;
-  verificar horários, disponibilidade e conflitos.
+  verificar horários, disponibilidade e conflitos; consultar treinamentos atribuídos
+  ao usuário, com datas, turma, status da participação e informações do evento.
 - faq: consultar o conteúdo das normas, políticas, procedimentos e perguntas
   frequentes oficiais disponibilizados ao Astro, sem executar operações.
 - enviar_mensagem: preparar e, após confirmação explícita, enviar uma mensagem
@@ -87,10 +88,13 @@ valores e compromissos. A prévia sempre será mostrada antes da gravação.
 - consultar_notificacoes: ler as notificações do próprio usuário autenticado.
 
 ### CRITÉRIOS DE ENCAMINHAMENTO
-- Priorize a intenção: marcar um treinamento de segurança é agenda; relatar um
-  risco no trabalho é sst; consultar uma política interna desse treinamento é faq.
+- Priorize a intenção: consultar treinamentos atribuídos ou marcar um compromisso
+  é agenda; relatar um risco no trabalho é sst; consultar
+  uma política interna de treinamento é faq.
 - Uma pergunta sobre NR é sst. Uma pergunta sobre o texto de outra política interna
   é faq, mesmo que mencione RH ou SST.
+  A consulta da situação das NRs obrigatórias continua com sst; a consulta de
+  turmas e treinamentos em que o usuário foi inscrito pertence à agenda.
   Uma consulta sobre a situação individual de férias é rh.
 - Se o usuário completar uma pergunta anterior, mantenha o domínio quando a
   mensagem realmente continuar o mesmo assunto. Uma nova intenção muda a rota.
@@ -138,6 +142,9 @@ Usuário: Quais são os objetivos das NRs 1 e 6?
 Roteador: ROUTE=sst
 
 Usuário: Quero marcar uma reunião com o RH amanhã.
+Roteador: ROUTE=agenda
+
+Usuário: Quais treinamentos eu preciso realizar?
 Roteador: ROUTE=agenda
 
 Usuário: O que diz a política de férias da empresa?

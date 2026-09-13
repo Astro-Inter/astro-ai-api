@@ -14,9 +14,10 @@ from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
 from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch, OutputDecision
 from app.modules.chat.state import ChatState
 from app.modules.chat.subgraphs import (
+    _filtros_treinamentos,
+    build_agenda_graph,
     build_faq_graph,
     build_rh_graph,
-    build_specialist_graph,
     build_sst_graph,
 )
 from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
@@ -212,6 +213,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             return {
                 "rota": "notificacoes",
                 "roteador_decision": simple_notifications,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
+
+        if _filtros_treinamentos(state["mensagem"]) is not None:
+            return {
+                "rota": "agenda",
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
@@ -449,6 +456,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                 "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
                 "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
+                "consultar_treinamentos",
             }
         ):
             return {
@@ -498,8 +506,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         lambda state: "juiz" if state.get("candidato") else "orquestrador",
         {"juiz": "juiz", "orquestrador": "orquestrador"},
     )
-    graph.add_node("agenda", build_specialist_graph("agenda", model))
-    graph.add_edge("agenda", "orquestrador")
+    graph.add_node("agenda", build_agenda_graph(model))
+    graph.add_conditional_edges(
+        "agenda",
+        lambda state: "juiz" if state.get("candidato") else "orquestrador",
+        {"juiz": "juiz", "orquestrador": "orquestrador"},
+    )
     graph.add_node("faq", build_faq_graph(model, search_faq))
     graph.add_node("orquestrador", orchestrator)
     graph.add_node("juiz", judge)
@@ -509,7 +521,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         "roteador": "roteador", "fim": END,
     })
     graph.add_conditional_edges("roteador", lambda state: state["rota"], {
-        "rh": "rh", "sst": "sst", "agenda": "agenda", "faq": "faq", "direta": "juiz",
+        "rh": "rh", "sst": "sst", "agenda": "agenda",
+        "faq": "faq", "direta": "juiz",
         "memoria": "buscar_historico", "mensagem": "enviar_mensagem",
         "conversa": "consultar_conversas",
         "notificacoes": "consultar_notificacoes",
