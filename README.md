@@ -151,9 +151,13 @@ contexto confiável da aplicação.
   consulta até cinco trechos de `faq_chunks` por similaridade Cosine. Somente
   resultados com score mínimo de 0,35 são enviados ao agente, como dados não
   confiáveis e nunca como instruções. A resposta usa apenas esses trechos e cita
-  nome do PDF e página. Sem resultados relevantes, informa que a informação não
-  foi encontrada; falhas de Qdrant ou embeddings retornam `503` sem inventar uma
-  resposta. A consulta é somente leitura e não altera os pontos ingeridos.
+  nome do PDF e página. Quando a pergunta pede legislação, manual, cartilha ou
+  documento público oficial atual, o subgrafo consulta também os catálogos
+  autorizados do MTE, da Fundacentro e da Anvisa pelo MCP Fetch e inclui somente
+  trechos relevantes e URLs oficiais. Fontes públicas não são tratadas como
+  políticas internas. Sem resultados relevantes, informa que a informação não
+  foi encontrada; falhas de Qdrant ou embeddings retornam `503` quando nenhuma
+  fonte pública sustenta a resposta. As consultas são somente leitura.
 - Juiz: toda resposta candidata, inclusive respostas diretas e do FAQ, passa por
   uma avaliação estruturada antes do guardrail de saída. O Juiz verifica relevância,
   coerência, sustentação nas evidências, fontes, execução de operações, privacidade
@@ -164,8 +168,8 @@ contexto confiável da aplicação.
 
 Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
 No fluxo automático atual, a memória acessa o histórico, a tool de RH consulta
-os usuários permitidos pelo perfil autenticado, a tool de SST consulta NRs na
-collection autorizada e a tool de Agenda lê treinamentos atribuídos ao usuário.
+os usuários permitidos pelo perfil autenticado, as tools de SST consultam NRs e
+orientações oficiais, e a tool de Agenda lê treinamentos atribuídos ao usuário.
 O Roteador pode enviar mensagens após uma prévia e uma confirmação explícita. A
 Agenda consulta treinamentos no PostgreSQL e pode consultar ou criar eventos no
 Google Calendar por MCP quando o próprio usuário conectar a conta. Os especialistas
@@ -271,7 +275,10 @@ cinco minutos antes de tentar a Mistral novamente.
 ### Tool de consulta de NRs do SST
 
 `app/modules/sst/tools.py` registra a tool LangChain `consultar_nrs`, somente
-leitura, para consultar a collection `nrs` do MongoDB. Ela aceita uma ou várias
+leitura. A fonte primária é o portal oficial do Ministério do Trabalho e Emprego,
+consultado pelo servidor oficial MCP Fetch; a collection `nrs` do MongoDB fornece
+o contexto complementar de como a norma está cadastrada no Astro e funciona como
+fallback quando a fonte pública estiver indisponível. A tool aceita uma ou várias
 NRs pelos respectivos números, pesquisa textual nos campos `nome`, `objetivo`,
 `descricao`, `aplicabilidade` e `usabilidade`, além de filtros opcionais de
 revogação e público de uso. Também é possível pedir somente campos específicos.
@@ -285,13 +292,26 @@ solicitados e no máximo dez documentos. Os resultados são ordenados pelo núme
 da NR e datas são serializadas em ISO 8601.
 
 Perguntas sobre NRs são encaminhadas pelo Roteador ao subgrafo de SST. O agente
-decide os filtros, a tool consulta o MongoDB e o backend formata a resposta com a
-referência à collection e ao documento utilizado. A resposta e a evidência da tool
+decide os filtros, a tool consulta a página oficial por MCP e complementa o
+resultado com a base interna. O backend informa a URL pública efetivamente usada.
+A resposta e a evidência da tool
 seguem para o Juiz e o guardrail de saída. Textos extensos não são duplicados na
 evidência do Juiz; ele recebe a resposta determinística e metadados compactos da
-consulta. A mesma configuração `MONGODB_URI` e
-`MONGODB_DATABASE` usada pelo histórico é reutilizada; nenhuma variável nova é
-necessária.
+consulta. A mesma configuração `MONGODB_URI` e `MONGODB_DATABASE` usada pelo
+histórico é reutilizada. `FETCH_MCP_ALLOWED_DOMAINS`, com padrão `gov.br`, controla
+os únicos domínios HTTPS que o cliente MCP aceita. O subprocesso não recebe as
+credenciais da API, URLs com credenciais ou portas diferentes de 443. Respostas
+públicas bem-sucedidas ficam em memória por 15 minutos, valor ajustável por
+`FETCH_MCP_CACHE_TTL_SECONDS`, reduzindo latência e chamadas repetidas.
+
+A tool `consultar_orientacoes_sst` reutiliza o mesmo cliente MCP para localizar
+cartilhas, manuais, guias e orientações gerais nos catálogos do MTE, da Fundacentro
+e da Anvisa. O backend mantém a lista de páginas permitidas; o modelo fornece apenas
+o termo e, opcionalmente, IDs de fontes desse catálogo, sem aceitar URLs livres.
+As páginas são consultadas em paralelo, mas somente até quatro fontes e um trecho
+curto por fonte seguem ao Juiz. Perguntas de FAQ sobre legislação e publicações
+oficiais usam a mesma consulta junto do RAG interno. O conteúdo externo é sempre
+tratado como dado não confiável, e a resposta cita o órgão, o título e a URL usada.
 
 A tool `consultar_nrs_obrigatorias` usa o Firebase UID injetado pelo backend e
 consulta no PostgreSQL somente as NRs vigentes aplicáveis ao próprio usuário. A

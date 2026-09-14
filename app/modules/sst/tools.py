@@ -1,4 +1,6 @@
+import asyncio
 import re
+import unicodedata
 from datetime import date, datetime
 from math import ceil
 from typing import Annotated, Literal
@@ -12,10 +14,24 @@ from pymongo.errors import PyMongoError
 
 from app.core import config as app_config
 from app.core.security import CurrentUser
+from app.infrastructure.mcp_fetch import get_fetch_mcp_client
 from app.modules.chat.schemas import SpecialistResult
+from app.modules.shared.public_sources import PublicSourceId, consultar_fontes_publicas
 
 
 COLLECTION_NRS = "nrs"
+NR_OFFICIAL_CATALOG_URL = (
+    "https://www.gov.br/trabalho-e-emprego/pt-br/assuntos/inspecao-do-trabalho/"
+    "seguranca-e-saude-no-trabalho/ctpp-nrs/normas-regulamentadoras-nrs"
+)
+NR_OFFICIAL_DETAIL_BASE_URL = (
+    "https://www.gov.br/trabalho-e-emprego/pt-br/acesso-a-informacao/"
+    "participacao-social/conselhos-e-orgaos-colegiados/"
+    "comissao-tripartite-partitaria-permanente/normas-regulamentadora/"
+    "normas-regulamentadoras-vigentes"
+)
+NR_DETAIL_URL_OVERRIDES = {1: f"{NR_OFFICIAL_DETAIL_BASE_URL}/nr-1"}
+REVOKED_NRS = frozenset({2, 27})
 NR_TEXT_FIELDS = (
     "nome", "objetivo", "descricao", "aplicabilidade", "usabilidade",
 )
@@ -92,6 +108,33 @@ class ConsultarNrsArgs(BaseModel):
         return values
 
 
+class ConsultarOrientacoesSstArgs(BaseModel):
+    """Pesquisa permitida nos catálogos públicos oficiais de SST."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    termo: str = Field(
+        min_length=2,
+        max_length=200,
+        description=(
+            "Assunto a localizar em cartilhas, manuais, guias ou orientações "
+            "oficiais, por exemplo 'riscos psicossociais' ou 'higiene das mãos'."
+        ),
+    )
+    fontes: list[PublicSourceId] = Field(
+        default_factory=list,
+        max_length=4,
+        description="Fontes oficiais desejadas; vazio consulta MTE, Fundacentro e Anvisa.",
+    )
+
+    @field_validator("fontes")
+    @classmethod
+    def fontes_sem_repeticoes(cls, values):
+        if len(values) != len(set(values)):
+            raise ValueError("Fontes repetidas nao sao permitidas.")
+        return values
+
+
 class SstToolDecision(BaseModel):
     """Decisão do agente SST entre consultar NRs ou orientar sem consulta."""
 
@@ -101,9 +144,10 @@ class SstToolDecision(BaseModel):
         "consultar_nrs",
         "consultar_nrs_obrigatorias",
         "consultar_situacao_nrs",
+        "consultar_orientacoes_sst",
         "responder",
     ]
-    filtros: ConsultarNrsArgs | None = None
+    filtros: ConsultarOrientacoesSstArgs | ConsultarNrsArgs | None = None
     resposta: SpecialistResult | None = None
 
     @model_validator(mode="before")
@@ -123,9 +167,14 @@ class SstToolDecision(BaseModel):
     @model_validator(mode="after")
     def validar_acao(self):
         if self.acao == "consultar_nrs" and (
-            self.filtros is None or self.resposta is not None
+            not isinstance(self.filtros, ConsultarNrsArgs) or self.resposta is not None
         ):
             raise ValueError("A consulta de NRs exige filtros e nao aceita resposta.")
+        if self.acao == "consultar_orientacoes_sst" and (
+            not isinstance(self.filtros, ConsultarOrientacoesSstArgs)
+            or self.resposta is not None
+        ):
+            raise ValueError("A consulta de orientacoes de SST exige filtros e nao aceita resposta.")
         if self.acao == "consultar_nrs_obrigatorias" and (
             self.filtros is not None or self.resposta is not None
         ):
@@ -179,6 +228,107 @@ def _valor_publico(value):
     return value
 
 
+def _texto_pesquisavel(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(character for character in normalized if not unicodedata.combining(character)).casefold()
+
+
+def _pagina_oficial_nr(numero: int) -> str:
+    return NR_DETAIL_URL_OVERRIDES.get(
+        numero,
+        f"{NR_OFFICIAL_DETAIL_BASE_URL}/norma-regulamentadora-no-{numero}-nr-{numero}",
+    )
+
+
+def _executar_fetch(url: str, *, max_length: int) -> dict:
+    try:
+        return asyncio.run(
+            get_fetch_mcp_client().fetch(url, max_length=max_length),
+        )
+    except Exception:
+        return {"status": "indisponivel"}
+
+
+def _parsear_catalogo_oficial(content: str) -> tuple[list[dict], str | None]:
+    updated = re.search(r"Atualizado em\s+(\d{2}/\d{2}/\d{4})", content, re.IGNORECASE)
+    page_updated = updated.group(1) if updated else None
+    entries = []
+    seen = set()
+    pattern = re.compile(
+        r"^\s*NR\s*-\s*0?(\d{1,2})\s*[-–—]\s*(.+?)\s*$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    for match in pattern.finditer(content):
+        number = int(match.group(1))
+        if number in seen:
+            continue
+        raw_name = re.sub(r"\s+", " ", match.group(2)).strip(" *_")
+        revoked = bool(re.search(r"\(\s*REVOGADA\s*\)\s*$", raw_name, re.IGNORECASE))
+        name = re.sub(r"\s*\(\s*REVOGADA\s*\)\s*$", "", raw_name, flags=re.IGNORECASE)
+        entries.append({
+            "numero": number,
+            "nome": name,
+            "situacao": "REVOGADA" if revoked else "VIGENTE",
+            "fonte_oficial": NR_OFFICIAL_CATALOG_URL,
+        })
+        seen.add(number)
+    return entries, page_updated
+
+
+def _resumir_pagina_oficial(content: str) -> tuple[str | None, str | None]:
+    updated = re.search(r"Atualizado em\s+(\d{2}/\d{2}/\d{4})", content, re.IGNORECASE)
+    page_updated = updated.group(1) if updated else None
+    body = content[updated.end():] if updated else content
+    paragraphs = []
+    for paragraph in re.split(r"\n\s*\n", body):
+        clean = re.sub(r"<[^>]+>", " ", paragraph)
+        clean = re.sub(r"\s+", " ", clean).strip(" #*-")
+        if len(clean) < 100:
+            continue
+        lowered = _texto_pesquisavel(clean)
+        if any(marker in lowered for marker in (
+            "compartilhe por facebook", "termos mais buscados", "acesso a informacao",
+        )):
+            continue
+        paragraphs.append(clean)
+        if len(paragraphs) == 2:
+            break
+    summary = "\n\n".join(paragraphs)
+    return (summary[:1600].rstrip() or None), page_updated
+
+
+def _consultar_fonte_oficial(numeros: list[int], modo: str) -> dict:
+    if modo == "detalhar" and len(numeros) == 1 and numeros[0] not in REVOKED_NRS:
+        number = numeros[0]
+        url = _pagina_oficial_nr(number)
+        fetched = _executar_fetch(url, max_length=9000)
+        if fetched.get("status") == "ok":
+            summary, page_updated = _resumir_pagina_oficial(fetched["conteudo"])
+            if summary:
+                return {
+                    "status": "ok",
+                    "tipo": "detalhe",
+                    "url": url,
+                    "numero": number,
+                    "resumo": summary,
+                    "pagina_atualizada_em": page_updated,
+                }
+
+    fetched = _executar_fetch(NR_OFFICIAL_CATALOG_URL, max_length=16000)
+    if fetched.get("status") != "ok":
+        return {"status": "indisponivel"}
+    entries, page_updated = _parsear_catalogo_oficial(fetched["conteudo"])
+    if not entries:
+        return {"status": "indisponivel"}
+    return {
+        "status": "ok",
+        "tipo": "catalogo",
+        "url": NR_OFFICIAL_CATALOG_URL,
+        "nrs": entries,
+        "pagina_atualizada_em": page_updated,
+    }
+
+
 @tool("consultar_nrs", args_schema=ConsultarNrsArgs)
 def consultar_nrs(
     numeros: list[int] | None = None,
@@ -190,13 +340,12 @@ def consultar_nrs(
     pagina: int = 1,
     limite: int = 50,
 ) -> dict:
-    """Consulta uma ou várias Normas Regulamentadoras na collection `nrs`.
+    """Consulta NRs no portal oficial e complementa com o contexto do Astro.
 
-    Permite buscar pelo número da NR, por texto, vigência e público de uso. Use
-    listagem paginada para relações de NRs e detalhamento para conteúdo específico.
+    A fonte primária é o Ministério do Trabalho e Emprego, acessado pelo servidor
+    MCP Fetch. A collection `nrs` é secundária e registra como as normas estão
+    representadas no projeto.
     """
-    if not app_config.MONGODB_URI or not app_config.MONGODB_DATABASE:
-        return {"status": "indisponivel", "mensagem": "Consulta de NRs indisponivel."}
 
     query = {}
     if numeros:
@@ -226,38 +375,129 @@ def consultar_nrs(
     projection = {"_id": 1, "nome": 1, **{field: 1 for field in selected_fields}}
     offset = (pagina - 1) * limite
 
-    try:
-        collection = get_collection()
-        total = collection.count_documents(query)
-        cursor = (
-            collection.find(query, projection)
-            .sort("_id", 1)
-            .skip(offset)
-            .limit(limite)
+    mongo_available = bool(app_config.MONGODB_URI and app_config.MONGODB_DATABASE)
+    mongo_total = 0
+    documents = []
+    if mongo_available:
+        try:
+            collection = get_collection()
+            mongo_total = collection.count_documents(query)
+            cursor = (
+                collection.find(query, projection)
+                .sort("_id", 1)
+                .skip(offset)
+                .limit(limite)
+            )
+            documents = list(cursor)
+        except PyMongoError:
+            mongo_available = False
+
+    requested_numbers = list(numeros or [])
+    official = _consultar_fonte_oficial(requested_numbers, effective_mode)
+    document_by_number = {document.get("_id"): document for document in documents}
+    nrs = []
+    total = mongo_total
+    primary_source = None
+
+    if official.get("status") == "ok" and official.get("tipo") == "detalhe":
+        number = official["numero"]
+        document = document_by_number.get(number, {})
+        if not usabilidade or document:
+            item = {
+                "numero": number,
+                "nome": document.get("nome", f"Norma Regulamentadora nº {number}"),
+                "situacao": "VIGENTE",
+                "resumo_oficial": official["resumo"],
+                "pagina_oficial_atualizada_em": official.get("pagina_atualizada_em"),
+                "fonte_oficial": official["url"],
+            }
+            for field in selected_fields:
+                if field in document:
+                    item[field] = _valor_publico(document[field])
+            nrs = [item]
+            total = 1
+        primary_source = {
+            "tipo": "web",
+            "titulo": f"Ministério do Trabalho e Emprego — NR-{number}",
+            "url": official["url"],
+            "protocolo": "MCP Fetch",
+        }
+    elif official.get("status") == "ok":
+        official_entries = official["nrs"]
+        internal_numbers = set(document_by_number)
+        requested_set = set(requested_numbers)
+        normalized_term = _texto_pesquisavel(termo) if termo else None
+        filtered = []
+        for entry in official_entries:
+            number = entry["numero"]
+            if requested_set and number not in requested_set:
+                continue
+            if revogada is not None and (entry["situacao"] == "REVOGADA") != revogada:
+                continue
+            if usabilidade and number not in internal_numbers:
+                continue
+            if normalized_term and (
+                normalized_term not in _texto_pesquisavel(entry["nome"])
+                and number not in internal_numbers
+            ):
+                continue
+            filtered.append(entry)
+        total = len(filtered)
+        selected_official = filtered[offset:offset + limite]
+        for entry in selected_official:
+            item = dict(entry)
+            document = document_by_number.get(entry["numero"], {})
+            for field in selected_fields:
+                if field == "nome" and item.get("nome"):
+                    continue
+                if field in document:
+                    item[field] = _valor_publico(document[field])
+            if effective_mode == "detalhar":
+                item["fonte_oficial"] = official["url"]
+            nrs.append(item)
+        primary_source = {
+            "tipo": "web",
+            "titulo": "Normas Regulamentadoras — Ministério do Trabalho e Emprego",
+            "url": official["url"],
+            "protocolo": "MCP Fetch",
+            "pagina_atualizada_em": official.get("pagina_atualizada_em"),
+        }
+    else:
+        for document in documents:
+            item = {"numero": document.get("_id")}
+            for field in ("nome", *selected_fields):
+                if field in document:
+                    item[field] = _valor_publico(document[field])
+            if effective_mode == "listar":
+                item["situacao"] = "REVOGADA" if document.get("revogada") else "VIGENTE"
+                item.pop("revogada", None)
+            nrs.append(item)
+        primary_source = (
+            {"tipo": "mongodb", "collection": COLLECTION_NRS}
+            if mongo_available else None
         )
-        documents = list(cursor)
-    except PyMongoError:
+
+    if not nrs and not mongo_available and official.get("status") != "ok":
         return {"status": "indisponivel", "mensagem": "Consulta de NRs indisponivel."}
 
-    nrs = []
-    for document in documents:
-        item = {"numero": document.get("_id")}
-        for field in ("nome", *selected_fields):
-            if field in document:
-                item[field] = _valor_publico(document[field])
-        if effective_mode == "listar":
-            item["situacao"] = "REVOGADA" if document.get("revogada") else "VIGENTE"
-            item.pop("revogada", None)
-        nrs.append(item)
-
     total_pages = ceil(total / limite) if total else 0
-
+    sources = []
+    if primary_source:
+        sources.append(primary_source)
+    if mongo_available:
+        sources.append({
+            "tipo": "mongodb",
+            "titulo": "Contexto interno de NRs do Astro",
+            "collection": COLLECTION_NRS,
+        })
     return {
         "status": "ok" if nrs else "sem_dados",
         "quantidade": len(nrs),
         "modo": effective_mode,
+        "origem_principal": "web_oficial" if official.get("status") == "ok" else "base_interna",
         "nrs": nrs,
-        "fonte": {"tipo": "mongodb", "collection": COLLECTION_NRS},
+        "fonte": primary_source,
+        "fontes": sources,
         "paginacao": {
             "pagina": pagina,
             "limite": limite,
@@ -266,6 +506,23 @@ def consultar_nrs(
             "tem_proxima_pagina": pagina < total_pages,
         },
     }
+
+
+@tool("consultar_orientacoes_sst", args_schema=ConsultarOrientacoesSstArgs)
+async def consultar_orientacoes_sst(
+    termo: str,
+    fontes: list[PublicSourceId] | None = None,
+) -> dict:
+    """Busca cartilhas, manuais e orientações oficiais sobre SST.
+
+    A consulta usa somente páginas previamente catalogadas do MTE, da
+    Fundacentro e da Anvisa. URLs livres não são aceitas pelo modelo.
+    """
+    return await consultar_fontes_publicas(
+        termo,
+        area="sst_geral",
+        fontes=fontes,
+    )
 
 
 @tool("consultar_nrs_obrigatorias")
@@ -513,4 +770,9 @@ def consultar_situacao_nrs(config: RunnableConfig = None) -> dict:
     }
 
 
-TOOLS_SST = [consultar_nrs, consultar_nrs_obrigatorias, consultar_situacao_nrs]
+TOOLS_SST = [
+    consultar_nrs,
+    consultar_orientacoes_sst,
+    consultar_nrs_obrigatorias,
+    consultar_situacao_nrs,
+]

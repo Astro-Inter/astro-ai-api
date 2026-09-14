@@ -15,11 +15,13 @@ from app.infrastructure.llm import models
 from app.main import create_app
 from app.modules.chat.errors import ChatError
 from app.modules.chat.formatting import markdown_para_texto_simples
+from app.modules.chat.graph import _pedido_de_publicacao_sst
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
 from app.modules.agenda import tools as agenda_tools
 from app.modules.rh import tools as rh_tools
 from app.modules.roteador import tools as router_tools
+from app.modules.shared import public_sources
 from app.modules.sst import tools as sst_tools
 from memory_fakes import FakeAccessRoles, FakeFaqVectors, FakeSessions, FakeVectors
 
@@ -93,8 +95,18 @@ class FakeModel:
 
 
 @pytest.fixture(autouse=True)
-def no_remote_tracing():
+def no_remote_tracing(monkeypatch):
     # Nunca enviar conteúdo dos testes ao LangSmith, mesmo com .env habilitado.
+    class UnavailableFetchClient:
+        async def fetch(self, *_args, **_kwargs):
+            return {"status": "indisponivel"}
+
+    monkeypatch.setattr(
+        sst_tools, "get_fetch_mcp_client", lambda: UnavailableFetchClient(),
+    )
+    monkeypatch.setattr(
+        public_sources, "get_fetch_mcp_client", lambda: UnavailableFetchClient(),
+    )
     with tracing_context(enabled=False):
         yield
 
@@ -139,6 +151,7 @@ def test_specialist_flow(chat_client, domain):
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
+        '"consultar_orientacoes_sst", "consultar_fontes_publicas", '
             '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
             '"consultar_acessos", "consultar_treinamentos", '
             '"consultar_google_calendar", "criar_evento_google_calendar", "gerar_pdf"]'
@@ -347,7 +360,7 @@ def test_sst_agent_consults_multiple_nrs(chat_client, monkeypatch):
     ]
     assert "NR-1" in response.json()["resposta"]
     assert "Objetivo 6" in response.json()["resposta"]
-    assert "MongoDB `nrs`" in response.json()["resposta"]
+    assert "Contexto complementar: cadastro interno do Astro" in response.json()["resposta"]
     assert collection.query == {"_id": {"$in": [1, 6]}}
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "juiz",
@@ -1125,6 +1138,109 @@ def test_direct_and_faq_flows(chat_client):
     assert judged["resposta_candidata"] == faq["resposta"]
     session = application.state.chat_service.repository.docs[faq["session_id"]]
     assert session["mensagens"][-1]["content"] == faq["resposta"]
+
+
+def test_faq_uses_curated_public_sources_for_official_current_material(
+    chat_client, monkeypatch,
+):
+    client, model, _ = chat_client
+    model.route = "faq"
+    official_url = public_sources.PUBLIC_SOURCES["mte_legislacao_sst"].url
+
+    class FetchClient:
+        async def fetch(self, url, **_kwargs):
+            if url == official_url:
+                return {
+                    "status": "ok",
+                    "conteudo": (
+                        "# Legislação de Segurança e Saúde no Trabalho\n\n"
+                        "Atualizado em 10/09/2026\n\n"
+                        "A legislação sobre equipamento de proteção individual reúne "
+                        "normas e portarias oficiais aplicáveis ao EPI."
+                    ),
+                }
+            return {"status": "indisponivel"}
+
+    monkeypatch.setattr(
+        public_sources, "get_fetch_mcp_client", lambda: FetchClient(),
+    )
+    model.replies["faq"] = (
+        "Há legislação oficial sobre EPI. Fonte: "
+        f"[Ministério do Trabalho e Emprego]({official_url})."
+    )
+
+    response = client.post("/chat/messages", json={
+        "message": "Qual é a legislação oficial atualizada sobre EPI?",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert official_url in body["resposta"]
+    assert body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_normas",
+        "consultar_fontes_publicas", "faq", "juiz", "guardrail_saida",
+    ]
+    faq_call = next(call for call in model.calls if call[0] == "faq")
+    retrieved = json.loads(faq_call[1][-1].content.split("\n", 1)[1])
+    assert retrieved["resultado"]["consulta_publica"] == "ok"
+    assert retrieved["resultado"]["fontes_publicas"][0]["url"] == official_url
+
+
+def test_sst_uses_official_guides_for_general_guidance(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    model.route = "faq"  # Mesmo se o LLM classificasse como FAQ, o pedido é de SST.
+    source = public_sources.PUBLIC_SOURCES["fundacentro_publicacoes"]
+
+    class FetchClient:
+        async def fetch(self, url, **_kwargs):
+            if url == source.url:
+                return {
+                    "status": "ok",
+                    "conteudo": (
+                        "# Publicações institucionais\n\n"
+                        "Cartilha de prevenção de riscos psicossociais e organização "
+                        "segura do trabalho."
+                    ),
+                }
+            return {"status": "indisponivel"}
+
+    monkeypatch.setattr(
+        public_sources, "get_fetch_mcp_client", lambda: FetchClient(),
+    )
+    model.replies["sst"] = json.dumps({
+        "acao": "consultar_orientacoes_sst",
+        "filtros": {
+            "termo": "riscos psicossociais",
+            "fontes": ["fundacentro_publicacoes"],
+        },
+        "resposta": None,
+    })
+
+    response = client.post("/chat/messages", json={
+        "message": "Busque uma cartilha da Fundacentro sobre riscos psicossociais.",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "Cartilha de prevenção de riscos psicossociais" in body["resposta"]
+    assert source.url in body["resposta"]
+    assert body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "sst", "consultar_orientacoes_sst",
+        "juiz", "guardrail_saida",
+    ]
+    assert "roteador" not in [call[0] for call in model.calls]
+
+
+@pytest.mark.parametrize(("message", "expected"), [
+    ("Busque uma cartilha da Fundacentro sobre riscos psicossociais.", True),
+    ("Encontre um manual do MTE sobre gerenciamento de riscos ocupacionais.", True),
+    ("Quero um guia da Anvisa sobre higiene das mãos.", True),
+    ("Qual é a política interna do Astro sobre riscos psicossociais?", False),
+    ("Consulte o manual interno de SST da empresa.", False),
+    ("Busque um manual da Anvisa sobre cosméticos.", False),
+])
+def test_only_official_sst_publications_skip_router_classification(message, expected):
+    assert _pedido_de_publicacao_sst(message) is expected
 
 
 def test_markdown_to_plain_text_removes_common_syntax():

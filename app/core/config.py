@@ -9,6 +9,14 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(BASE_DIR / ".env", override=False)
 
 
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
 APP_ENV = os.getenv("APP_ENV", "development")
 
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
@@ -38,6 +46,11 @@ GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
 GOOGLE_OAUTH_REDIRECT_URI = os.getenv("GOOGLE_OAUTH_REDIRECT_URI")
 GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY = os.getenv("GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY")
+
+FETCH_MCP_ALLOWED_DOMAINS = os.getenv("FETCH_MCP_ALLOWED_DOMAINS", "gov.br")
+FETCH_MCP_CACHE_TTL_SECONDS = _bounded_int_env(
+    "FETCH_MCP_CACHE_TTL_SECONDS", 900, 0, 86400,
+)
 
 LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING", "false").lower() in {
     "1",

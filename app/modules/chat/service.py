@@ -102,16 +102,21 @@ class ChatService:
                             "buscar_historico", "consultar_normas",
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+                            "consultar_orientacoes_sst", "consultar_fontes_publicas",
                             "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                             "consultar_acessos",
                             "consultar_treinamentos",
                             "consultar_google_calendar", "criar_evento_google_calendar",
                             "gerar_pdf",
                         ],
-                        "fontes_disponiveis": ["faq_chunks", "nrs"],
+                        "fontes_disponiveis": [
+                            "faq_chunks", "nrs", "portal_oficial_mte_via_mcp_fetch",
+                            "mte", "fundacentro", "anvisa",
+                        ],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
                                    "Politicas internas podem ser consultadas apenas na base FAQ "
-                                   "autorizada. "
+                                   "autorizada; legislação e publicações externas usam somente "
+                                   "catálogos oficiais previamente cadastrados. "
                                    "O agente de RH pode consultar somente os dados de usuarios "
                                    "permitidos pelo perfil autenticado. O envio de mensagens exige "
                                    "destinatario do mesmo workspace, previa e confirmacao explicita. "
@@ -128,8 +133,9 @@ class ChatService:
                                    "do usuario; criacao exige previa e confirmacao explicita. "
                                    "PDFs podem ser gerados da resposta revisada quando pedidos "
                                    "explicitamente; a aplicacao fornece o link temporario. "
-                                   "Nao ha outras operacoes de escrita. NRs podem ser consultadas na collection "
-                                   "MongoDB autorizada. "
+                                   "Nao ha outras operacoes de escrita. NRs usam primeiro o portal "
+                                   "oficial do MTE via MCP Fetch; a collection MongoDB autorizada "
+                                   "serve como contexto interno e fallback. "
                                    "Historico nao comprova direitos nem execucao. "
                                    "Nao expor identificadores internos nem metadados tecnicos. "
                                    "Em respostas do FAQ, citar documento e pagina quando "

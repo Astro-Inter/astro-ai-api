@@ -7,7 +7,13 @@ from pymongo.errors import ServerSelectionTimeoutError
 
 from app.core import config
 from app.modules.sst import tools as sst_tools
-from app.modules.sst.tools import ConsultarNrsArgs, SstToolDecision, consultar_nrs
+from app.modules.sst.tools import (
+    ConsultarNrsArgs,
+    ConsultarOrientacoesSstArgs,
+    SstToolDecision,
+    consultar_nrs,
+    consultar_orientacoes_sst,
+)
 from app.modules.sst.tools import consultar_nrs_obrigatorias, consultar_situacao_nrs
 
 
@@ -90,6 +96,18 @@ class FakePostgresConnection:
 
     def cursor(self):
         return self.db_cursor
+
+
+class UnavailableFetchClient:
+    async def fetch(self, *_args, **_kwargs):
+        return {"status": "indisponivel"}
+
+
+@pytest.fixture(autouse=True)
+def no_external_fetch(monkeypatch):
+    monkeypatch.setattr(
+        sst_tools, "get_fetch_mcp_client", lambda: UnavailableFetchClient(),
+    )
 
 
 @pytest.fixture
@@ -197,6 +215,77 @@ def test_consultar_nrs_hides_mongo_errors(monkeypatch, configured_mongo):
     }
 
 
+def test_consultar_nrs_prioritizes_official_catalog_and_keeps_astro_context(
+    monkeypatch, configured_mongo,
+):
+    class FetchClient:
+        async def fetch(self, url, **_kwargs):
+            assert url == sst_tools.NR_OFFICIAL_CATALOG_URL
+            return {
+                "status": "ok",
+                "conteudo": (
+                    "Atualizado em 10/09/2026 12h00\n\n"
+                    "NR-1 - DISPOSIÇÕES GERAIS E GERENCIAMENTO DE RISCOS\n\n"
+                    "NR-2 - INSPEÇÃO PRÉVIA (REVOGADA)\n\n"
+                    "NR-6 - EQUIPAMENTO DE PROTEÇÃO INDIVIDUAL - EPI"
+                ),
+            }
+
+    collection = FakeCollection([{
+        "_id": 6,
+        "nome": "Nome interno antigo",
+        "revogada": False,
+        "ultima_atualizacao": "01/01/2025",
+    }])
+    monkeypatch.setattr(sst_tools, "get_collection", lambda: collection)
+    monkeypatch.setattr(sst_tools, "get_fetch_mcp_client", lambda: FetchClient())
+
+    result = consultar_nrs.invoke({"modo": "listar", "revogada": False})
+
+    assert result["origem_principal"] == "web_oficial"
+    assert [item["numero"] for item in result["nrs"]] == [1, 6]
+    assert result["nrs"][1]["nome"] == "EQUIPAMENTO DE PROTEÇÃO INDIVIDUAL - EPI"
+    assert result["fonte"]["protocolo"] == "MCP Fetch"
+    assert result["fontes"][1]["titulo"] == "Contexto interno de NRs do Astro"
+
+
+def test_consultar_nrs_uses_official_detail_before_internal_description(
+    monkeypatch, configured_mongo,
+):
+    class FetchClient:
+        async def fetch(self, url, **_kwargs):
+            assert url.endswith("/norma-regulamentadora-no-6-nr-6")
+            return {
+                "status": "ok",
+                "conteudo": (
+                    "# Norma Regulamentadora No. 6 (NR-6)\n\n"
+                    "Atualizado em 01/09/2025 16h20\n\n"
+                    "A NR-6 regulamenta requisitos relacionados aos equipamentos de "
+                    "proteção individual e às responsabilidades das organizações e "
+                    "dos trabalhadores no uso desses equipamentos.\n\n"
+                    "A página oficial também reúne o texto vigente e os atos normativos "
+                    "que alteraram a norma ao longo do tempo para consulta pública."
+                ),
+            }
+
+    collection = FakeCollection([{
+        "_id": 6,
+        "nome": "Equipamento de Proteção Individual",
+        "objetivo": "Contexto específico cadastrado no Astro.",
+    }])
+    monkeypatch.setattr(sst_tools, "get_collection", lambda: collection)
+    monkeypatch.setattr(sst_tools, "get_fetch_mcp_client", lambda: FetchClient())
+
+    result = consultar_nrs.invoke({
+        "numeros": [6], "modo": "detalhar", "campos": ["objetivo"],
+    })
+
+    assert result["origem_principal"] == "web_oficial"
+    assert result["nrs"][0]["pagina_oficial_atualizada_em"] == "01/09/2025"
+    assert "A NR-6 regulamenta" in result["nrs"][0]["resumo_oficial"]
+    assert result["nrs"][0]["objetivo"] == "Contexto específico cadastrado no Astro."
+
+
 def test_sst_tool_contract_accepts_empty_query_and_rejects_invalid_payload():
     decision = SstToolDecision.model_validate({
         "acao": "consultar_nrs", "filtros": None, "resposta": None,
@@ -214,14 +303,24 @@ def test_sst_tool_contract_accepts_empty_query_and_rejects_invalid_payload():
                 "resposta": "Texto", "recomendacao": "",
             },
         })
+    public_decision = SstToolDecision.model_validate({
+        "acao": "consultar_orientacoes_sst",
+        "filtros": {"termo": "proteção contra quedas"},
+        "resposta": None,
+    })
+    assert public_decision.filtros == ConsultarOrientacoesSstArgs(
+        termo="proteção contra quedas",
+    )
 
 
 def test_sst_tool_is_registered_with_safe_schema():
     assert consultar_nrs.name == "consultar_nrs"
+    assert consultar_orientacoes_sst.name == "consultar_orientacoes_sst"
     assert consultar_nrs_obrigatorias.name == "consultar_nrs_obrigatorias"
     assert consultar_situacao_nrs.name == "consultar_situacao_nrs"
     assert sst_tools.TOOLS_SST == [
-        consultar_nrs, consultar_nrs_obrigatorias, consultar_situacao_nrs,
+        consultar_nrs, consultar_orientacoes_sst,
+        consultar_nrs_obrigatorias, consultar_situacao_nrs,
     ]
     properties = consultar_nrs.args_schema.model_json_schema()["properties"]
     assert "collection" not in properties

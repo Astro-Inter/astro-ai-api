@@ -43,6 +43,24 @@ def _sem_acentos(message: str) -> str:
     )
 
 
+def _pedido_de_publicacao_sst(message: str) -> bool:
+    """Encaminha materiais públicos de SST sem depender da classificação do LLM."""
+    normalized = _sem_acentos(message)
+    if re.search(r"\b(politica interna|norma interna|procedimento interno|do astro|da empresa)\b", normalized):
+        return False
+    material = re.search(
+        r"\b(cartilhas?|manua(?:l|is)|guias?|orienta(?:cao|coes))\b", normalized,
+    )
+    fundacentro = re.search(r"\bfundacentro\b", normalized)
+    sst_topic = re.search(
+        r"\b(riscos? (?:psicossociais?|ocupacionais?)|seguranca (?:do|no) trabalho|"
+        r"saude (?:do|no) trabalho|sst|epis?|prevencao de acidentes|"
+        r"ergonomia|higiene das maos|gerenciamento de riscos|gro|pgr|"
+        r"assedio no trabalho)\b", normalized,
+    )
+    return bool(material and (fundacentro or sst_topic))
+
+
 def _pedido_pdf(message: str) -> bool:
     """Distingue pedido de arquivo de uma pergunta genérica sobre PDFs."""
     normalized = _sem_acentos(message)
@@ -435,6 +453,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
+        if _pedido_de_publicacao_sst(state["mensagem"]):
+            return {
+                "rota": "sst",
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
+
         text = await invoke_agent(model, "roteador", ROTEADOR_PROMPT_COMPLETO, state)
         if text.startswith("MEMORY="):
             if state.get("memoria_consultada") or search_memory is None:
@@ -759,6 +783,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             and evidence.get("nome") in {
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                 "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+                "consultar_orientacoes_sst",
                 "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                 "consultar_acessos",
                 "consultar_treinamentos",

@@ -99,7 +99,9 @@ pedido para gerar arquivo.
 - rh: assuntos de pessoas e processos de RH, como férias, benefícios, admissões
   e solicitações relacionadas a colaboradores.
 - sst: Normas Regulamentadoras (NRs), saúde e segurança do trabalho, riscos,
-  incidentes, EPIs e treinamentos de segurança; inclui dúvidas sobre uma ou várias NRs.
+  incidentes, EPIs e treinamentos de segurança; inclui dúvidas sobre uma ou várias NRs
+  e busca de cartilhas, manuais e orientações oficiais de SST no MTE, Fundacentro
+  ou Anvisa.
 - agenda: consultar, criar, alterar ou cancelar compromissos, reuniões e lembretes;
   verificar horários, disponibilidade e conflitos; consultar treinamentos atribuídos
   ao usuário, com datas, turma, status da participação e informações do evento;
@@ -122,6 +124,10 @@ pedido para gerar arquivo.
   uma política interna de treinamento é faq.
 - Uma pergunta sobre NR é sst. Uma pergunta sobre o texto de outra política interna
   é faq, mesmo que mencione RH ou SST.
+  Pedidos de cartilhas, manuais, guias ou orientações oficiais sobre riscos,
+  prevenção e SST geral são sst, inclusive quando citam a Fundacentro.
+  Mencionar uma publicação externa não transforma essa consulta em FAQ;
+  políticas e procedimentos internos do Astro continuam no FAQ.
   A consulta da situação das NRs obrigatórias continua com sst; a consulta de
   turmas e treinamentos em que o usuário foi inscrito pertence à agenda.
   Uma consulta sobre a situação individual de férias é rh.
@@ -170,6 +176,9 @@ Usuário: Há um equipamento sem proteção na minha área. Como devo proceder?
 Roteador: ROUTE=sst
 
 Usuário: Quais são os objetivos das NRs 1 e 6?
+Roteador: ROUTE=sst
+
+Usuário: Busque uma cartilha da Fundacentro sobre riscos psicossociais.
 Roteador: ROUTE=sst
 
 Usuário: Quero marcar uma reunião com o RH amanhã.

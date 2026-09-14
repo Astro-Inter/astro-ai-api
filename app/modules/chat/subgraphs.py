@@ -1,3 +1,4 @@
+import asyncio
 import re
 import unicodedata
 
@@ -14,7 +15,13 @@ from app.modules.agenda.tools import (
     AgendaToolDecision, ConsultarTreinamentosArgs, TOOLS_AGENDA,
 )
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision, TOOLS_RH
-from app.modules.sst.tools import ConsultarNrsArgs, SstToolDecision, TOOLS_SST
+from app.modules.shared.public_sources import consultar_fontes_publicas
+from app.modules.sst.tools import (
+    ConsultarNrsArgs,
+    ConsultarOrientacoesSstArgs,
+    SstToolDecision,
+    TOOLS_SST,
+)
 
 
 RH_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_RH}
@@ -42,6 +49,28 @@ def _pedido_de_todos_os_usuarios(message: str) -> bool:
     return bool(re.search(
         r"\b(todos os usuarios|todos usuarios|todos os funcionarios|"
         r"todas as pessoas do (?:meu|nosso) sistema)\b",
+        normalized,
+    ))
+
+
+def _pedido_fontes_publicas_faq(message: str) -> bool:
+    """Limita o Fetch no FAQ a pedidos de conteúdo público oficial."""
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    explicit_public_source = bool(re.search(
+        r"\b(governo|fonte oficial|documento oficial|publicacao oficial|"
+        r"ministerio do trabalho|mte|fundacentro|anvisa)\b",
+        normalized,
+    ))
+    if re.search(r"\b(intern[ao]s?|da empresa|do astro)\b", normalized) \
+            and not explicit_public_source:
+        return False
+    return bool(re.search(
+        r"\b(legislacao|lei|leis|decreto|portaria|rdc|manual|guia|cartilha|"
+        r"documento oficial|fonte oficial|publicacao oficial|politica (?:publica|nacional)|"
+        r"atualizad\w*|ministerio do trabalho|mte|fundacentro|anvisa)\b",
         normalized,
     ))
 
@@ -220,6 +249,13 @@ def _formatar_nrs(result: dict) -> str:
         return result.get("mensagem", "Não foi possível consultar as NRs no momento.")
 
     pagination = result.get("paginacao", {})
+    primary_source = result.get("fonte") or {}
+    source_url = primary_source.get("url")
+    source_footer = (
+        f"Fonte oficial: [Ministério do Trabalho e Emprego]({source_url})."
+        if source_url
+        else "Fonte utilizada: base interna de NRs do Astro; a fonte oficial estava indisponível."
+    )
     if result.get("modo") == "listar":
         total = pagination.get("total", result.get("quantidade", 0))
         page = pagination.get("pagina", 1)
@@ -231,7 +267,9 @@ def _formatar_nrs(result: dict) -> str:
                 details.append(f"atualizada em {nr['ultima_atualizacao']}")
             suffix = f" | {' | '.join(details)}" if any(details) else ""
             lines.append(f"- NR-{nr.get('numero')} — {nr.get('nome', 'Sem nome')}{suffix}")
-        footer = ["Fonte: MongoDB `nrs`."]
+        footer = [source_footer]
+        if any(source.get("tipo") == "mongodb" for source in result.get("fontes", [])):
+            footer.append("Contexto complementar: cadastro interno de NRs do Astro.")
         if pagination.get("tem_proxima_pagina"):
             footer.insert(0, f"Há mais resultados. Solicite a página {page + 1}.")
         return "\n".join([
@@ -254,6 +292,14 @@ def _formatar_nrs(result: dict) -> str:
         if nr.get("nome"):
             title += f" — {nr['nome']}"
         details = []
+        if nr.get("situacao"):
+            details.append(f"- Situação na fonte oficial: {nr['situacao'].lower()}")
+        if nr.get("pagina_oficial_atualizada_em"):
+            details.append(
+                f"- Página oficial atualizada em: {nr['pagina_oficial_atualizada_em']}"
+            )
+        if nr.get("resumo_oficial"):
+            details.append(f"- Informação oficial: {nr['resumo_oficial']}")
         for field, label in labels.items():
             if field == "nome" or field not in nr:
                 continue
@@ -263,7 +309,16 @@ def _formatar_nrs(result: dict) -> str:
             if field == "revogada":
                 value = "Sim" if value else "Não"
             details.append(f"- {label}: {value}")
-        details.append(f"- Fonte: MongoDB `nrs`, documento NR-{number}")
+        if nr.get("fonte_oficial"):
+            details.append(
+                f"- Fonte oficial: [Ministério do Trabalho e Emprego]({nr['fonte_oficial']})"
+            )
+        elif source_url:
+            details.append(
+                f"- Fonte oficial: [Ministério do Trabalho e Emprego]({source_url})"
+            )
+        if any(source.get("tipo") == "mongodb" for source in result.get("fontes", [])):
+            details.append("- Contexto complementar: cadastro interno do Astro")
         sections.append("\n".join([title, *details]))
     return "\n\n".join(sections)
 
@@ -282,8 +337,44 @@ def _evidencia_compacta_nrs(result: dict) -> dict:
             if field != "numero"
         }),
         "fonte": result.get("fonte"),
+        "fontes": result.get("fontes", []),
+        "origem_principal": result.get("origem_principal"),
         "paginacao": result.get("paginacao"),
         "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
+    }
+
+
+def _formatar_orientacoes_sst(result: dict) -> str:
+    if result.get("status") == "sem_dados":
+        return (
+            "Não encontrei uma orientação oficial relevante para esse assunto "
+            "nos catálogos consultados."
+        )
+    if result.get("status") != "ok":
+        return result.get(
+            "mensagem", "Não foi possível consultar as orientações oficiais no momento.",
+        )
+
+    lines = [f"Orientações oficiais relacionadas a {result['termo']}:"]
+    for source in result.get("fontes", []):
+        for snippet in source.get("trechos", []):
+            lines.append(f"- {source['orgao']}: {snippet}")
+        update = (
+            f" (atualizada em {source['atualizado_em']})"
+            if source.get("atualizado_em") else ""
+        )
+        lines.append(f"  Fonte: [{source['titulo']}]({source['url']}){update}")
+    return "\n".join(lines)
+
+
+def _evidencia_orientacoes_sst(result: dict) -> dict:
+    return {
+        "status": result.get("status"),
+        "termo": result.get("termo"),
+        "quantidade": result.get("quantidade", 0),
+        "fontes": result.get("fontes", []),
+        "protocolo": result.get("protocolo"),
+        "formatacao": "resposta gerada deterministicamente a partir dos trechos oficiais",
     }
 
 
@@ -676,16 +767,43 @@ def build_sst_graph(model: AgentModel):
             "indisponivel": "indisponivel",
             "erro": "nao_autorizado",
             "nao_aplicavel": "nao_autorizado",
+            "nao_autorizado": "nao_autorizado",
         }
-        messages = {
-            "ok": f"Consulta concluída com {result.get('quantidade', 0)} NR(s).",
-            "sem_dados": "Nenhuma NR foi encontrada com os filtros informados.",
-            "indisponivel": "Não foi possível consultar as NRs no momento.",
-            "erro": "Não foi possível identificar o usuário autenticado.",
-            "nao_aplicavel": result.get(
-                "mensagem", "A consulta não se aplica ao perfil autenticado.",
-            ),
-        }
+        if tool_name == "consultar_orientacoes_sst":
+            messages = {
+                "ok": (
+                    f"Consulta concluída com {result.get('quantidade', 0)} "
+                    "trecho(s) oficial(is)."
+                ),
+                "sem_dados": "Nenhuma orientação oficial relevante foi encontrada.",
+                "indisponivel": "Não foi possível consultar as fontes oficiais no momento.",
+                "nao_autorizado": result.get(
+                    "mensagem", "A fonte solicitada não está autorizada.",
+                ),
+            }
+        else:
+            messages = {
+                "ok": f"Consulta concluída com {result.get('quantidade', 0)} NR(s).",
+                "sem_dados": "Nenhuma NR foi encontrada com os filtros informados.",
+                "indisponivel": "Não foi possível consultar as NRs no momento.",
+                "erro": "Não foi possível identificar o usuário autenticado.",
+                "nao_aplicavel": result.get(
+                    "mensagem", "A consulta não se aplica ao perfil autenticado.",
+                ),
+            }
+        if tool_name in {"consultar_nrs", "consultar_orientacoes_sst"}:
+            source_items = [
+                {
+                    "titulo": source.get("titulo", "Fonte oficial de SST"),
+                    "referencia": source.get("url", "Base interna do Astro"),
+                }
+                for source in result.get("fontes", [])
+            ]
+        else:
+            source_items = [{
+                "titulo": "Registros funcionais e de conformidade",
+                "referencia": "Base interna do Astro",
+            }]
         specialist_result = {
             "dominio": "sst",
             "intencao": "consultar",
@@ -694,16 +812,11 @@ def build_sst_graph(model: AgentModel):
                 tool_status, "Não foi possível confirmar o resultado da consulta.",
             ),
             "recomendacao": "",
-            "fontes": [{
-                "titulo": "Normas Regulamentadoras",
-                "referencia": (
-                    "MongoDB: collection nrs"
-                    if tool_name == "consultar_nrs"
-                    else "PostgreSQL: registros funcionais e de conformidade"
-                ),
-            }],
+            "fontes": source_items,
             "evidencia_tool": {"nome": tool_name, "resultado": (
-                _evidencia_situacao_nrs(result)
+                _evidencia_orientacoes_sst(result)
+                if tool_name == "consultar_orientacoes_sst"
+                else _evidencia_situacao_nrs(result)
                 if tool_name == "consultar_situacao_nrs"
                 else _evidencia_nrs_obrigatorias(result)
                 if tool_name == "consultar_nrs_obrigatorias"
@@ -714,7 +827,9 @@ def build_sst_graph(model: AgentModel):
             "resultado_tool": result,
             "resultado": specialist_result,
             "candidato": (
-                _formatar_situacao_nrs(result)
+                _formatar_orientacoes_sst(result)
+                if tool_name == "consultar_orientacoes_sst"
+                else _formatar_situacao_nrs(result)
                 if tool_name == "consultar_situacao_nrs"
                 else _formatar_nrs_obrigatorias(result)
                 if tool_name == "consultar_nrs_obrigatorias"
@@ -827,18 +942,48 @@ def build_agenda_graph(model: AgentModel):
 
 def build_faq_graph(model: AgentModel, search_faq=None):
     async def consult_norms(state: ChatState):
-        if search_faq is None:
-            result = {"dominio": "faq", "status": "indisponivel", "trechos": []}
-        else:
-            snippets = await search_faq(state["mensagem"])
-            result = {
-                "dominio": "faq",
-                "status": "encontrado" if snippets else "sem_dados",
-                "trechos": snippets,
-            }
+        public_requested = _pedido_fontes_publicas_faq(state["mensagem"])
+        jobs = []
+        if search_faq is not None:
+            jobs.append(("faq", search_faq(state["mensagem"])))
+        if public_requested:
+            jobs.append(("publico", consultar_fontes_publicas(
+                state["mensagem"], area="faq_politicas",
+            )))
+        responses = await asyncio.gather(
+            *(job for _, job in jobs), return_exceptions=True,
+        ) if jobs else []
+        resolved = dict(zip((name for name, _ in jobs), responses))
+
+        faq_response = resolved.get("faq", [])
+        faq_error = faq_response if isinstance(faq_response, BaseException) else None
+        snippets = [] if faq_error else faq_response
+        public_response = resolved.get("publico", {
+            "status": "nao_consultado", "fontes": [],
+        })
+        if isinstance(public_response, BaseException):
+            public_response = {"status": "indisponivel", "fontes": []}
+        public_sources = public_response.get("fontes", [])
+        if faq_error and not public_sources:
+            raise faq_error
+
+        found = bool(snippets or public_sources)
+        unavailable = search_faq is None and (
+            not public_requested or public_response.get("status") == "indisponivel"
+        )
+        result = {
+            "dominio": "faq",
+            "status": "encontrado" if found else "indisponivel" if unavailable else "sem_dados",
+            "trechos": snippets,
+            "fontes_publicas": public_sources,
+            "consulta_publica": public_response.get("status"),
+        }
+        called = state["agentes_chamados"] + ["consultar_normas"]
+        if public_requested:
+            called.append("consultar_fontes_publicas")
         return {
             "resultado": result,
-            "agentes_chamados": state["agentes_chamados"] + ["consultar_normas"],
+            "agentes_chamados": called,
         }
 
     async def answer(state: ChatState):
