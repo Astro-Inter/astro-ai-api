@@ -1140,6 +1140,30 @@ def test_direct_and_faq_flows(chat_client):
     assert session["mensagens"][-1]["content"] == faq["resposta"]
 
 
+def test_chat_roles_are_created_with_langchain_agents(chat_client, monkeypatch):
+    from app.modules.chat import agents as chat_agents
+
+    client, model, _ = chat_client
+    model.route = "direta"
+    created = []
+    original = chat_agents.create_agent
+
+    def tracked_create_agent(**kwargs):
+        created.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(chat_agents, "create_agent", tracked_create_agent)
+
+    response = client.post("/chat/messages", json={"message": "Oi"})
+
+    assert response.status_code == 200
+    assert [item["name"] for item in created] == [
+        "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
+    ]
+    assert all(item["tools"] == [] for item in created)
+    assert all(item["system_prompt"].content for item in created)
+
+
 def test_faq_uses_curated_public_sources_for_official_current_material(
     chat_client, monkeypatch,
 ):

@@ -141,6 +141,12 @@ contexto confiável da aplicação.
 
 ### Fluxo implementado
 
+Cada papel que chama um modelo é criado com `langchain.agents.create_agent`,
+usando seu prompt e o adaptador dos provedores Groq/Mistral. O LangGraph externo
+continua responsável pelo roteamento e pela execução das tools autorizadas; elas
+não são entregues ao loop automático do agente, preservando autenticação,
+confirmações e validações existentes.
+
 - Guardrail de entrada: aprova, bloqueia ou pede esclarecimento.
 - Roteador: escolhe RH, SST, Agenda ou FAQ; saudações e esclarecimentos podem
   receber resposta direta, revisada pelo guardrail de saída.

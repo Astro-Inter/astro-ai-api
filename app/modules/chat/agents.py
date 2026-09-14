@@ -1,8 +1,11 @@
 import json
 import logging
-from typing import TypeVar
+from typing import Any, TypeVar
 
+from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import BaseModel, ValidationError
 
 from app.infrastructure.llm.models import AgentModel
@@ -12,6 +15,36 @@ from app.modules.chat.state import ChatState
 
 Schema = TypeVar("Schema", bound=BaseModel)
 logger = logging.getLogger(__name__)
+
+
+class _AstroAgentModel(BaseChatModel):
+    """Adapta os provedores existentes ao agente criado pelo LangChain.
+
+    Fallback, modo JSON e limites permanecem sob responsabilidade de AgentModel.
+    As tools de negócio continuam executadas pelo LangGraph após validação da
+    decisão; não são oferecidas diretamente ao loop do agente.
+    """
+
+    backend: Any
+    agent_name: str
+    json_mode: bool = False
+
+    @property
+    def _llm_type(self) -> str:
+        return "astro_agent_backend"
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        raise RuntimeError("Os agentes Astro devem ser executados assincronamente.")
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        completion = await self.backend.complete(
+            self.agent_name, messages, json_mode=self.json_mode,
+        )
+        if not isinstance(completion, str) or not completion.strip():
+            raise InvalidAgentResponse(self.agent_name)
+        return ChatResult(generations=[
+            ChatGeneration(message=AIMessage(content=completion)),
+        ])
 
 
 def _history_for_agent(name: str, history: list[dict[str, str]]):
@@ -46,7 +79,7 @@ async def invoke_agent(
         system += "\nResponda JSON compativel com este contrato:\n" + json.dumps(
             schema.model_json_schema(), ensure_ascii=False,
         )
-    messages = [SystemMessage(content=system)]
+    messages = []
     for item in _history_for_agent(name, state["historico"]):
         cls = HumanMessage if item["role"] == "user" else AIMessage
         messages.append(cls(content=item["content"]))
@@ -69,7 +102,22 @@ async def invoke_agent(
             },
             ensure_ascii=False,
         )))
-    text = await model.complete(name, messages, json_mode=schema is not None)
+    # Tal como no projeto de referência, cada papel é instanciado por
+    # `create_agent`; o grafo externo conserva roteamento e autorização.
+    agent = create_agent(
+        model=_AstroAgentModel(
+            backend=model, agent_name=name, json_mode=schema is not None,
+        ),
+        tools=[],
+        system_prompt=SystemMessage(content=system),
+        name=name,
+    )
+
+    async def complete(agent_messages: list) -> str:
+        result = await agent.ainvoke({"messages": agent_messages})
+        return result["messages"][-1].content
+
+    text = await complete(messages)
     if not isinstance(text, str) or not text.strip() or len(text) > 16000:
         raise InvalidAgentResponse(name)
     if schema is None:
@@ -88,7 +136,7 @@ async def invoke_agent(
             "Tente novamente uma unica vez. Retorne somente JSON valido e use "
             "exatamente os campos, tipos e valores permitidos pelo schema do sistema."
         ))
-        retry = await model.complete(name, messages + [correction], json_mode=True)
+        retry = await complete(messages + [correction])
         if not isinstance(retry, str) or not retry.strip() or len(retry) > 16000:
             raise InvalidAgentResponse(name)
         try:
