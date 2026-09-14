@@ -7,6 +7,7 @@ identidade de usuário, consulta bancos internos nem executa ações de escrita.
 import hmac
 import json
 import logging
+import os
 from collections.abc import Awaitable, Callable
 
 import uvicorn
@@ -25,7 +26,8 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
 
 from app.core import config
 from app.infrastructure.a2a_public_research import validate_a2a_url
@@ -92,6 +94,8 @@ class SharedTokenMiddleware(BaseHTTPMiddleware):
         self.token = token
 
     async def dispatch(self, request: Request, call_next):
+        if request.method == "GET" and request.url.path == "/health":
+            return await call_next(request)
         provided = request.headers.get("X-Astro-A2A-Key", "")
         if not hmac.compare_digest(provided, self.token):
             return Response(status_code=401)
@@ -102,6 +106,11 @@ class SharedTokenMiddleware(BaseHTTPMiddleware):
         if length > 8192:
             return Response(status_code=413)
         return await call_next(request)
+
+
+async def health_check(_request: Request) -> JSONResponse:
+    """Health check público e sem detalhes de configuração ou dependências."""
+    return JSONResponse({"status": "ok"})
 
 
 def create_app(
@@ -142,6 +151,7 @@ def create_app(
     )
     return Starlette(
         routes=[
+            Route("/health", health_check, methods=["GET"]),
             *create_agent_card_routes(card),
             *create_jsonrpc_routes(handler, "/"),
         ],
@@ -150,8 +160,20 @@ def create_app(
 
 
 def main() -> None:
-    app = create_app()
-    uvicorn.run(app, host="127.0.0.1", port=8090)
+    base_url = config.A2A_PUBLIC_RESEARCH_URL or os.getenv(
+        "RENDER_EXTERNAL_URL", "",
+    ).strip()
+    host = os.getenv("A2A_BIND_HOST", "127.0.0.1").strip()
+    if host not in {"127.0.0.1", "0.0.0.0"}:
+        raise ValueError("A2A_BIND_HOST deve ser 127.0.0.1 ou 0.0.0.0.")
+    try:
+        port = int(os.getenv("PORT", "8090"))
+    except ValueError as error:
+        raise ValueError("PORT deve ser um número inteiro.") from error
+    if not 1 <= port <= 65535:
+        raise ValueError("PORT deve estar entre 1 e 65535.")
+    app = create_app(base_url=base_url)
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: astro-ai-api-config
+data:
+  APP_ENV: production
+  ENABLE_DEV_LOGIN: "false"
+  MONGODB_DATABASE: astro
+  FETCH_MCP_ALLOWED_DOMAINS: gov.br
+  FETCH_MCP_CACHE_TTL_SECONDS: "900"
+  A2A_PUBLIC_RESEARCH_URL: http://127.0.0.1:8090
+  A2A_PUBLIC_RESEARCH_TIMEOUT_SECONDS: "15"
+  A2A_BIND_HOST: 0.0.0.0
+  LANGSMITH_TRACING: "false"
+  LANGSMITH_PROJECT: astro-ai-api

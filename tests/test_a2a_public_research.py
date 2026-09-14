@@ -95,6 +95,20 @@ def test_a2a_server_requires_shared_key():
     asyncio.run(scenario())
 
 
+def test_a2a_health_check_does_not_require_shared_key():
+    app = create_app(token=TOKEN, base_url=BASE_URL)
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL,
+        ) as client:
+            response = await client.get("/health")
+            assert response.status_code == 200
+            assert response.json() == {"status": "ok"}
+
+    asyncio.run(scenario())
+
+
 def test_a2a_url_and_evidence_are_restricted():
     for url in (
         "http://example.com", "http://127.0.0.1:8090/private",

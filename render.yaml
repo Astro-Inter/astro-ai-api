@@ -1,0 +1,97 @@
+services:
+  - type: web
+    name: astro-ai-a2a
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: python -m app.a2a.public_research_server
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: A2A_BIND_HOST
+        value: 0.0.0.0
+      - key: A2A_SHARED_TOKEN
+        generateValue: true
+      - key: FETCH_MCP_ALLOWED_DOMAINS
+        value: gov.br
+      - key: FETCH_MCP_CACHE_TTL_SECONDS
+        value: "900"
+
+  - type: web
+    name: astro-ai-api
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: APP_ENV
+        value: development
+      - key: ENABLE_DEV_LOGIN
+        value: "true"
+      - key: MONGODB_DATABASE
+        value: astro
+      - key: FETCH_MCP_ALLOWED_DOMAINS
+        value: gov.br
+      - key: FETCH_MCP_CACHE_TTL_SECONDS
+        value: "900"
+      - key: A2A_PUBLIC_RESEARCH_TIMEOUT_SECONDS
+        value: "30"
+      - key: LANGSMITH_TRACING
+        value: "false"
+      - key: A2A_PUBLIC_RESEARCH_URL
+        fromService:
+          type: web
+          name: astro-ai-a2a
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: A2A_SHARED_TOKEN
+        fromService:
+          type: web
+          name: astro-ai-a2a
+          envVarKey: A2A_SHARED_TOKEN
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CREDENTIALS_BASE64
+        sync: false
+      - key: FIREBASE_WEB_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REDIRECT_URI
+        sync: false
+      - key: GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT
+        value: astro-ai-api-render

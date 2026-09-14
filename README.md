@@ -1,5 +1,11 @@
 # astro-ai-api
 
+## Deploy
+
+O projeto inclui uma imagem Docker, um Blueprint provisório para Render e
+manifests Kubernetes preparados para um futuro deploy no AWS EKS. As instruções
+de configuração, segredos e execução estão em [`deploy/README.md`](deploy/README.md).
+
 ## Ingestão de PDFs do FAQ
 
 O script `app/scripts/ingest_faq.py` substitui **todos os pontos** de `faq_chunks`
