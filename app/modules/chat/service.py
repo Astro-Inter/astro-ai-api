@@ -10,9 +10,11 @@ from app.infrastructure.llm.models import AgentModel, LanguageModels
 from app.infrastructure.vectorstore.faq import FaqVectors
 from app.infrastructure.vectorstore.memory import SummaryVectors
 from app.modules.chat.errors import ChatError
+from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import build_chat_graph
 from app.modules.chat.schemas import ChatRequest, ChatResponse, SessionResponse
 from app.modules.memory.service import ConversationMemory
+from app.modules.shared.tools import PDF_LINK_TTL_HOURS
 
 
 CHAT_TIMEZONE = ZoneInfo("America/Sao_Paulo")
@@ -74,7 +76,9 @@ class ChatService:
                 raise ChatError(409, "Conversa encerrada ou em encerramento. Use um novo session_id.")
             return SessionResponse(session_id=session_id, status="ativa", resumo=None)
 
-    async def chat(self, request: ChatRequest, user: CurrentUser) -> ChatResponse:
+    async def chat(
+        self, request: ChatRequest, user: CurrentUser, *, markdown: bool = True,
+    ) -> ChatResponse:
         session_id = str(request.session_id or uuid4())
         async with self.operation():
             await self.repository.ensure(session_id, user.uid)
@@ -92,33 +96,91 @@ class ChatService:
                     "contexto": {
                         "workspace_id": None, "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
+                        "possui_acao_pendente": bool(doc.get("acao_pendente")),
+                        "formato_resposta": "markdown" if markdown else "texto_simples",
                         "ferramentas_disponiveis": [
                             "buscar_historico", "consultar_normas",
-                            "buscar_outros_usuarios", "buscar_meus_dados",
+                            "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
+                            "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+                            "consultar_orientacoes_sst", "consultar_fontes_publicas",
+                            "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
+                            "consultar_acessos",
+                            "consultar_treinamentos",
+                            "consultar_google_calendar", "criar_evento_google_calendar",
+                            "gerar_pdf",
                         ],
-                        "fontes_disponiveis": ["faq_chunks"],
+                        "fontes_disponiveis": [
+                            "faq_chunks", "nrs", "portal_oficial_mte_via_mcp_fetch",
+                            "mte", "fundacentro", "anvisa",
+                        ],
                         "limites": "Somente memoria de conversas do proprio usuario esta disponivel. "
-                                   "Normas podem ser consultadas apenas na base FAQ autorizada. "
+                                   "Politicas internas podem ser consultadas apenas na base FAQ "
+                                   "autorizada; legislação e publicações externas usam somente "
+                                   "catálogos oficiais previamente cadastrados. "
                                    "O agente de RH pode consultar somente os dados de usuarios "
-                                   "permitidos pelo perfil autenticado. Nao ha escrita nem outras "
-                                   "operacoes de negocio. "
+                                   "permitidos pelo perfil autenticado. O envio de mensagens exige "
+                                   "destinatario do mesmo workspace, previa e confirmacao explicita. "
+                                   "A consulta de conversas acessa apenas mensagens entre o usuario "
+                                   "autenticado e uma pessoa do mesmo workspace. "
+                                   "Notificacoes podem ser consultadas somente para o usuario "
+                                   "autenticado, sem inferir leitura ou pendencia. "
+                                   "Acessos mostram apenas dias registrados para o proprio "
+                                   "usuario, sem contar logins individuais ou horarios. "
+                                   "Treinamentos atribuidos ao usuario podem ser consultados "
+                                   "pelo agente de agenda, sem inferir inscricoes a partir da NR. "
+                                   "O Google Calendar e opcional e conectado sob demanda por OAuth. "
+                                   "Consultar ou criar eventos usa apenas o calendario principal "
+                                   "do usuario; criacao exige previa e confirmacao explicita. "
+                                   "PDFs podem ser gerados da resposta revisada quando pedidos "
+                                   "explicitamente; a aplicacao fornece o link temporario. "
+                                   "Nao ha outras operacoes de escrita. NRs usam primeiro o portal "
+                                   "oficial do MTE via MCP Fetch; a collection MongoDB autorizada "
+                                   "serve como contexto interno e fallback. "
                                    "Historico nao comprova direitos nem execucao. "
-                                   "Nao incluir escrita, fontes ou evento na saida.",
+                                   "Nao expor identificadores internos nem metadados tecnicos. "
+                                   "Em respostas do FAQ, citar documento e pagina quando "
+                                   "fornecidos pelos trechos autorizados.",
                     },
                     "memoria": {}, "busca_memoria": "", "memoria_consultada": False,
                     "rota": "", "resultado": {}, "resultado_tool": {}, "rh_decision": None,
-                    "rh_route": "",
+                    "rh_route": "", "sst_decision": None, "sst_route": "",
+                    "agenda_decision": None, "agenda_route": "",
+                    "roteador_decision": None, "acao_pendente": doc.get("acao_pendente"),
+                    "confirmacao_explicita": False,
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
+                    "pdf_solicitado": False, "pdf_url": None,
                 }, config={"recursion_limit": 20})
-                response = ChatResponse(session_id=session_id, resposta=result["resposta"],
+                pdf_url = result.get("pdf_url")
+                public_answer = (
+                    result["resposta"]
+                    if markdown
+                    else markdown_para_texto_simples(result["resposta"])
+                )
+                stored_answer = public_answer
+                if pdf_url:
+                    if markdown:
+                        public_answer += (
+                            f"\n\n[Baixar PDF]({pdf_url}) "
+                            f"(link válido por {PDF_LINK_TTL_HOURS} horas)."
+                        )
+                    else:
+                        public_answer += (
+                            f"\n\nBaixar PDF: {pdf_url}\n"
+                            f"Link válido por {PDF_LINK_TTL_HOURS} horas."
+                        )
+                    stored_answer += "\n\nPDF gerado e link temporário entregue."
+                response = ChatResponse(session_id=session_id, resposta=public_answer,
                                         agentes_chamados=result["agentes_chamados"])
                 if result["guardar_turno"]:
                     await self.repository.update(session_id, user.uid, token,
-                        {"ultima_rota": result["rota"]}, messages=[
+                        {
+                            "ultima_rota": result["rota"],
+                            "acao_pendente": result.get("acao_pendente"),
+                        }, messages=[
                             {"role": "human", "content": request.message},
-                            {"role": "assistant", "content": response.resposta},
+                            {"role": "assistant", "content": stored_answer},
                         ])
                 return response
 

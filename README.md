@@ -1,5 +1,11 @@
 # astro-ai-api
 
+## Deploy
+
+O projeto inclui uma imagem Docker, um Blueprint provisório para Render e
+manifests Kubernetes preparados para um futuro deploy no AWS EKS. As instruções
+de configuração, segredos e execução estão em [`deploy/README.md`](deploy/README.md).
+
 ## Ingestão de PDFs do FAQ
 
 O script `app/scripts/ingest_faq.py` substitui **todos os pontos** de `faq_chunks`
@@ -117,6 +123,16 @@ Exemplo de resposta (o texto e o caminho dependem da mensagem):
 }
 ```
 
+O parâmetro de query opcional `markdown` controla a formatação do campo `resposta`:
+
+- `POST /chat/messages?markdown=true` preserva Markdown e é o comportamento padrão.
+- `POST /chat/messages?markdown=false` retorna texto simples, sem sintaxe Markdown.
+
+Os únicos valores esperados são `true` e `false`; valores inválidos retornam `422`.
+Quando houver um PDF, o modo Markdown entrega um link clicável e o modo texto
+simples entrega a URL completa. A preferência vale somente para a apresentação da
+resposta e não altera a validação do Juiz, os guardrails ou o conteúdo do PDF.
+
 Para continuar, envie o `session_id` retornado junto da próxima `message`.
 Se o ID informado ainda não existir, o chat cria a sessão no MongoDB. Se existir,
 retoma o documento, desde que pertença ao UID autenticado e esteja ativo.
@@ -131,6 +147,12 @@ contexto confiável da aplicação.
 
 ### Fluxo implementado
 
+Cada papel que chama um modelo é criado com `langchain.agents.create_agent`,
+usando seu prompt e o adaptador dos provedores Groq/Mistral. O LangGraph externo
+continua responsável pelo roteamento e pela execução das tools autorizadas; elas
+não são entregues ao loop automático do agente, preservando autenticação,
+confirmações e validações existentes.
+
 - Guardrail de entrada: aprova, bloqueia ou pede esclarecimento.
 - Roteador: escolhe RH, SST, Agenda ou FAQ; saudações e esclarecimentos podem
   receber resposta direta, revisada pelo guardrail de saída.
@@ -141,9 +163,13 @@ contexto confiável da aplicação.
   consulta até cinco trechos de `faq_chunks` por similaridade Cosine. Somente
   resultados com score mínimo de 0,35 são enviados ao agente, como dados não
   confiáveis e nunca como instruções. A resposta usa apenas esses trechos e cita
-  nome do PDF e página. Sem resultados relevantes, informa que a informação não
-  foi encontrada; falhas de Qdrant ou embeddings retornam `503` sem inventar uma
-  resposta. A consulta é somente leitura e não altera os pontos ingeridos.
+  nome do PDF e página. Quando a pergunta pede legislação, manual, cartilha ou
+  documento público oficial atual, o subgrafo consulta também os catálogos
+  autorizados do MTE, da Fundacentro e da Anvisa pelo MCP Fetch e inclui somente
+  trechos relevantes e URLs oficiais. Fontes públicas não são tratadas como
+  políticas internas. Sem resultados relevantes, informa que a informação não
+  foi encontrada; falhas de Qdrant ou embeddings retornam `503` quando nenhuma
+  fonte pública sustenta a resposta. As consultas são somente leitura.
 - Juiz: toda resposta candidata, inclusive respostas diretas e do FAQ, passa por
   uma avaliação estruturada antes do guardrail de saída. O Juiz verifica relevância,
   coerência, sustentação nas evidências, fontes, execução de operações, privacidade
@@ -153,10 +179,14 @@ contexto confiável da aplicação.
   que tente ignorar o Juiz.
 
 Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
-No fluxo automático atual, a memória acessa o histórico e a tool de RH consulta
-os usuários permitidos pelo perfil autenticado. Ainda não há escrita operacional
-nem tools de negócio para SST e Agenda. Esses especialistas podem orientar e
-esclarecer, mas não criar eventos ou executar solicitações. Autenticação não
+No fluxo automático atual, a memória acessa o histórico, a tool de RH consulta
+os usuários permitidos pelo perfil autenticado, as tools de SST consultam NRs e
+orientações oficiais, e a tool de Agenda lê treinamentos atribuídos ao usuário.
+O Roteador pode enviar mensagens após uma prévia e uma confirmação explícita. A
+Agenda consulta treinamentos no PostgreSQL e pode consultar ou criar eventos no
+Google Calendar por MCP quando o próprio usuário conectar a conta. Os especialistas
+continuam sem autorização para afirmar operações não confirmadas por ferramentas.
+Autenticação não
 concede acesso automático a dados de outras pessoas ou empresas; cada ferramenta
 deve aplicar sua própria regra de autorização.
 
@@ -177,7 +207,82 @@ quando houver busca semântica de histórico ou FAQ, com custos e latência
 dos provedores. `LANGSMITH_*` é lido pelo SDK quando o tracing está habilitado;
 traces podem conter mensagens, contexto do usuário e respostas. Habilite somente
 quando esse envio de dados estiver autorizado. Bearer e chaves não são incluídos
-nos prompts. Nenhuma variável de ambiente nova é necessária para o chat.
+nos prompts. As variáveis do Google Calendar são opcionais; sem elas, todo o chat
+continua funcionando, exceto as operações que dependem do calendário.
+
+### Pesquisa pública por A2A
+
+O chat pode delegar consultas de fontes públicas do FAQ e de SST a um agente
+independente pelo protocolo A2A. Ele recebe apenas o termo da consulta, a área
+(`faq_politicas` ou `sst_geral`) e IDs de fontes da allowlist; não recebe o
+Firebase UID, sessão, perfil ou registros internos. O agente A2A usa o MCP Fetch
+para recuperar trechos dos catálogos oficiais já permitidos. O Astro valida o
+Agent Card, o endpoint e as URLs das evidências antes de devolver os trechos ao
+fluxo normal de Juiz e guardrail. Consultas de dados pessoais e operações de
+escrita não são delegadas. Como o termo é texto da pergunta, não configure um
+servidor A2A fora da infraestrutura confiável sem uma política de dados adequada.
+
+Execute o agente em **outro processo**. No `.env` da API e do agente, configure
+o mesmo endereço e uma chave aleatória de pelo menos 32 caracteres:
+
+```dotenv
+A2A_PUBLIC_RESEARCH_URL=http://127.0.0.1:8090
+A2A_SHARED_TOKEN=<chave-aleatoria-de-32-caracteres-ou-mais>
+A2A_PUBLIC_RESEARCH_TIMEOUT_SECONDS=15
+```
+
+Gere a chave localmente com
+`python -c "import secrets; print(secrets.token_urlsafe(48))"` e não a versione.
+Para desenvolvimento local, execute `python -m app.a2a.public_research_server`
+em um terminal e a API em outro. O Agent Card está em
+`/.well-known/agent-card.json` no serviço A2A, e tanto ele quanto as chamadas
+JSON-RPC exigem o cabeçalho `X-Astro-A2A-Key`. Fora do localhost, exponha o
+serviço somente por HTTPS e use rede/reverse proxy privados. O servidor mantém
+as tarefas em memória, apropriado para essas consultas curtas e síncronas.
+
+Sem configuração A2A, ou quando o agente remoto falhar, o chat preserva a
+consulta MCP Fetch local. Nenhuma chave A2A aparece na resposta ou nos prompts.
+Para testar no chat, pergunte: “Busque uma cartilha da Fundacentro sobre riscos
+psicossociais.” O log `Pesquisa pública concluída via A2A` confirma a
+delegação; a resposta continua exibindo somente as fontes oficiais encontradas.
+
+### Google Calendar por MCP
+
+A integração é sob demanda. O login Firebase não conecta automaticamente uma conta
+Google e consultas como "quais treinamentos preciso realizar?" continuam usando
+somente o PostgreSQL. Quando o usuário pedir para consultar ou criar algo no Google
+Calendar sem ter uma conta conectada, o chat informa a rota de conexão e mantém a
+prévia da criação pendente na sessão.
+
+Configure um cliente OAuth do tipo aplicação Web no Google Cloud, habilite a Google
+Calendar API e cadastre exatamente a URI de callback usada pela API. Depois preencha:
+
+```dotenv
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/integracoes/google-calendar/callback
+GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY=
+```
+
+Gere uma chave Fernet exclusiva para o ambiente, sem versioná-la:
+
+```powershell
+.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Após reiniciar a API, as rotas são:
+
+- `GET /integracoes/google-calendar/status`: informa se o usuário autenticado conectou a conta.
+- `GET /integracoes/google-calendar/conectar`: retorna `authorization_url`; o front-end deve abrir essa URL.
+- `GET /integracoes/google-calendar/callback`: callback público validado por `state` OAuth de uso único.
+- `DELETE /integracoes/google-calendar`: revoga quando possível e remove a conexão local.
+
+Os tokens ficam criptografados no MongoDB e associados somente ao Firebase UID. Eles
+não entram no `CurrentUser`, no LangGraph nem nos prompts. O agente de Agenda acessa
+uma allowlist de tools por um servidor MCP interno em transporte `stdio`:
+`google_calendar_status`, `google_calendar_list_events` e
+`google_calendar_create_event`. Criar evento sempre exige prévia e confirmação em
+uma mensagem posterior; o ID estável evita duplicar o evento em um retry.
 
 ### Tools de consulta de usuários do RH
 
@@ -215,6 +320,178 @@ o revisor de saída. O Roteador recebe no máximo seis mensagens anteriores e ca
 especialista, dez. Após uma falha da Mistral, os especialistas usam Groq durante
 cinco minutos antes de tentar a Mistral novamente.
 
+### Tool de consulta de NRs do SST
+
+`app/modules/sst/tools.py` registra a tool LangChain `consultar_nrs`, somente
+leitura. A fonte primária é o portal oficial do Ministério do Trabalho e Emprego,
+consultado pelo servidor oficial MCP Fetch; a collection `nrs` do MongoDB fornece
+o contexto complementar de como a norma está cadastrada no Astro e funciona como
+fallback quando a fonte pública estiver indisponível. A tool aceita uma ou várias
+NRs pelos respectivos números, pesquisa textual nos campos `nome`, `objetivo`,
+`descricao`, `aplicabilidade` e `usabilidade`, além de filtros opcionais de
+revogação e público de uso. Também é possível pedir somente campos específicos.
+
+O nome da collection e a estrutura da consulta ficam no backend: o modelo não
+recebe uma query MongoDB livre. Termos de pesquisa são escapados antes do regex,
+listas e limites são validados. O modo de listagem retorna somente número, nome,
+situação e última atualização, com até 50 documentos por página. O detalhamento
+completo é reservado a uma NR específica; comparações retornam somente os campos
+solicitados e no máximo dez documentos. Os resultados são ordenados pelo número
+da NR e datas são serializadas em ISO 8601.
+
+Perguntas sobre NRs são encaminhadas pelo Roteador ao subgrafo de SST. O agente
+decide os filtros, a tool consulta a página oficial por MCP e complementa o
+resultado com a base interna. O backend informa a URL pública efetivamente usada.
+A resposta e a evidência da tool
+seguem para o Juiz e o guardrail de saída. Textos extensos não são duplicados na
+evidência do Juiz; ele recebe a resposta determinística e metadados compactos da
+consulta. A mesma configuração `MONGODB_URI` e `MONGODB_DATABASE` usada pelo
+histórico é reutilizada. `FETCH_MCP_ALLOWED_DOMAINS`, com padrão `gov.br`, controla
+os únicos domínios HTTPS que o cliente MCP aceita. O subprocesso não recebe as
+credenciais da API, URLs com credenciais ou portas diferentes de 443. Respostas
+públicas bem-sucedidas ficam em memória por 15 minutos, valor ajustável por
+`FETCH_MCP_CACHE_TTL_SECONDS`, reduzindo latência e chamadas repetidas.
+
+A tool `consultar_orientacoes_sst` reutiliza o mesmo cliente MCP para localizar
+cartilhas, manuais, guias e orientações gerais nos catálogos do MTE, da Fundacentro
+e da Anvisa. O backend mantém a lista de páginas permitidas; o modelo fornece apenas
+o termo e, opcionalmente, IDs de fontes desse catálogo, sem aceitar URLs livres.
+As páginas são consultadas em paralelo, mas somente até quatro fontes e um trecho
+curto por fonte seguem ao Juiz. Perguntas de FAQ sobre legislação e publicações
+oficiais usam a mesma consulta junto do RAG interno. O conteúdo externo é sempre
+tratado como dado não confiável, e a resposta cita o órgão, o título e a URL usada.
+
+A tool `consultar_nrs_obrigatorias` usa o Firebase UID injetado pelo backend e
+consulta no PostgreSQL somente as NRs vigentes aplicáveis ao próprio usuário. A
+regra combina o cargo e a unidade atuais: a NR precisa estar vinculada ao cargo em
+`cargo_nr` e à unidade em `unidade_nr`. O resultado contém cargo, unidade, número,
+título e intervalo de reciclagem. A tool não aceita UID, nome ou cargo informados
+pelo modelo, e administradores sem vínculo funcional recebem resultado não aplicável.
+A origem técnica permanece somente na evidência interna enviada ao Juiz e não é
+exibida na resposta ao usuário.
+
+Os joins diretos já usam chaves primárias e relacionamentos pequenos, portanto uma
+view comum não produziria ganho de desempenho por si só. Se essa regra passar a ser
+reutilizada por outras APIs ou relatórios, uma view como
+`vw_nrs_obrigatorias_usuario` pode centralizar a interseção entre cargo e unidade;
+índices continuam sendo o recurso responsável pelo desempenho da consulta.
+
+### Tool de envio de mensagens do Roteador
+
+`app/modules/roteador/tools.py` registra a tool `enviar_mensagem`. O usuário
+informa nome ou e-mail do destinatário e o texto desejado. O backend resolve o
+Firebase UID autenticado para o `id_usuario` do PostgreSQL e restringe a pesquisa
+a pessoas ativas do mesmo workspace. IDs internos nunca são aceitos como entrada
+do modelo. Pesquisa por e-mail é exata; pesquisa por nome é literal por trecho e
+exige o e-mail quando houver mais de uma correspondência.
+
+O primeiro pedido nunca grava a mensagem, mesmo que o modelo tente confirmar o
+envio. Pedidos simples como “mande um oi para a Rosa” já chegam à prévia na
+primeira resposta; “oi” é o texto e o remetente vem da autenticação, sem precisar
+repetir quem é. Se houver complementos na mesma conversa, o roteador usa o
+histórico recente para aproveitar nome e texto já informados. A aplicação mostra
+uma prévia e armazena na sessão um rascunho com ID estável. Somente uma
+confirmação explícita em uma mensagem seguinte, na mesma sessão e sem alterações
+no destinatário ou no texto, autoriza a gravação. Repetir uma confirmação após
+resposta incerta não duplica o documento. “Sim”, “pode mandar” e “é isso mesmo
+que eu quero enviar” são exemplos de confirmação após a prévia.
+
+As mensagens confirmadas ficam na collection fixa `mensagens`, com `_id`,
+`id_envia`, `id_recebe`, `mensagem` e `data` em UTC. Os campos
+`id_envia` e `id_recebe` são IDs do PostgreSQL, não Firebase UIDs. A mesma
+configuração `MONGODB_URI` e `MONGODB_DATABASE` já usada pelo histórico é
+reutilizada; nenhuma variável de ambiente nova é necessária.
+
+### Tool de consulta de conversas do Roteador
+
+`consultar_conversas` lê as mensagens trocadas com uma pessoa identificada por
+nome ou e-mail, sem aceitar IDs informados pelo modelo. A identidade do usuário
+vem da autenticação; o PostgreSQL resolve a outra pessoa somente dentro do mesmo
+workspace. Se houver mais de uma correspondência por nome, a consulta pede o
+e-mail. Administradores, que não possuem workspace funcional de mensagens, não
+usam essa tool.
+
+A busca na collection `mensagens` inclui os dois sentidos da conversa, mas apenas
+registros em que o usuário autenticado é um dos participantes. Os resultados
+vêm do mais recente ao mais antigo, com cinco mensagens por página por padrão
+(máximo de dez). Textos longos são apresentados como trechos de até 500
+caracteres para limitar o contexto da IA. Por exemplo: “Mostre minhas últimas
+mensagens com Rosa Maduda” ou “Mostre a página 2 das minhas mensagens com Rosa
+Maduda”. Pedidos explícitos com nome ou e-mail já seguem direto à consulta, sem
+depender da classificação do modelo.
+
+### Tool de consulta de notificações do Roteador
+
+`consultar_notificacoes` lê a collection `notificacoes` usando o `id_usuario`
+resolvido no PostgreSQL a partir do Firebase UID autenticado. A ferramenta não
+aceita identificadores de usuário na entrada e nunca consulta notificações de
+outras pessoas. Os resultados são ordenados por `data_criacao`, do mais recente
+ao mais antigo, e paginados (cinco por página, no máximo dez). Textos longos são
+apresentados como trechos de até 500 caracteres. Exemplo: “Mostre minhas
+notificações” ou “Mostre a página 2 das minhas notificações”. O esquema atual
+contém apenas `id_usuario`, `mensagem` e `data_criacao`; portanto, a tool não
+classifica notificações como lidas, pendentes ou vencidas. Para uma collection
+grande, recomenda-se um índice composto em `id_usuario` e `data_criacao`.
+
+### Tool de consulta de treinamentos do agente de Agenda
+
+`app/modules/agenda/tools.py` registra `consultar_treinamentos`, disponível
+somente no subgrafo de Agenda. A ferramenta resolve o Firebase UID autenticado
+para `usuario.id_usuario` no PostgreSQL e lê suas inscrições em
+`turma_funcionario`, juntando `turma`, `evento`, `conclusao_evento` e o título da
+NR quando houver. Não aceita UID ou ID de outra pessoa como filtro.
+
+Por padrão, lista treinamentos atribuídos em eventos `ATIVO` cuja conclusão
+está pendente, rejeitada ou ainda não foi registrada. Filtros opcionais permitem
+ver os concluídos ou todos os treinamentos atribuídos, incluindo eventos
+encerrados e cancelados quando for solicitado o histórico completo. Cada item
+mostra título, turma, início e término, status do evento e da participação,
+NR vinculada, modo de conclusão, exigência de evidência e dados úteis disponíveis.
+Os resultados são paginados (cinco por página, no máximo dez). Como as colunas
+de horário do banco são `TIMESTAMP` sem fuso, a resposta não atribui UTC ou outro
+fuso a essas datas.
+
+Exemplo no chat: “Quais treinamentos eu preciso realizar?”. Essa consulta mostra
+somente inscrições efetivas; uma NR obrigatória para o cargo não comprova que o
+usuário já foi inscrito em uma turma. A tool não cria inscrição, conclusão ou
+evento.
+
+### Tool de consulta dos próprios acessos do Roteador
+
+`consultar_acessos` lê a tabela PostgreSQL `acesso` usando somente o Firebase
+UID autenticado para resolver `usuario.id_usuario`. Permite contar dias com
+acesso neste mês, ano, mês/ano específico, intervalo ou histórico completo;
+também retorna o primeiro e o último dia registrado e lista datas com paginação.
+
+A chave primária `(data, usuario_id)` garante no máximo um registro por dia.
+Logo, “quantas vezes acessei?” é respondido como **quantos dias tiveram acesso**:
+o banco não permite conhecer o total de logins nem seus horários. Consultas de
+período atual usam `CURRENT_DATE` do PostgreSQL. Exemplos no chat: “Quantos
+dias acessei neste mês?” e “Qual foi meu primeiro acesso ao sistema?”.
+
+### Geração compartilhada de PDF
+
+`app/modules/shared/tools.py` implementa `gerar_pdf` para os agentes do chat.
+Quando a mensagem pede explicitamente um PDF, o agente responde à consulta
+normalmente. Somente depois da validação pelo Juiz e pelo guardrail de saída, a
+aplicação transforma a pergunta e a resposta aprovada em um relatório com
+conteúdo variável. Pedidos sem dados confirmados ou bloqueados não enviam
+arquivo ao R2. O modelo não escolhe o conteúdo final nem inventa o link.
+Os relatórios usam a fonte MuseoModerno e a paleta Astro (`#1C1839`,
+`#8F00C4` e branco), com a logo translúcida no cabeçalho de todas as páginas.
+
+Configure `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` (endpoint S3
+do Cloudflare) e `R2_BUCKET_NAME` no `.env`; instale as dependências atualizadas
+com `pip install -e .`. O arquivo é gravado no bucket sem exigir acesso público,
+e a resposta do chat inclui um link de download assinado, válido por cinco
+horas. Esse link não é persistido no histórico da conversa. Exemplo: “Gere um PDF explicando quais
+treinamentos eu preciso realizar”.
+
+O token R2 precisa de **Object Read & Write** para o bucket configurado, incluindo
+upload e leitura do objeto. Se o R2 negar a operação, a resposta da consulta é
+preservada e o usuário recebe um aviso de que o PDF não foi gerado; o log registra
+apenas a etapa e o código do erro, sem URL assinada ou credenciais.
+
 ## Histórico persistente e sessões (SCRUM-187)
 
 Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY`,
@@ -250,9 +527,9 @@ Um documento por sessão, seguindo a modelagem fornecida. Exemplo ilustrativo:
 }
 ```
 
-Campos auxiliares: `ultima_rota`, `encerrada_em`, `resumo_parcial` e `resumo_ate`
-para progresso do resumo; `lock_token` e `lock_ate` enquanto uma operação reserva
-a sessão. Datas são BSON datetime em UTC. Um documento do formato básico, sem
+Campos auxiliares: `ultima_rota`, `acao_pendente`, `encerrada_em`, `resumo_parcial`
+e `resumo_ate` para progresso do resumo; `lock_token` e `lock_ate` enquanto uma
+operação reserva a sessão. Datas são BSON datetime em UTC. Um documento do formato básico, sem
 `status`, é tratado como ativo; `_id` deve ser UUID em string e `id_user` deve ser
 o UID Firebase. Não existe fallback para um usuário de teste.
 

@@ -6,3 +6,4 @@ __pycache__/
 *.py[cod]
 *.json
 serviceAccount*.json
+deploy/k8s/secrets.env

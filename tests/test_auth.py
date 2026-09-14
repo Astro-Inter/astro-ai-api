@@ -132,6 +132,31 @@ def test_upstream_failure(client, firebase_http, caplog, failure):
     assert PASSWORD not in caplog.text and TOKEN not in caplog.text and KEY not in caplog.text
 
 
+@pytest.mark.parametrize("first_failure", ["disconnect", "server"])
+def test_transient_firebase_failure_is_retried_once(
+    client, firebase_http, caplog, first_failure,
+):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            if first_failure == "disconnect":
+                raise httpx.RemoteProtocolError(PASSWORD)
+            return httpx.Response(503, text=PASSWORD)
+        return httpx.Response(200, json={"idToken": TOKEN, "expiresIn": "3600"})
+
+    firebase_http(handler)
+    caplog.set_level(logging.DEBUG)
+    result = post_login(client)
+
+    assert result.status_code == 200
+    assert result.json()["access_token"] == TOKEN
+    assert calls == 2
+    assert PASSWORD not in caplog.text and TOKEN not in caplog.text and KEY not in caplog.text
+
+
 @pytest.mark.parametrize("payload", [{"password": PASSWORD}, {"email": "x", "password": PASSWORD}])
 def test_validation_does_not_echo_password(client, payload):
     result = client.post("/auth/login", json=payload)

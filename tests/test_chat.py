@@ -14,9 +14,15 @@ from app.core.security import CurrentUser
 from app.infrastructure.llm import models
 from app.main import create_app
 from app.modules.chat.errors import ChatError
+from app.modules.chat.formatting import markdown_para_texto_simples
+from app.modules.chat.graph import _pedido_de_publicacao_sst
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
+from app.modules.agenda import tools as agenda_tools
 from app.modules.rh import tools as rh_tools
+from app.modules.roteador import tools as router_tools
+from app.modules.shared import public_sources
+from app.modules.sst import tools as sst_tools
 from memory_fakes import FakeAccessRoles, FakeFaqVectors, FakeSessions, FakeVectors
 
 
@@ -45,7 +51,27 @@ class FakeModel:
                     "recomendacao": "Consulte a área responsável.",
                 },
             })
-        if agent in {"rh", "sst", "agenda"}:
+        if agent == "sst" and '"acao"' in messages[0].content:
+            return json.dumps({
+                "acao": "responder",
+                "filtros": None,
+                "resposta": {
+                    "dominio": "sst", "intencao": "orientar", "status": "concluido",
+                    "resposta": "Orientação geral de segurança.",
+                    "recomendacao": "Procure a equipe de SST.",
+                },
+            })
+        if agent == "agenda" and '"acao"' in messages[0].content:
+            return json.dumps({
+                "acao": "responder",
+                "filtros": None,
+                "resposta": {
+                    "dominio": "agenda", "intencao": "consultar", "status": "indisponivel",
+                    "resposta": "Esta operação de agenda ainda não está disponível.",
+                    "recomendacao": "",
+                },
+            })
+        if agent in {"rh", "sst"}:
             return json.dumps({
                 "dominio": agent, "intencao": "consultar", "status": "indisponivel",
                 "resposta": "A consulta está indisponível.", "recomendacao": "Consulte a área responsável.",
@@ -69,8 +95,18 @@ class FakeModel:
 
 
 @pytest.fixture(autouse=True)
-def no_remote_tracing():
+def no_remote_tracing(monkeypatch):
     # Nunca enviar conteúdo dos testes ao LangSmith, mesmo com .env habilitado.
+    class UnavailableFetchClient:
+        async def fetch(self, *_args, **_kwargs):
+            return {"status": "indisponivel"}
+
+    monkeypatch.setattr(
+        sst_tools, "get_fetch_mcp_client", lambda: UnavailableFetchClient(),
+    )
+    monkeypatch.setattr(
+        public_sources, "get_fetch_mcp_client", lambda: UnavailableFetchClient(),
+    )
     with tracing_context(enabled=False):
         yield
 
@@ -113,11 +149,810 @@ def test_specialist_flow(chat_client, domain):
     assert '"fuso": "America/Sao_Paulo"' in system
     assert (
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
-        '"buscar_outros_usuarios", "buscar_meus_dados"]'
-    ) in system
+        '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
+        '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
+        '"consultar_orientacoes_sst", "consultar_fontes_publicas", '
+            '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
+            '"consultar_acessos", "consultar_treinamentos", '
+            '"consultar_google_calendar", "criar_evento_google_calendar", "gerar_pdf"]'
+        ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
         assert "SAÍDA PARA O ORQUESTRADOR" not in system
+    if domain == "sst":
+        assert "DECISÃO DE USO DA TOOL" in system
+
+
+def test_agenda_agent_consults_training_instead_of_sst(chat_client, monkeypatch):
+    from datetime import datetime
+
+    client, model, _ = chat_client
+    model.route = "sst"  # Pedido pessoal inequívoco dispensa a classificação do LLM.
+
+    class Cursor:
+        def __init__(self):
+            self.query = ""
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def execute(self, query, params):
+            self.query = query
+            assert params[0] == ("user-a" if "firebase_uid" in query else 7)
+        def fetchone(self):
+            return (7,) if "firebase_uid" in self.query else (1,)
+        def fetchall(self):
+            return [(
+                "Operação segura", "Treinamento de máquinas", None,
+                "GESTOR", False, "ATIVO", "Turma A",
+                datetime(2026, 9, 20, 8), datetime(2026, 9, 20, 12),
+                12, "Máquinas", "PENDENTE", None, None, None, None,
+            )]
+
+    class Connection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(agenda_tools, "get_postgres_connection", lambda: Connection())
+
+    response = client.post("/chat/messages", json={
+        "message": "Quais treinamentos eu preciso realizar?",
+    })
+
+    assert response.status_code == 200
+    assert "Operação segura" in response.json()["resposta"]
+    assert "participação: pendente" in response.json()["resposta"]
+    assert "2026-09-20T08:00:00" in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "agenda", "consultar_treinamentos",
+        "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+
+
+def test_google_calendar_is_connected_on_demand_and_event_stays_pending(
+    chat_client, monkeypatch,
+):
+    client, model, application = chat_client
+    model.route = "agenda"
+
+    class CalendarClient:
+        def __init__(self):
+            self.connected = False
+            self.calls = []
+
+        async def call_tool(self, name, arguments):
+            self.calls.append((name, arguments))
+            if name == "google_calendar_status":
+                return {"status": "ok", "conectado": self.connected, "escopos": []}
+            if name == "google_calendar_create_event" and self.connected:
+                return {
+                    "status": "ok",
+                    "evento": {
+                        "id": arguments["id_evento"],
+                        "titulo": arguments["titulo"],
+                        "inicio": arguments["inicio"],
+                        "fim": arguments["fim"],
+                        "link": "https://calendar.google.com/event?test",
+                    },
+                }
+            return {
+                "status": "conexao_necessaria",
+                "rota_conexao": "/integracoes/google-calendar/conectar",
+            }
+
+    calendar = CalendarClient()
+    monkeypatch.setattr(
+        agenda_tools, "get_google_calendar_mcp_client", lambda: calendar,
+    )
+    model.replies["agenda"] = json.dumps({
+        "acao": "criar_evento_google_calendar",
+        "filtros": {
+            "titulo": "Treinamento NR-12",
+            "inicio": "2026-09-20T08:00:00-03:00",
+            "fim": "2026-09-20T12:00:00-03:00",
+            "descricao": "Treinamento atribuído no Astro.",
+            "confirmar": False,
+        },
+        "resposta": None,
+    })
+
+    preview_response = client.post("/chat/messages", json={
+        "message": "Coloque o treinamento NR-12 no meu Google Calendar.",
+    })
+
+    assert preview_response.status_code == 200
+    preview_body = preview_response.json()
+    assert "/integracoes/google-calendar/conectar" in preview_body["resposta"]
+    session_id = preview_body["session_id"]
+    pending = application.state.chat_service.repository.docs[session_id]["acao_pendente"]
+    assert pending["tipo"] == "criar_evento_google_calendar"
+    assert [call[0] for call in calendar.calls] == ["google_calendar_status"]
+
+    calendar.connected = True
+    confirmation_response = client.post("/chat/messages", json={
+        "message": "Sim, pode criar.", "session_id": session_id,
+    })
+
+    assert confirmation_response.status_code == 200
+    assert "criado no seu Google Calendar" in confirmation_response.json()["resposta"]
+    assert application.state.chat_service.repository.docs[session_id]["acao_pendente"] is None
+    assert [call[0] for call in calendar.calls] == [
+        "google_calendar_status", "google_calendar_create_event",
+    ]
+    # A confirmação curta é validada pelo pending confiável antes do LLM; o
+    # guardrail não pode tratá-la como mensagem sem contexto.
+    assert [call[0] for call in model.calls].count("guardrail_entrada") == 1
+
+
+def test_training_filters_and_judge_evidence_stay_compact():
+    from app.modules.chat.subgraphs import _evidencia_treinamentos, _filtros_treinamentos
+
+    assert _filtros_treinamentos("Quais treinamentos preciso realizar?").situacao == "a_realizar"
+    assert _filtros_treinamentos("Mostre todos os meus treinamentos").situacao == "todos"
+    completed = _filtros_treinamentos("Mostre a página 2 dos treinamentos que concluí")
+    assert completed.situacao == "concluidos"
+    assert completed.pagina == 2
+    assert _filtros_treinamentos("Explique a NR-12") is None
+
+    evidence = _evidencia_treinamentos({
+        "status": "ok", "situacao": "a_realizar", "pagina": 1,
+        "total_paginas": 1,
+        "treinamentos": [{
+            "titulo": "Teste", "descricao": "x" * 300,
+            "link_externo": "https://astro.test/" + "x" * 1000,
+            "motivo_rejeicao": "y" * 300,
+        }],
+    })
+    assert len(evidence["treinamentos"][0]["descricao"]) == 160
+    assert "link_externo" not in evidence["treinamentos"][0]
+    assert len(evidence["treinamentos"][0]["motivo_rejeicao"]) == 160
+
+
+def test_sst_agent_consults_multiple_nrs(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    model.route = "sst"
+
+    collection = type("Collection", (), {})()
+
+    class Cursor:
+        def sort(self, *_):
+            return self
+        def skip(self, _):
+            return self
+        def limit(self, _):
+            return self
+        def __iter__(self):
+            return iter([
+                {"_id": 1, "nome": "Disposições Gerais", "objetivo": "Objetivo 1"},
+                {"_id": 6, "nome": "EPI", "objetivo": "Objetivo 6"},
+            ])
+
+    def find(query, projection):
+        collection.query = query
+        collection.projection = projection
+        return Cursor()
+
+    collection.find = find
+    collection.count_documents = lambda _: 2
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(sst_tools, "get_collection", lambda: collection)
+    model.replies["sst"] = json.dumps({
+        "acao": "consultar_nrs",
+        "filtros": {"numeros": [1, 6], "campos": ["objetivo"], "limite": 2},
+        "resposta": None,
+    })
+
+    response = client.post(
+        "/chat/messages", json={"message": "Quais os objetivos das NRs 1 e 6?"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "sst", "consultar_nrs",
+        "juiz", "guardrail_saida",
+    ]
+    assert "NR-1" in response.json()["resposta"]
+    assert "Objetivo 6" in response.json()["resposta"]
+    assert "Contexto complementar: cadastro interno do Astro" in response.json()["resposta"]
+    assert collection.query == {"_id": {"$in": [1, 6]}}
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz",
+    ]
+    judge_call = next(call for call in model.calls if call[0] == "juiz")
+    review = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
+    evidence = review["resultado"]["evidencia_tool"]["resultado"]
+    assert evidence["numeros"] == [1, 6]
+    assert "nrs" not in evidence
+    assert "Objetivo 1" not in json.dumps(evidence)
+
+
+def test_sst_agent_lists_all_current_nrs_with_compact_payload(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    model.route = "sst"
+    documents = [{
+        "_id": number,
+        "nome": f"Norma {number}",
+        "revogada": False,
+        "ultima_atualizacao": "01/01/2026",
+        "descricao": "conteudo muito extenso " * 500,
+    } for number in range(1, 36)]
+
+    class Cursor:
+        def __init__(self):
+            self.offset = 0
+            self.size = 50
+        def sort(self, *_):
+            return self
+        def skip(self, value):
+            self.offset = value
+            return self
+        def limit(self, value):
+            self.size = value
+            return self
+        def __iter__(self):
+            return iter(documents[self.offset:self.offset + self.size])
+
+    class Collection:
+        def count_documents(self, query):
+            self.query = query
+            return len(documents)
+        def find(self, query, projection):
+            self.query = query
+            self.projection = projection
+            return Cursor()
+
+    collection = Collection()
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(sst_tools, "get_collection", lambda: collection)
+    model.replies["sst"] = json.dumps({
+        "acao": "consultar_nrs",
+        "filtros": {
+            "modo": "listar", "revogada": False, "pagina": 1, "limite": 50,
+        },
+        "resposta": None,
+    })
+
+    response = client.post("/chat/messages", json={
+        "message": "Quais são todas as NRs hoje em dia que ainda estão em vigência?",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "Encontrei 35 NR(s). Página 1 de 1" in body["resposta"]
+    assert "NR-35" in body["resposta"]
+    assert "conteudo muito extenso" not in body["resposta"]
+    assert collection.query == {"revogada": False}
+    assert collection.projection == {
+        "_id": 1, "nome": 1, "revogada": 1, "ultima_atualizacao": 1,
+    }
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz",
+    ]
+    judge_call = next(call for call in model.calls if call[0] == "juiz")
+    judge_payload = judge_call[1][-1].content
+    assert "conteudo muito extenso" not in judge_payload
+    assert len(judge_payload) < 12000
+
+
+def test_sst_agent_consults_mandatory_nrs_for_authenticated_user(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    model.route = "sst"
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def execute(self, query, parameters):
+            self.query = query
+            self.parameters = parameters
+        def fetchall(self):
+            return [
+                ("Lucas", "Eletricista", "Matriz", 10, "Eletricidade", 24),
+                ("Lucas", "Eletricista", "Matriz", 18, "Construção", 12),
+            ]
+
+    class Connection:
+        def __init__(self):
+            self.db_cursor = Cursor()
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def cursor(self):
+            return self.db_cursor
+
+    connection = Connection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
+
+    response = client.post("/chat/messages", json={
+        "message": "Quais NRs são obrigatórias para minha função?",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "sst", "consultar_nrs_obrigatorias",
+        "juiz", "guardrail_saida",
+    ]
+    assert "Para o cargo Eletricista" in body["resposta"]
+    assert "NR-10" in body["resposta"] and "NR-18" in body["resposta"]
+    assert "Fonte:" not in body["resposta"]
+    assert "PostgreSQL" not in body["resposta"]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz",
+    ]
+    assert connection.db_cursor.parameters == ["user-a"]
+
+
+def test_sst_agent_consults_nr_status_for_authenticated_user(chat_client, monkeypatch):
+    from datetime import date
+
+    client, model, _ = chat_client
+    model.route = "sst"
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def execute(self, query, parameters):
+            self.query = query
+            self.parameters = parameters
+        def fetchall(self):
+            return [(
+                "Lucas", "Eletricista", "Matriz", 10, "Eletricidade",
+                date(2027, 9, 12), None, None, "VIGENTE", "NENHUMA",
+                date(2026, 9, 12),
+            ), (
+                "Lucas", "Eletricista", "Matriz", 18, "Construção",
+                date(2026, 8, 1), None, None, "RENOVACAO_NECESSARIA", "RENOVAR",
+                date(2026, 9, 12),
+            )]
+
+    class Connection:
+        def __init__(self):
+            self.db_cursor = Cursor()
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def cursor(self):
+            return self.db_cursor
+
+    connection = Connection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
+
+    response = client.post("/chat/messages", json={
+        "message": "Quais das minhas NRs estão vigentes e quais preciso renovar?",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "sst", "consultar_situacao_nrs",
+        "juiz", "guardrail_saida",
+    ]
+    assert "NR-10" in body["resposta"] and "situação: vigente" in body["resposta"]
+    assert "NR-18" in body["resposta"] and "ação: renovar" in body["resposta"]
+    assert "Fonte:" not in body["resposta"]
+    assert "PostgreSQL" not in body["resposta"]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz",
+    ]
+    assert connection.db_cursor.parameters == ["user-a"]
+
+
+def test_router_previews_and_sends_message_only_after_confirmation(chat_client, monkeypatch):
+    client, model, application = chat_client
+
+    class Collection:
+        def __init__(self):
+            self.documents = {}
+        def insert_one(self, document):
+            self.documents[document["_id"]] = document
+        def find_one(self, query):
+            return self.documents.get(query["_id"])
+
+    collection = Collection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(
+        router_tools,
+        "_resolver_destinatarios",
+        lambda uid, recipient: [(7, 21, "Lucas Souza", "lucas@empresa.com")],
+    )
+    monkeypatch.setattr(router_tools, "get_messages_collection", lambda: collection)
+    model.replies["roteador"] = (
+        'MESSAGE={"destinatario":"lucas@empresa.com",'
+        '"mensagem":"Olá! Podemos conversar amanhã?","confirmar_envio":true}'
+    )
+
+    preview = client.post("/chat/messages", json={
+        "message": "Melhore e mande oi, podemos conversar amanhã para lucas@empresa.com",
+    })
+
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert "Prévia para Lucas Souza" in preview_body["resposta"]
+    assert "Olá! Podemos conversar amanhã?" in preview_body["resposta"]
+    assert "Confirma o envio?" in preview_body["resposta"]
+    assert collection.documents == {}
+    session = application.state.chat_service.repository.docs[preview_body["session_id"]]
+    pending = session["acao_pendente"]
+    assert pending["id_envia"] == 7 and pending["id_recebe"] == 21
+    assert preview_body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "enviar_mensagem", "juiz", "guardrail_saida",
+    ]
+
+    model.calls.clear()
+    sent = client.post("/chat/messages", json={
+        "message": "Sim, pode enviar.",
+        "session_id": preview_body["session_id"],
+    })
+
+    assert sent.status_code == 200
+    assert sent.json()["resposta"] == "Mensagem enviada para Lucas Souza (lucas@empresa.com)."
+    assert sent.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "enviar_mensagem", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == ["juiz"]
+    document = collection.documents[pending["id_mensagem"]]
+    assert document["id_envia"] == 7 and document["id_recebe"] == 21
+    assert document["mensagem"] == "Olá! Podemos conversar amanhã?"
+    assert session["acao_pendente"] is None
+
+
+@pytest.mark.parametrize("message,router_reply,expected_model_calls", [
+    (
+        "Mostre minhas últimas mensagens com Rosa Maduda",
+        "ROUTE=desconhecido",
+        ["guardrail_entrada", "juiz"],
+    ),
+    (
+        "Veja o que conversei com Rosa Maduda",
+        '```json\nCONVERSATION = {"pessoa":"Rosa Maduda"}\n```',
+        ["guardrail_entrada", "roteador", "juiz"],
+    ),
+])
+def test_router_consults_conversation_with_specific_person(
+    chat_client, monkeypatch, message, router_reply, expected_model_calls,
+):
+    from datetime import datetime, timezone
+
+    client, model, _ = chat_client
+
+    class Cursor:
+        def sort(self, _):
+            return self
+        def skip(self, _):
+            return self
+        def limit(self, _):
+            return self
+        def __iter__(self):
+            return iter([{
+                "id_envia": 21, "id_recebe": 7,
+                "mensagem": "Oi Lucas", "data": datetime(2026, 9, 12, tzinfo=timezone.utc),
+            }])
+
+    class Collection:
+        def __init__(self):
+            self.query = None
+        def count_documents(self, query):
+            self.query = query
+            return 1
+        def find(self, query, projection):
+            assert query == self.query
+            assert projection["_id"] == 0
+            return Cursor()
+
+    collection = Collection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(
+        router_tools, "_resolver_destinatarios",
+        lambda uid, person: [(7, 21, "Rosa Maduda", "rosa@empresa.com")],
+    )
+    monkeypatch.setattr(router_tools, "get_messages_collection", lambda: collection)
+    model.replies["roteador"] = router_reply
+
+    response = client.post("/chat/messages", json={
+        "message": message,
+    })
+
+    assert response.status_code == 200
+    assert "Mensagens com Rosa Maduda (rosa@empresa.com):" in response.json()["resposta"]
+    assert "Oi Lucas" in response.json()["resposta"]
+    assert "página 1 de 1" not in response.json()["resposta"]
+    assert "no total; mais recentes primeiro" not in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_conversas", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == expected_model_calls
+    assert collection.query == {"$or": [
+        {"id_envia": 7, "id_recebe": 21},
+        {"id_envia": 21, "id_recebe": 7},
+    ]}
+
+
+def test_simple_conversation_request_extracts_person_and_page():
+    from app.modules.chat.graph import _pedido_simples_de_conversa
+
+    decision = _pedido_simples_de_conversa(
+        "Mostre a página 2 das minhas mensagens com Rosa Maduda, por favor"
+    )
+    assert decision.pessoa == "Rosa Maduda"
+    assert decision.pagina == 2
+    assert decision.limite == 5
+    assert _pedido_simples_de_conversa("Não mostre minhas mensagens com Rosa Maduda") is None
+    assert _pedido_simples_de_conversa("Mostre minhas mensagens com meu amigo") is None
+    assert _pedido_simples_de_conversa("Como enviar mensagens com Rosa Maduda?") is None
+
+
+@pytest.mark.parametrize("message,router_reply,expected_model_calls", [
+    (
+        "Mostre minhas notificações",
+        "ROUTE=desconhecido",
+        ["guardrail_entrada", "juiz"],
+    ),
+    (
+        "Existem notificações para mim?",
+        '```json\nNOTIFICATIONS = {"pagina":1,"limite":5}\n```',
+        ["guardrail_entrada", "roteador", "juiz"],
+    ),
+])
+def test_router_consults_only_authenticated_users_notifications(
+    chat_client, monkeypatch, message, router_reply, expected_model_calls,
+):
+    from datetime import datetime, timezone
+
+    client, model, _ = chat_client
+
+    class Cursor:
+        def sort(self, _):
+            return self
+        def skip(self, _):
+            return self
+        def limit(self, _):
+            return self
+        def __iter__(self):
+            return iter([{
+                "mensagem": "Você tem um evento pendente!",
+                "data_criacao": datetime(2026, 9, 13, tzinfo=timezone.utc),
+            }])
+
+    class Collection:
+        def __init__(self):
+            self.query = None
+        def count_documents(self, query):
+            self.query = query
+            return 1
+        def find(self, query, projection):
+            assert query == self.query
+            assert projection == {"_id": 0, "mensagem": 1, "data_criacao": 1}
+            return Cursor()
+
+    collection = Collection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(router_tools, "_resolver_id_usuario", lambda uid: 7)
+    monkeypatch.setattr(router_tools, "get_notifications_collection", lambda: collection)
+    model.replies["roteador"] = router_reply
+
+    response = client.post("/chat/messages", json={"message": message})
+
+    assert response.status_code == 200
+    assert "Você tem um evento pendente!" in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_notificacoes", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == expected_model_calls
+    assert collection.query == {"id_usuario": 7}
+
+
+def test_simple_notification_request_never_targets_someone_else():
+    from app.modules.chat.graph import _pedido_simples_de_notificacoes
+
+    assert _pedido_simples_de_notificacoes("Mostre minhas notificações").pagina == 1
+    assert _pedido_simples_de_notificacoes("Mostre a página 2 das minhas notificações").pagina == 2
+    assert _pedido_simples_de_notificacoes("Mostre notificações da Rosa") is None
+    assert _pedido_simples_de_notificacoes("Não mostre minhas notificações") is None
+    assert _pedido_simples_de_notificacoes("Crie notificações para mim") is None
+
+
+@pytest.mark.parametrize("message,expected_period,expected_consult", [
+    ("Quantas vezes acessei o sistema neste mês?", "mes_atual", "contagem"),
+    ("Qual foi meu primeiro acesso ao sistema?", "todo_historico", "primeiro"),
+    ("Qual foi meu último acesso em setembro de 2026?", "mes_especifico", "ultimo"),
+    ("Quantos acessos tive no ano de 2025?", "ano_especifico", "contagem"),
+    ("Quantos acessos tive no último mês?", "mes_passado", "contagem"),
+    ("Quais dias acessei no último mês?", "mes_passado", "dias"),
+    ("Quais dias acessei entre 01/09/2026 e 30/09/2026?", "intervalo", "dias"),
+])
+def test_simple_access_request_extracts_intent_and_period(
+    message, expected_period, expected_consult,
+):
+    from app.modules.chat.graph import _pedido_simples_de_acessos
+
+    decision = _pedido_simples_de_acessos(message)
+    assert decision.periodo == expected_period
+    assert decision.consulta == expected_consult
+
+
+def test_simple_access_request_does_not_confuse_permissions_or_other_users():
+    from app.modules.chat.graph import _pedido_simples_de_acessos
+
+    assert _pedido_simples_de_acessos("Qual é meu nível de acesso?") is None
+    assert _pedido_simples_de_acessos("Não consulte meus acessos") is None
+    assert _pedido_simples_de_acessos("Quantos acessos teve o usuário Lucas?") is None
+    assert _pedido_simples_de_acessos("Quais foram meus acessos em maio?") is None
+    assert _pedido_simples_de_acessos("Quantos acessos tive em janeiro e fevereiro de 2026?") is None
+    assert _pedido_simples_de_acessos("Quantos acessos tive em 2025 e 2026?") is None
+    assert _pedido_simples_de_acessos("Quantos acessos tive neste mês e neste ano?") is None
+
+
+@pytest.mark.parametrize("message,router_reply,expected_calls,explained", [
+    (
+        "Quantas vezes acessei o sistema neste mês?", None,
+        ["guardrail_entrada", "juiz"], False,
+    ),
+    (
+        "Quantos dias acessei entre 2026-09-01 e 2026-09-30?",
+        'ACCESSES={"consulta":"contagem","periodo":"intervalo",'
+        '"data_inicio":"2026-09-01","data_fim":"2026-09-30"}',
+        ["guardrail_entrada", "roteador", "juiz"], False,
+    ),
+    (
+        "Quantas vezes acessei neste mês e como é feita a contagem?", None,
+        ["guardrail_entrada", "juiz"], True,
+    ),
+])
+def test_router_consults_own_access_days_without_claiming_login_count(
+    chat_client, monkeypatch, message, router_reply, expected_calls, explained,
+):
+    from datetime import date
+
+    client, model, _ = chat_client
+    model.route = "faq"  # Consulta evidente dispensa a classificação pelo modelo.
+    if router_reply:
+        model.replies["roteador"] = router_reply
+    queries = []
+
+    class Cursor:
+        def __init__(self):
+            self.query = ""
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def execute(self, query, params):
+            queries.append((query, params))
+            self.query = query
+        def fetchone(self):
+            if "FROM usuario" in self.query:
+                return (7,)
+            return (2, date(2026, 9, 1), date(2026, 9, 12))
+
+    class Connection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test/test")
+    monkeypatch.setattr(router_tools, "get_postgres_connection", Connection)
+    response = client.post(
+        "/chat/messages", json={"message": message},
+    )
+    assert response.status_code == 200
+    assert "2 dia(s)" in response.json()["resposta"]
+    assert ("não cada login" in response.json()["resposta"]) is explained
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_acessos", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == expected_calls
+    assert queries[0][1] == ["user-a"]
+    assert queries[1][1][0] == 7
+
+
+def test_access_counting_explanation_is_available_only_on_request(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    monkeypatch.setattr(
+        router_tools, "get_postgres_connection",
+        lambda: pytest.fail("Explicação do esquema não deve consultar o banco"),
+    )
+
+    response = client.post(
+        "/chat/messages", json={"message": "Por que você conta dias e não logins?"},
+    )
+
+    assert response.status_code == 200
+    assert "não cada login" in response.json()["resposta"]
+    assert "não informa horários" in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_acessos", "juiz", "guardrail_saida",
+    ]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+
+
+@pytest.mark.parametrize("confirmation", [
+    "Sim", "É isso mesmo que eu quero enviar", "Pode mandar", "Confirmo o envio",
+])
+def test_simple_message_previews_immediately_and_accepts_natural_confirmation(
+    chat_client, monkeypatch, confirmation,
+):
+    client, model, application = chat_client
+
+    class Collection:
+        def __init__(self):
+            self.documents = {}
+
+        def insert_one(self, document):
+            self.documents[document["_id"]] = document
+
+    collection = Collection()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
+    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
+    monkeypatch.setattr(
+        router_tools, "_resolver_destinatarios",
+        lambda uid, recipient: [(7, 21, "Rosa Maduda", "rosa@empresa.com")]
+        if recipient == "Rosa Maduda" or recipient == "rosa@empresa.com" else [],
+    )
+    monkeypatch.setattr(router_tools, "get_messages_collection", lambda: collection)
+    model.replies["roteador"] = "ROUTE=rh"  # O pedido evidente dispensa a classificação do LLM.
+
+    preview = client.post("/chat/messages", json={
+        "message": "Mande um oi para a Rosa Maduda, por favor",
+    })
+
+    assert preview.status_code == 200
+    assert "Prévia para Rosa Maduda (rosa@empresa.com):\n\nOi\n\nConfirma" in (
+        preview.json()["resposta"]
+    )
+    assert collection.documents == {}
+    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+
+    session_id = preview.json()["session_id"]
+    pending = application.state.chat_service.repository.docs[session_id]["acao_pendente"]
+    sent = client.post("/chat/messages", json={
+        "message": confirmation, "session_id": session_id,
+    })
+
+    assert sent.status_code == 200
+    assert sent.json()["resposta"] == "Mensagem enviada para Rosa Maduda (rosa@empresa.com)."
+    assert collection.documents[pending["id_mensagem"]]["mensagem"] == "Oi"
+    assert application.state.chat_service.repository.docs[session_id]["acao_pendente"] is None
+
+
+def test_simple_message_does_not_infer_send_from_negation_or_edit_request():
+    from app.modules.chat.graph import _pedido_simples_de_mensagem
+
+    assert _pedido_simples_de_mensagem("Não mande um oi para a Rosa Maduda") is None
+    assert _pedido_simples_de_mensagem("Não quero mandar um oi para Rosa Maduda") is None
+    assert _pedido_simples_de_mensagem("Como mandar um oi para Rosa Maduda?") is None
+    assert _pedido_simples_de_mensagem("Melhore e mande 'oi' para Rosa Maduda") is None
+    assert _pedido_simples_de_mensagem("Mande um oi para meu amigo") is None
+    assert _pedido_simples_de_mensagem("Mande um oi para a Rosa Maduda").mensagem == "Oi"
+    assert _pedido_simples_de_mensagem("Manda um oi pra Rosa Maduda").destinatario \
+        == "Rosa Maduda"
+    assert _pedido_simples_de_mensagem("Envie a mensagem 'Oi Duda' para Rosa Maduda") \
+        .destinatario == "Rosa Maduda"
 
 
 def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatch):
@@ -305,6 +1140,336 @@ def test_direct_and_faq_flows(chat_client):
     assert session["mensagens"][-1]["content"] == faq["resposta"]
 
 
+def test_chat_roles_are_created_with_langchain_agents(chat_client, monkeypatch):
+    from app.modules.chat import agents as chat_agents
+
+    client, model, _ = chat_client
+    model.route = "direta"
+    created = []
+    original = chat_agents.create_agent
+
+    def tracked_create_agent(**kwargs):
+        created.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(chat_agents, "create_agent", tracked_create_agent)
+
+    response = client.post("/chat/messages", json={"message": "Oi"})
+
+    assert response.status_code == 200
+    assert [item["name"] for item in created] == [
+        "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
+    ]
+    assert all(item["tools"] == [] for item in created)
+    assert all(item["system_prompt"].content for item in created)
+
+
+def test_faq_uses_curated_public_sources_for_official_current_material(
+    chat_client, monkeypatch,
+):
+    client, model, _ = chat_client
+    model.route = "faq"
+    official_url = public_sources.PUBLIC_SOURCES["mte_legislacao_sst"].url
+
+    class FetchClient:
+        async def fetch(self, url, **_kwargs):
+            if url == official_url:
+                return {
+                    "status": "ok",
+                    "conteudo": (
+                        "# Legislação de Segurança e Saúde no Trabalho\n\n"
+                        "Atualizado em 10/09/2026\n\n"
+                        "A legislação sobre equipamento de proteção individual reúne "
+                        "normas e portarias oficiais aplicáveis ao EPI."
+                    ),
+                }
+            return {"status": "indisponivel"}
+
+    monkeypatch.setattr(
+        public_sources, "get_fetch_mcp_client", lambda: FetchClient(),
+    )
+    model.replies["faq"] = (
+        "Há legislação oficial sobre EPI. Fonte: "
+        f"[Ministério do Trabalho e Emprego]({official_url})."
+    )
+
+    response = client.post("/chat/messages", json={
+        "message": "Qual é a legislação oficial atualizada sobre EPI?",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert official_url in body["resposta"]
+    assert body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_normas",
+        "consultar_fontes_publicas", "faq", "juiz", "guardrail_saida",
+    ]
+    faq_call = next(call for call in model.calls if call[0] == "faq")
+    retrieved = json.loads(faq_call[1][-1].content.split("\n", 1)[1])
+    assert retrieved["resultado"]["consulta_publica"] == "ok"
+    assert retrieved["resultado"]["fontes_publicas"][0]["url"] == official_url
+
+
+def test_sst_uses_official_guides_for_general_guidance(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    monkeypatch.setattr(config, "A2A_PUBLIC_RESEARCH_URL", "")
+    model.route = "faq"  # Mesmo se o LLM classificasse como FAQ, o pedido é de SST.
+    source = public_sources.PUBLIC_SOURCES["fundacentro_publicacoes"]
+
+    class FetchClient:
+        async def fetch(self, url, **_kwargs):
+            if url == source.url:
+                return {
+                    "status": "ok",
+                    "conteudo": (
+                        "# Publicações institucionais\n\n"
+                        "Cartilha de prevenção de riscos psicossociais e organização "
+                        "segura do trabalho."
+                    ),
+                }
+            return {"status": "indisponivel"}
+
+    monkeypatch.setattr(
+        public_sources, "get_fetch_mcp_client", lambda: FetchClient(),
+    )
+    model.replies["sst"] = json.dumps({
+        "acao": "consultar_orientacoes_sst",
+        "filtros": {
+            "termo": "riscos psicossociais",
+            "fontes": ["fundacentro_publicacoes"],
+        },
+        "resposta": None,
+    })
+
+    response = client.post("/chat/messages", json={
+        "message": "Busque uma cartilha da Fundacentro sobre riscos psicossociais.",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "Cartilha de prevenção de riscos psicossociais" in body["resposta"]
+    assert source.url in body["resposta"]
+    assert body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "sst", "consultar_orientacoes_sst",
+        "juiz", "guardrail_saida",
+    ]
+    assert "roteador" not in [call[0] for call in model.calls]
+
+
+@pytest.mark.parametrize(("message", "expected"), [
+    ("Busque uma cartilha da Fundacentro sobre riscos psicossociais.", True),
+    ("Encontre um manual do MTE sobre gerenciamento de riscos ocupacionais.", True),
+    ("Quero um guia da Anvisa sobre higiene das mãos.", True),
+    ("Qual é a política interna do Astro sobre riscos psicossociais?", False),
+    ("Consulte o manual interno de SST da empresa.", False),
+    ("Busque um manual da Anvisa sobre cosméticos.", False),
+])
+def test_only_official_sst_publications_skip_router_classification(message, expected):
+    assert _pedido_de_publicacao_sst(message) is expected
+
+
+def test_markdown_to_plain_text_removes_common_syntax():
+    markdown = (
+        "# Resumo\n\n**Astro** e [documentação](https://astro.test/docs).\n"
+        "- Item importante\n1. Primeiro passo\n> Observação\n\n"
+        "| Campo | Valor |\n| --- | --- |\n| Status | Ativo |\n\n"
+        "```text\nconteúdo do bloco\n```"
+    )
+
+    assert markdown_para_texto_simples(markdown) == (
+        "Resumo\n\nAstro e documentação (https://astro.test/docs).\n"
+        "• Item importante\n1) Primeiro passo\nObservação\n\n"
+        "Campo | Valor\nStatus | Ativo\n\nconteúdo do bloco"
+    )
+
+
+@pytest.mark.parametrize(("query", "expected", "context_format"), [
+    ("", "# Resumo\n\n**Astro**\n- Item", "markdown"),
+    ("?markdown=true", "# Resumo\n\n**Astro**\n- Item", "markdown"),
+    ("?markdown=false", "Resumo\n\nAstro\n• Item", "texto_simples"),
+])
+def test_chat_response_format_query_parameter(
+    chat_client, query, expected, context_format,
+):
+    client, model, application = chat_client
+    model.route = "direta"
+    model.replies["roteador"] = "# Resumo\n\n**Astro**\n- Item"
+
+    response = client.post(f"/chat/messages{query}", json={"message": "Oi"})
+
+    assert response.status_code == 200
+    assert response.json()["resposta"] == expected
+    assert f'"formato_resposta": "{context_format}"' in model.calls[0][1][0].content
+    stored = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert stored["mensagens"][-1]["content"] == expected
+
+
+def test_chat_rejects_invalid_markdown_query_value(chat_client):
+    client, model, _ = chat_client
+
+    response = client.post("/chat/messages?markdown=talvez", json={"message": "Oi"})
+
+    assert response.status_code == 422
+    assert not model.calls
+
+
+def test_pdf_request_uses_approved_faq_answer_and_returns_temporary_link(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, application = chat_client
+    model.route = "faq"
+    model.replies["guardrail_saida"] = json.dumps({
+        "status": "aprovado", "motivo": "Resposta validada.",
+        "resposta": "Paráfrase indevida sem citação.",
+    })
+    calls = []
+
+    async def fake_pdf(args, config):
+        calls.append((args, config))
+        assert args["resposta"] == "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
+        return {"status": "ok", "url": "https://r2.example/arquivo.pdf?assinatura=teste"}
+
+    class PdfTool:
+        ainvoke = staticmethod(fake_pdf)
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post(
+        "/chat/messages", json={"message": (
+            "Qual é o objetivo do Astro? Gere um PDF com a explicação e as fontes utilizadas."
+        )},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "[Baixar PDF](https://r2.example/arquivo.pdf?assinatura=teste)" in body["resposta"]
+    assert "link válido por 5 horas" in body["resposta"]
+    assert "Fonte: normas.pdf, página 1." in body["resposta"]
+    assert "Paráfrase indevida" not in body["resposta"]
+    assert body["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "consultar_normas", "faq", "juiz",
+        "guardrail_saida", "gerar_pdf",
+    ]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "faq", "juiz", "guardrail_saida",
+    ]
+    assert calls[0][1]["configurable"]["usuario_atual"]["uid"] == "user-a"
+    stored = application.state.chat_service.repository.docs[body["session_id"]]
+    assert "assinatura=teste" not in stored["mensagens"][-1]["content"]
+    assert "PDF gerado" in stored["mensagens"][-1]["content"]
+
+
+def test_pdf_link_is_plain_text_when_markdown_is_disabled(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, application = chat_client
+    model.route = "faq"
+
+    class PdfTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            return {"status": "ok", "url": "https://r2.example/arquivo.pdf?assinatura=teste"}
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post(
+        "/chat/messages?markdown=false",
+        json={"message": "Gere um PDF com o objetivo do Astro."},
+    )
+
+    assert response.status_code == 200
+    answer = response.json()["resposta"]
+    assert "[Baixar PDF](" not in answer
+    assert "Baixar PDF: https://r2.example/arquivo.pdf?assinatura=teste" in answer
+    assert "Link válido por 5 horas." in answer
+    stored = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert "assinatura=teste" not in stored["mensagens"][-1]["content"]
+    assert stored["mensagens"][-1]["content"].endswith(
+        "PDF gerado e link temporário entregue."
+    )
+
+
+def test_pdf_is_not_uploaded_when_consultation_has_no_data(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, application = chat_client
+    model.route = "faq"
+    application.state.chat_service.faq_vectors.results = []
+
+    async def unexpected_pdf(*_args, **_kwargs):
+        pytest.fail("Não deve gerar PDF sem dados confirmados")
+
+    class PdfTool:
+        ainvoke = staticmethod(unexpected_pdf)
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post(
+        "/chat/messages", json={"message": "Gere um PDF sobre esta norma ausente."},
+    )
+    assert response.status_code == 200
+    assert "Não gerei o PDF" in response.json()["resposta"]
+    assert "Baixar PDF" not in response.json()["resposta"]
+
+
+def test_pdf_upload_failure_keeps_the_approved_answer(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, _ = chat_client
+    model.route = "faq"
+
+    class PdfTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            return {"status": "indisponivel"}
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post(
+        "/chat/messages", json={"message": "Gere um PDF com o objetivo do Astro."},
+    )
+    assert response.status_code == 200
+    assert "O Astro centraliza orientações internas." in response.json()["resposta"]
+    assert "Não consegui gerar o PDF agora." in response.json()["resposta"]
+    assert "Baixar PDF" not in response.json()["resposta"]
+
+
+def test_pdf_is_not_generated_when_guardrail_ignores_negative_judge(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, _ = chat_client
+    model.route = "faq"
+    model.replies["juiz"] = json.dumps({
+        "status": "revisar", "motivo": "Fonte não confirma a afirmação.",
+        "problemas": ["Afirmação sem evidência."],
+    })
+    model.replies["guardrail_saida"] = json.dumps({
+        "status": "aprovado", "motivo": "Sem revisão.",
+        "resposta": "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1.",
+    })
+
+    class PdfTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            pytest.fail("Resposta não aprovada não pode ser enviada ao R2")
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post("/chat/messages", json={"message": (
+        "Qual é o objetivo do Astro? Gere um PDF com a explicação e as fontes utilizadas."
+    )})
+    assert response.status_code == 200
+    assert response.json()["resposta"] == (
+        "Não consegui validar esta resposta com as informações disponíveis."
+    )
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("Gere um PDF sobre minhas NRs", True),
+    ("Quero um relatório em PDF", True),
+    ("PDF das minhas NRs", True),
+    ("Não quero PDF", False),
+    ("Como gerar um PDF?", False),
+    ("Isso está em PDF?", False),
+])
+def test_pdf_request_requires_creation_intent(message, expected):
+    from app.modules.chat.graph import _pedido_pdf
+
+    assert _pedido_pdf(message) is expected
+
+
 def test_faq_without_relevant_chunks_does_not_call_model(chat_client):
     client, model, application = chat_client
     model.route = "faq"
@@ -362,7 +1527,6 @@ def test_output_guard_replaces_candidate(chat_client, status):
     ("orquestrador", "   "),
     ("juiz", "não é JSON"),
     ("juiz", json.dumps({"status": "aprovado", "motivo": "ok", "problemas": ["erro"]})),
-    ("guardrail_saida", json.dumps({"status": "aprovado", "motivo": "ok", "resposta": "Alterada"})),
     ("guardrail_saida", "```json\n{}\n```"),
 ])
 def test_invalid_agent_reply_fails_closed(chat_client, agent, reply):
@@ -459,7 +1623,10 @@ def test_guardrail_cannot_ignore_negative_judge(chat_client, guard_status):
         "resposta": "Olá! Como posso ajudar?",
     })
     response = client.post("/chat/messages", json={"message": "Pedido"})
-    assert response.status_code == 502
+    assert response.status_code == 200
+    assert response.json()["resposta"] == (
+        "Não consegui validar esta resposta com as informações disponíveis."
+    )
     assert all(not doc["mensagens"] for doc in application.state.chat_service.repository.docs.values())
 
 

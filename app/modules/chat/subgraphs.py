@@ -1,3 +1,4 @@
+import asyncio
 import re
 import unicodedata
 
@@ -5,20 +6,27 @@ from langgraph.graph import END, START, StateGraph
 
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.agents import invoke_agent
-from app.modules.chat.errors import InvalidAgentResponse
 from app.modules.chat.prompts.agenda import AGENDA_PROMPT_COMPLETO
 from app.modules.chat.prompts.faq import FAQ_PROMPT_COMPLETO
-from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO, RH_PROMPT_COMPLETO
-from app.modules.chat.prompts.sst import SST_PROMPT_COMPLETO
-from app.modules.chat.schemas import SpecialistResult
+from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO
+from app.modules.chat.prompts.sst import SST_DECISAO_PROMPT_COMPLETO
 from app.modules.chat.state import ChatState
+from app.modules.agenda.tools import (
+    AgendaToolDecision, ConsultarTreinamentosArgs, TOOLS_AGENDA,
+)
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision, TOOLS_RH
+from app.modules.shared.public_sources import consultar_fontes_publicas
+from app.modules.sst.tools import (
+    ConsultarNrsArgs,
+    ConsultarOrientacoesSstArgs,
+    SstToolDecision,
+    TOOLS_SST,
+)
 
 
-SPECIALIST_PROMPTS = {
-    "rh": RH_PROMPT_COMPLETO, "sst": SST_PROMPT_COMPLETO, "agenda": AGENDA_PROMPT_COMPLETO,
-}
 RH_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_RH}
+SST_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_SST}
+AGENDA_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_AGENDA}
 
 
 def _pedido_dos_proprios_dados(message: str) -> bool:
@@ -43,6 +51,161 @@ def _pedido_de_todos_os_usuarios(message: str) -> bool:
         r"todas as pessoas do (?:meu|nosso) sistema)\b",
         normalized,
     ))
+
+
+def _pedido_fontes_publicas_faq(message: str) -> bool:
+    """Limita o Fetch no FAQ a pedidos de conteúdo público oficial."""
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    explicit_public_source = bool(re.search(
+        r"\b(governo|fonte oficial|documento oficial|publicacao oficial|"
+        r"ministerio do trabalho|mte|fundacentro|anvisa)\b",
+        normalized,
+    ))
+    if re.search(r"\b(intern[ao]s?|da empresa|do astro)\b", normalized) \
+            and not explicit_public_source:
+        return False
+    return bool(re.search(
+        r"\b(legislacao|lei|leis|decreto|portaria|rdc|manual|guia|cartilha|"
+        r"documento oficial|fonte oficial|publicacao oficial|politica (?:publica|nacional)|"
+        r"atualizad\w*|ministerio do trabalho|mte|fundacentro|anvisa)\b",
+        normalized,
+    ))
+
+
+def _filtros_deterministicos_nrs(message: str) -> ConsultarNrsArgs | None:
+    """Reconhece consultas objetivas de NR sem depender de um provedor de IA."""
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    if not re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized):
+        return None
+
+    numbers = [int(value) for value in re.findall(r"\bnr\s*-?\s*(\d{1,2})\b", normalized)]
+    grouped = re.search(
+        r"\bnrs?\s*[-:]?\s*((?:\d{1,2}(?:\s*(?:,|e)\s*\d{1,2})+))",
+        normalized,
+    )
+    if grouped:
+        numbers.extend(int(value) for value in re.findall(r"\d{1,2}", grouped.group(1)))
+    numbers = list(dict.fromkeys(numbers))
+    if len(numbers) > 10:
+        return None
+
+    page_match = re.search(r"\bpagina\s+(\d{1,3})\b", normalized)
+    page = int(page_match.group(1)) if page_match else 1
+    field_markers = {
+        "objetivo": ("objetiv", "finalidade"),
+        "descricao": ("descri", "conteudo", "explica", "detalh"),
+        "aplicabilidade": ("aplicab", "aplica"),
+        "revogada": ("revog", "vigent", "vigencia"),
+        "tempo_reciclagem_meses": ("reciclagem", "reciclar"),
+        "ultima_atualizacao": ("ultima atualizacao", "atualizada", "atualizacao"),
+        "data_criacao": ("data de criacao", "criada", "criacao"),
+        "usabilidade": ("usabilidade", "publico", "quem pode usar"),
+    }
+    fields = [
+        field for field, markers in field_markers.items()
+        if any(marker in normalized for marker in markers)
+    ]
+
+    if numbers:
+        mode = "detalhar" if len(numbers) == 1 or fields else "listar"
+        return ConsultarNrsArgs(
+            numeros=numbers,
+            campos=fields,
+            modo=mode,
+            pagina=page,
+            limite=50,
+        )
+
+    listing = re.search(
+        r"\b(quais|liste|listar|listagem|todas|todos)\b", normalized,
+    )
+    status_query = any(marker in normalized for marker in ("revog", "vigent", "vigencia"))
+    if not listing and not status_query:
+        return None
+    revoked = None
+    if any(marker in normalized for marker in ("vigent", "vigencia", "nao revogad")):
+        revoked = False
+    elif "revog" in normalized:
+        revoked = True
+    return ConsultarNrsArgs(
+        revogada=revoked,
+        modo="listar",
+        pagina=page,
+        limite=50,
+    )
+
+
+def _pedido_nrs_obrigatorias(message: str) -> bool:
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    mentions_nr = bool(re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized))
+    obligation = bool(re.search(
+        r"\b(obrigatori\w*|preciso cumprir|devo cumprir|aplicaveis? (?:ao|a) meu|"
+        r"exigid[ao]s?|para (?:o )?meu cargo|para (?:a )?minha funcao)\b",
+        normalized,
+    ))
+    return mentions_nr and obligation
+
+
+def _pedido_situacao_nrs(message: str) -> bool:
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    mentions_nr = bool(re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized))
+    personal_context = bool(re.search(
+        r"\b(minhas?|meus?|para mim|eu preciso|preciso|devo|tenho que)\b",
+        normalized,
+    ))
+    situation = bool(re.search(
+        r"\b(situacao|status|valid[ao]s?|validade|em dia|pendent\w*|vencid\w*|"
+        r"realizar|renovar|renovacao|reciclagem)\b",
+        normalized,
+    ))
+    return mentions_nr and personal_context and situation
+
+
+def _filtros_treinamentos(message: str) -> ConsultarTreinamentosArgs | None:
+    normalized = "".join(
+        character for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+    if not re.search(r"\b(treinamentos?|capacitac(?:ao|oes))\b", normalized):
+        return None
+    if re.search(
+        r"\b(google (?:calendar|agenda)|coloque|adicion\w*|agend\w*|marque|crie)\b",
+        normalized,
+    ):
+        return None
+    if not re.search(
+        r"\b(meus?|minhas?|preciso|tenho|devo|fazer|realizar|"
+        r"pendentes?|atribuidos?|inscritos?|conclui|concluidos?)\b", normalized,
+    ):
+        return None
+    if re.search(r"\b(conclui|concluidos?|ja fiz|finalizei)\b", normalized):
+        situation = "concluidos"
+    elif re.search(r"\b(todos|historico)\b", normalized) and not re.search(
+        r"\b(preciso|pendentes?|realizar|fazer)\b", normalized,
+    ):
+        situation = "todos"
+    else:
+        situation = "a_realizar"
+    page_match = re.search(r"\bpagina\s+(\d+)\b", normalized)
+    try:
+        return ConsultarTreinamentosArgs(
+            situacao=situation,
+            pagina=int(page_match.group(1)) if page_match else 1,
+        )
+    except ValueError:
+        return None
 
 
 def _formatar_usuarios(result: dict) -> str:
@@ -79,23 +242,370 @@ def _formatar_meus_dados(result: dict) -> str:
     return "\n".join(["Estes são os seus dados:", *lines])
 
 
-def build_specialist_graph(domain: str, model: AgentModel):
-    async def specialist(state: ChatState):
-        result = await invoke_agent(
-            model, domain, SPECIALIST_PROMPTS[domain], state, SpecialistResult,
-        )
-        if result.dominio != domain:
-            raise InvalidAgentResponse(domain)
-        return {
-            "resultado": result.model_dump(exclude_none=True),
-            "agentes_chamados": state["agentes_chamados"] + [domain],
-        }
+def _formatar_nrs(result: dict) -> str:
+    if result.get("status") == "sem_dados":
+        return "Não encontrei NRs com os filtros informados."
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar as NRs no momento.")
 
-    graph = StateGraph(ChatState)
-    graph.add_node("especialista", specialist)
-    graph.add_edge(START, "especialista")
-    graph.add_edge("especialista", END)
-    return graph.compile(name=f"subgrafo_{domain}")
+    pagination = result.get("paginacao", {})
+    primary_source = result.get("fonte") or {}
+    source_url = primary_source.get("url")
+    source_footer = (
+        f"Fonte oficial: [Ministério do Trabalho e Emprego]({source_url})."
+        if source_url
+        else "Fonte utilizada: base interna de NRs do Astro; a fonte oficial estava indisponível."
+    )
+    if result.get("modo") == "listar":
+        total = pagination.get("total", result.get("quantidade", 0))
+        page = pagination.get("pagina", 1)
+        total_pages = pagination.get("total_paginas", 1)
+        lines = []
+        for nr in result["nrs"]:
+            details = [nr.get("situacao")]
+            if nr.get("ultima_atualizacao"):
+                details.append(f"atualizada em {nr['ultima_atualizacao']}")
+            suffix = f" | {' | '.join(details)}" if any(details) else ""
+            lines.append(f"- NR-{nr.get('numero')} — {nr.get('nome', 'Sem nome')}{suffix}")
+        footer = [source_footer]
+        if any(source.get("tipo") == "mongodb" for source in result.get("fontes", [])):
+            footer.append("Contexto complementar: cadastro interno de NRs do Astro.")
+        if pagination.get("tem_proxima_pagina"):
+            footer.insert(0, f"Há mais resultados. Solicite a página {page + 1}.")
+        return "\n".join([
+            f"Encontrei {total} NR(s). Página {page} de {total_pages}:",
+            *lines,
+            *footer,
+        ])
+
+    labels = {
+        "nome": "Nome", "objetivo": "Objetivo", "descricao": "Descrição",
+        "aplicabilidade": "Aplicabilidade", "revogada": "Revogada",
+        "tempo_reciclagem_meses": "Reciclagem (meses)",
+        "ultima_atualizacao": "Última atualização", "data_criacao": "Criada em",
+        "usabilidade": "Usabilidade",
+    }
+    sections = []
+    for nr in result["nrs"]:
+        number = nr.get("numero")
+        title = f"NR-{number}"
+        if nr.get("nome"):
+            title += f" — {nr['nome']}"
+        details = []
+        if nr.get("situacao"):
+            details.append(f"- Situação na fonte oficial: {nr['situacao'].lower()}")
+        if nr.get("pagina_oficial_atualizada_em"):
+            details.append(
+                f"- Página oficial atualizada em: {nr['pagina_oficial_atualizada_em']}"
+            )
+        if nr.get("resumo_oficial"):
+            details.append(f"- Informação oficial: {nr['resumo_oficial']}")
+        for field, label in labels.items():
+            if field == "nome" or field not in nr:
+                continue
+            value = nr[field]
+            if value is None:
+                continue
+            if field == "revogada":
+                value = "Sim" if value else "Não"
+            details.append(f"- {label}: {value}")
+        if nr.get("fonte_oficial"):
+            details.append(
+                f"- Fonte oficial: [Ministério do Trabalho e Emprego]({nr['fonte_oficial']})"
+            )
+        elif source_url:
+            details.append(
+                f"- Fonte oficial: [Ministério do Trabalho e Emprego]({source_url})"
+            )
+        if any(source.get("tipo") == "mongodb" for source in result.get("fontes", [])):
+            details.append("- Contexto complementar: cadastro interno do Astro")
+        sections.append("\n".join([title, *details]))
+    return "\n\n".join(sections)
+
+
+def _evidencia_compacta_nrs(result: dict) -> dict:
+    """Evita repetir no prompt do Juiz os textos já presentes na candidata."""
+    return {
+        "status": result.get("status"),
+        "quantidade": result.get("quantidade", 0),
+        "modo": result.get("modo"),
+        "numeros": [nr.get("numero") for nr in result.get("nrs", [])],
+        "campos_retornados": sorted({
+            field
+            for nr in result.get("nrs", [])
+            for field in nr
+            if field != "numero"
+        }),
+        "fonte": result.get("fonte"),
+        "fontes": result.get("fontes", []),
+        "origem_principal": result.get("origem_principal"),
+        "paginacao": result.get("paginacao"),
+        "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
+    }
+
+
+def _formatar_orientacoes_sst(result: dict) -> str:
+    if result.get("status") == "sem_dados":
+        return (
+            "Não encontrei uma orientação oficial relevante para esse assunto "
+            "nos catálogos consultados."
+        )
+    if result.get("status") != "ok":
+        return result.get(
+            "mensagem", "Não foi possível consultar as orientações oficiais no momento.",
+        )
+
+    lines = [f"Orientações oficiais relacionadas a {result['termo']}:"]
+    for source in result.get("fontes", []):
+        for snippet in source.get("trechos", []):
+            lines.append(f"- {source['orgao']}: {snippet}")
+        update = (
+            f" (atualizada em {source['atualizado_em']})"
+            if source.get("atualizado_em") else ""
+        )
+        lines.append(f"  Fonte: [{source['titulo']}]({source['url']}){update}")
+    return "\n".join(lines)
+
+
+def _evidencia_orientacoes_sst(result: dict) -> dict:
+    return {
+        "status": result.get("status"),
+        "termo": result.get("termo"),
+        "quantidade": result.get("quantidade", 0),
+        "fontes": result.get("fontes", []),
+        "protocolo": result.get("protocolo"),
+        "formatacao": "resposta gerada deterministicamente a partir dos trechos oficiais",
+    }
+
+
+def _formatar_nrs_obrigatorias(result: dict) -> str:
+    if result.get("status") == "nao_aplicavel":
+        return result["mensagem"]
+    if result.get("status") == "sem_dados":
+        return result.get("mensagem", "Não encontrei seu cadastro funcional.")
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar suas NRs obrigatórias.")
+
+    nrs = result["nrs"]
+    header = (
+        f"Para o cargo {result['cargo']}, na unidade {result['unidade']}, "
+        f"encontrei {len(nrs)} NR(s) vigente(s) vinculada(s):"
+    )
+    if not nrs:
+        return "\n".join([
+            header,
+            "Nenhuma NR vigente está vinculada ao seu cargo.",
+        ])
+    lines = []
+    for nr in nrs:
+        recycling = nr.get("tempo_reciclagem_meses")
+        suffix = f" | reciclagem: {recycling} meses" if recycling is not None else ""
+        lines.append(f"- NR-{nr['numero']} — {nr['titulo']}{suffix}")
+    return "\n".join([
+        header,
+        *lines,
+    ])
+
+
+def _evidencia_nrs_obrigatorias(result: dict) -> dict:
+    return {
+        "status": result.get("status"),
+        "cargo": result.get("cargo"),
+        "unidade": result.get("unidade"),
+        "quantidade": result.get("quantidade", 0),
+        "nrs": result.get("nrs", []),
+        "fonte": result.get("fonte"),
+        "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
+    }
+
+
+def _formatar_situacao_nrs(result: dict) -> str:
+    if result.get("status") == "nao_aplicavel":
+        return result["mensagem"]
+    if result.get("status") == "sem_dados":
+        return result.get("mensagem", "Não encontrei seu cadastro funcional.")
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar a situação das suas NRs.")
+
+    nrs = result["nrs"]
+    header = (
+        f"Situação das NRs obrigatórias para o cargo {result['cargo']}, "
+        f"na unidade {result['unidade']}:"
+    )
+    if not nrs:
+        return "\n".join([header, "Nenhuma NR vigente está vinculada ao seu cargo."])
+
+    situation_labels = {
+        "VIGENTE": "vigente",
+        "PENDENTE": "pendente",
+        "RENOVACAO_NECESSARIA": "renovação necessária",
+        "REALIZACAO_NECESSARIA": "realização necessária",
+    }
+    action_labels = {
+        "NENHUMA": "nenhuma ação imediata",
+        "CONCLUIR_PENDENCIA": "concluir atividade pendente",
+        "RENOVAR_EM_BREVE": "renovar em breve",
+        "RENOVAR": "renovar",
+        "REALIZAR": "realizar",
+    }
+    lines = []
+    for nr in nrs:
+        details = [
+            f"situação: {situation_labels.get(nr['situacao'], nr['situacao'].lower())}",
+            f"ação: {action_labels.get(nr['acao_necessaria'], nr['acao_necessaria'].lower())}",
+        ]
+        if nr.get("data_validade"):
+            details.append(f"validade: {nr['data_validade']}")
+        if nr.get("data_inicio_pendencia"):
+            details.append(f"atividade prevista: {nr['data_inicio_pendencia']}")
+        lines.append(f"- NR-{nr['numero']} — {nr['titulo']} | " + " | ".join(details))
+    return "\n".join([header, *lines])
+
+
+def _formatar_treinamentos(result: dict) -> str:
+    if result.get("status") == "sem_dados":
+        labels = {
+            "a_realizar": "Não encontrei treinamentos ativos pendentes atribuídos a você.",
+            "concluidos": "Não encontrei treinamentos concluídos atribuídos a você.",
+            "todos": "Não encontrei treinamentos atribuídos a você.",
+        }
+        return labels.get(result.get("situacao"), "Não encontrei treinamentos.")
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar seus treinamentos.")
+
+    lines = ["Seus treinamentos atribuídos:"]
+    status_labels = {
+        "PENDENTE": "pendente", "REJEITADO": "rejeitado", "CONCLUIDO": "concluído",
+    }
+    for training in result["treinamentos"]:
+        details = [
+            f"turma: {training['turma']}",
+            f"início: {training['data_inicio']}",
+            f"término: {training['data_termino']}",
+            f"participação: {status_labels.get(training['status_participacao'], training['status_participacao'])}",
+            f"evento: {training['status_evento'].lower()}",
+        ]
+        if training.get("nr"):
+            details.append(f"NR-{training['nr']['numero']} — {training['nr']['titulo']}")
+        details.append(f"conclusão por: {training['modo_conclusao'].lower().replace('_', ' ')}")
+        if training["evidencia_obrigatoria"]:
+            details.append("evidência obrigatória")
+        if training.get("data_validade"):
+            details.append(f"validade: {training['data_validade']}")
+        lines.append(f"- {training['titulo']} | " + " | ".join(details))
+        if training.get("descricao"):
+            lines.append(f"  {training['descricao'][:160]}")
+        if training.get("motivo_rejeicao"):
+            lines.append(f"  Motivo da rejeição: {training['motivo_rejeicao'][:160]}")
+        if training.get("link_externo") and len(training["link_externo"]) <= 300:
+            lines.append(f"  Link: {training['link_externo']}")
+    if not result["treinamentos"]:
+        lines.append("Nenhum treinamento nesta página. Tente uma página anterior.")
+    elif result["pagina"] < result["total_paginas"]:
+        lines.append(f"Para ver mais treinamentos, peça a página {result['pagina'] + 1}.")
+    return "\n".join(lines)
+
+
+def _evidencia_treinamentos(result: dict) -> dict:
+    """Envia ao Juiz só os campos que podem aparecer na resposta formatada."""
+    visible_fields = (
+        "titulo", "turma", "data_inicio", "data_termino", "nr",
+        "status_evento", "status_participacao", "modo_conclusao",
+        "evidencia_obrigatoria", "data_validade",
+    )
+    trainings = []
+    for training in result.get("treinamentos", []):
+        item = {field: training.get(field) for field in visible_fields}
+        if training.get("descricao"):
+            item["descricao"] = training["descricao"][:160]
+        if training.get("motivo_rejeicao"):
+            item["motivo_rejeicao"] = training["motivo_rejeicao"][:160]
+        if training.get("link_externo") and len(training["link_externo"]) <= 300:
+            item["link_externo"] = training["link_externo"]
+        trainings.append(item)
+    return {
+        "status": result.get("status"),
+        "situacao": result.get("situacao"),
+        "pagina": result.get("pagina"),
+        "total_paginas": result.get("total_paginas"),
+        "treinamentos": trainings,
+        "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
+    }
+
+
+def _formatar_eventos_google(result: dict) -> str:
+    if result.get("status") == "conexao_necessaria":
+        return (
+            "Para consultar sua agenda, conecte sua conta Google pelo endpoint "
+            f"`{result['rota_conexao']}`. O restante do Astro continua disponível sem essa conexão."
+        )
+    if result.get("status") == "sem_dados":
+        return "Não encontrei eventos no seu Google Calendar nesse período."
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar seu Google Calendar.")
+    lines = ["Eventos no seu Google Calendar:"]
+    for event in result.get("eventos", []):
+        lines.append(f"- {event['titulo']} | início: {event['inicio']} | fim: {event['fim']}")
+        if event.get("link"):
+            lines.append(f"  Link: {event['link']}")
+    return "\n".join(lines)
+
+
+def _formatar_criacao_evento_google(result: dict) -> str:
+    event = result.get("evento", {})
+    preview = (
+        f"Prévia do evento: {event.get('titulo')} | início: {event.get('inicio')} | "
+        f"fim: {event.get('fim')}."
+    )
+    status = result.get("status")
+    if status == "conexao_necessaria":
+        return (
+            preview
+            + " Para continuar, conecte sua conta Google pelo endpoint "
+            + f"`{result['rota_conexao']}`. Depois volte a esta conversa e confirme a criação."
+        )
+    if status == "aguardando_confirmacao":
+        return preview + " Confirma a criação no seu Google Calendar?"
+    if status == "ok":
+        text = f"Evento {event.get('titulo')} criado no seu Google Calendar."
+        if event.get("link"):
+            text += f" Link: {event['link']}"
+        return text
+    return result.get("mensagem", "Não foi possível criar o evento no Google Calendar.")
+
+
+def _evidencia_google_calendar(tool_name: str, result: dict) -> dict:
+    evidence = {
+        "status": result.get("status"),
+        "ferramenta_mcp": tool_name,
+        "protocolo": "MCP",
+    }
+    if tool_name == "consultar_google_calendar":
+        evidence["eventos"] = [
+            {
+                "titulo": item.get("titulo"),
+                "inicio": item.get("inicio"),
+                "fim": item.get("fim"),
+                "status": item.get("status"),
+            }
+            for item in result.get("eventos", [])
+        ]
+    else:
+        evidence["evento"] = result.get("evento")
+    return evidence
+
+
+def _evidencia_situacao_nrs(result: dict) -> dict:
+    return {
+        "status": result.get("status"),
+        "cargo": result.get("cargo"),
+        "unidade": result.get("unidade"),
+        "data_referencia": result.get("data_referencia"),
+        "quantidade": result.get("quantidade", 0),
+        "nrs": result.get("nrs", []),
+        "fonte": result.get("fonte"),
+        "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
+    }
 
 
 def build_rh_graph(model: AgentModel):
@@ -202,20 +712,278 @@ def build_rh_graph(model: AgentModel):
     return graph.compile(name="subgrafo_rh")
 
 
-def build_faq_graph(model: AgentModel, search_faq=None):
-    async def consult_norms(state: ChatState):
-        if search_faq is None:
-            result = {"dominio": "faq", "status": "indisponivel", "trechos": []}
-        else:
-            snippets = await search_faq(state["mensagem"])
-            result = {
-                "dominio": "faq",
-                "status": "encontrado" if snippets else "sem_dados",
-                "trechos": snippets,
+def build_sst_graph(model: AgentModel):
+    async def decide(state: ChatState):
+        if _pedido_situacao_nrs(state["mensagem"]):
+            return {
+                "sst_route": "tool",
+                "sst_decision": SstToolDecision(acao="consultar_situacao_nrs"),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
+        if _pedido_nrs_obrigatorias(state["mensagem"]):
+            return {
+                "sst_route": "tool",
+                "sst_decision": SstToolDecision(acao="consultar_nrs_obrigatorias"),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
+        deterministic_filters = _filtros_deterministicos_nrs(state["mensagem"])
+        if deterministic_filters is not None:
+            return {
+                "sst_route": "tool",
+                "sst_decision": SstToolDecision(
+                    acao="consultar_nrs", filtros=deterministic_filters,
+                ),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
+        decision = await invoke_agent(
+            model, "sst", SST_DECISAO_PROMPT_COMPLETO, state, SstToolDecision,
+        )
+        if decision.acao == "responder":
+            return {
+                "sst_route": "fim",
+                "resultado": decision.resposta.model_dump(exclude_none=True),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
             }
         return {
+            "sst_route": "tool",
+            "sst_decision": decision,
+            "agentes_chamados": state["agentes_chamados"] + ["sst"],
+        }
+
+    async def use_tool(state: ChatState):
+        decision = state["sst_decision"]
+        tool_name = decision.acao
+        tool_input = decision.filtros.model_dump() if decision.filtros is not None else {}
+        result = await SST_TOOLS[tool_name].ainvoke(
+            tool_input,
+            config={"configurable": {
+                "usuario_atual": state["usuario_atual"].model_dump(),
+            }},
+        )
+        tool_status = result.get("status")
+        statuses = {
+            "ok": "concluido",
+            "sem_dados": "sem_dados",
+            "indisponivel": "indisponivel",
+            "erro": "nao_autorizado",
+            "nao_aplicavel": "nao_autorizado",
+            "nao_autorizado": "nao_autorizado",
+        }
+        if tool_name == "consultar_orientacoes_sst":
+            messages = {
+                "ok": (
+                    f"Consulta concluída com {result.get('quantidade', 0)} "
+                    "trecho(s) oficial(is)."
+                ),
+                "sem_dados": "Nenhuma orientação oficial relevante foi encontrada.",
+                "indisponivel": "Não foi possível consultar as fontes oficiais no momento.",
+                "nao_autorizado": result.get(
+                    "mensagem", "A fonte solicitada não está autorizada.",
+                ),
+            }
+        else:
+            messages = {
+                "ok": f"Consulta concluída com {result.get('quantidade', 0)} NR(s).",
+                "sem_dados": "Nenhuma NR foi encontrada com os filtros informados.",
+                "indisponivel": "Não foi possível consultar as NRs no momento.",
+                "erro": "Não foi possível identificar o usuário autenticado.",
+                "nao_aplicavel": result.get(
+                    "mensagem", "A consulta não se aplica ao perfil autenticado.",
+                ),
+            }
+        if tool_name in {"consultar_nrs", "consultar_orientacoes_sst"}:
+            source_items = [
+                {
+                    "titulo": source.get("titulo", "Fonte oficial de SST"),
+                    "referencia": source.get("url", "Base interna do Astro"),
+                }
+                for source in result.get("fontes", [])
+            ]
+        else:
+            source_items = [{
+                "titulo": "Registros funcionais e de conformidade",
+                "referencia": "Base interna do Astro",
+            }]
+        specialist_result = {
+            "dominio": "sst",
+            "intencao": "consultar",
+            "status": statuses.get(tool_status, "indisponivel"),
+            "resposta": messages.get(
+                tool_status, "Não foi possível confirmar o resultado da consulta.",
+            ),
+            "recomendacao": "",
+            "fontes": source_items,
+            "evidencia_tool": {"nome": tool_name, "resultado": (
+                _evidencia_orientacoes_sst(result)
+                if tool_name == "consultar_orientacoes_sst"
+                else _evidencia_situacao_nrs(result)
+                if tool_name == "consultar_situacao_nrs"
+                else _evidencia_nrs_obrigatorias(result)
+                if tool_name == "consultar_nrs_obrigatorias"
+                else _evidencia_compacta_nrs(result)
+            )},
+        }
+        return {
+            "resultado_tool": result,
+            "resultado": specialist_result,
+            "candidato": (
+                _formatar_orientacoes_sst(result)
+                if tool_name == "consultar_orientacoes_sst"
+                else _formatar_situacao_nrs(result)
+                if tool_name == "consultar_situacao_nrs"
+                else _formatar_nrs_obrigatorias(result)
+                if tool_name == "consultar_nrs_obrigatorias"
+                else _formatar_nrs(result)
+            ),
+            "agentes_chamados": state["agentes_chamados"] + [tool_name],
+        }
+
+    graph = StateGraph(ChatState)
+    graph.add_node("decidir", decide)
+    graph.add_node("usar_tool_sst", use_tool)
+    graph.add_edge(START, "decidir")
+    graph.add_conditional_edges("decidir", lambda state: state["sst_route"], {
+        "tool": "usar_tool_sst", "fim": END,
+    })
+    graph.add_edge("usar_tool_sst", END)
+    return graph.compile(name="subgrafo_sst")
+
+
+def build_agenda_graph(model: AgentModel):
+    async def decide(state: ChatState):
+        prepared_decision = state.get("agenda_decision")
+        filters = _filtros_treinamentos(state["mensagem"])
+        if isinstance(prepared_decision, AgendaToolDecision):
+            decision = prepared_decision
+        elif filters is not None:
+            decision = AgendaToolDecision(acao="consultar_treinamentos", filtros=filters)
+        else:
+            decision = await invoke_agent(
+                model, "agenda", AGENDA_PROMPT_COMPLETO, state, AgendaToolDecision,
+            )
+        if decision.acao == "responder":
+            return {
+                "agenda_route": "fim",
+                "resultado": decision.resposta.model_dump(exclude_none=True),
+                "agentes_chamados": state["agentes_chamados"] + ["agenda"],
+            }
+        return {
+            "agenda_route": "tool",
+            "agenda_decision": decision,
+            "agentes_chamados": state["agentes_chamados"] + ["agenda"],
+        }
+
+    async def use_tool(state: ChatState):
+        filters = state["agenda_decision"].filtros
+        decision = state["agenda_decision"]
+        tool_name = decision.acao
+        result = await AGENDA_TOOLS[tool_name].ainvoke(
+            filters.model_dump(),
+            config={"configurable": {
+                "usuario_atual": state["usuario_atual"].model_dump(),
+                "session_id": state["session_id"],
+                "acao_pendente": state.get("acao_pendente"),
+                "confirmacao_explicita": state.get("confirmacao_explicita", False),
+                "fuso": state.get("contexto", {}).get("fuso", "America/Sao_Paulo"),
+            }},
+        )
+        tool_status = result.get("status")
+        statuses = {
+            "ok": "concluido", "sem_dados": "sem_dados", "sem_perfil": "sem_dados",
+            "indisponivel": "indisponivel", "erro": "nao_autorizado",
+            "nao_aplicavel": "nao_autorizado",
+            "conexao_necessaria": "aguardando_confirmacao",
+            "aguardando_confirmacao": "aguardando_confirmacao",
+            "confirmacao_invalida": "esclarecer",
+        }
+        if tool_name == "consultar_treinamentos":
+            candidate = _formatar_treinamentos(result)
+            evidence = _evidencia_treinamentos(result)
+            intention = "consultar"
+        elif tool_name == "consultar_google_calendar":
+            candidate = _formatar_eventos_google(result)
+            evidence = _evidencia_google_calendar(tool_name, result)
+            intention = "listar"
+        else:
+            candidate = _formatar_criacao_evento_google(result)
+            evidence = _evidencia_google_calendar(tool_name, result)
+            intention = "criar"
+        pending = result.get("acao_pendente")
+        if pending is None and tool_status in {"indisponivel", "conexao_necessaria"}:
+            pending = state.get("acao_pendente")
+        return {
+            "resultado_tool": result,
+            "resultado": {
+                "dominio": "agenda",
+                "intencao": intention,
+                "status": statuses.get(tool_status, "indisponivel"),
+                "resposta": "Operação de Agenda executada por ferramenta autorizada.",
+                "recomendacao": "",
+                "evidencia_tool": {
+                    "nome": tool_name,
+                    "resultado": evidence,
+                },
+            },
+            "candidato": candidate,
+            "acao_pendente": pending,
+            "agentes_chamados": state["agentes_chamados"] + [tool_name],
+        }
+
+    graph = StateGraph(ChatState)
+    graph.add_node("decidir", decide)
+    graph.add_node("usar_tool_agenda", use_tool)
+    graph.add_edge(START, "decidir")
+    graph.add_conditional_edges("decidir", lambda state: state["agenda_route"], {
+        "tool": "usar_tool_agenda", "fim": END,
+    })
+    graph.add_edge("usar_tool_agenda", END)
+    return graph.compile(name="subgrafo_agenda")
+
+
+def build_faq_graph(model: AgentModel, search_faq=None):
+    async def consult_norms(state: ChatState):
+        public_requested = _pedido_fontes_publicas_faq(state["mensagem"])
+        jobs = []
+        if search_faq is not None:
+            jobs.append(("faq", search_faq(state["mensagem"])))
+        if public_requested:
+            jobs.append(("publico", consultar_fontes_publicas(
+                state["mensagem"], area="faq_politicas",
+            )))
+        responses = await asyncio.gather(
+            *(job for _, job in jobs), return_exceptions=True,
+        ) if jobs else []
+        resolved = dict(zip((name for name, _ in jobs), responses))
+
+        faq_response = resolved.get("faq", [])
+        faq_error = faq_response if isinstance(faq_response, BaseException) else None
+        snippets = [] if faq_error else faq_response
+        public_response = resolved.get("publico", {
+            "status": "nao_consultado", "fontes": [],
+        })
+        if isinstance(public_response, BaseException):
+            public_response = {"status": "indisponivel", "fontes": []}
+        public_sources = public_response.get("fontes", [])
+        if faq_error and not public_sources:
+            raise faq_error
+
+        found = bool(snippets or public_sources)
+        unavailable = search_faq is None and (
+            not public_requested or public_response.get("status") == "indisponivel"
+        )
+        result = {
+            "dominio": "faq",
+            "status": "encontrado" if found else "indisponivel" if unavailable else "sem_dados",
+            "trechos": snippets,
+            "fontes_publicas": public_sources,
+            "consulta_publica": public_response.get("status"),
+        }
+        called = state["agentes_chamados"] + ["consultar_normas"]
+        if public_requested:
+            called.append("consultar_fontes_publicas")
+        return {
             "resultado": result,
-            "agentes_chamados": state["agentes_chamados"] + ["consultar_normas"],
+            "agentes_chamados": called,
         }
 
     async def answer(state: ChatState):

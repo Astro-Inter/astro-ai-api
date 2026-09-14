@@ -6,6 +6,7 @@ from app.api.router import api_router
 from app.api.login import router as login_router
 from app.core import config
 from app.infrastructure.database.access import PostgresAccessRoles
+from app.infrastructure.google_calendar import GoogleCalendarOAuthService
 from app.modules.chat.service import ChatService
 
 
@@ -15,7 +16,10 @@ def create_app() -> FastAPI:
         try:
             yield
         finally:
-            await application.state.chat_service.close()
+            try:
+                await application.state.chat_service.close()
+            finally:
+                await application.state.google_calendar_oauth.close()
 
     application = FastAPI(
         title="Astro AI API",
@@ -24,6 +28,7 @@ def create_app() -> FastAPI:
     )
     application.state.chat_service = ChatService()
     application.state.access_roles = PostgresAccessRoles()
+    application.state.google_calendar_oauth = GoogleCalendarOAuthService()
     application.include_router(api_router)
     if config.ENABLE_DEV_LOGIN and config.APP_ENV in {"development", "test"}:
         application.include_router(login_router)

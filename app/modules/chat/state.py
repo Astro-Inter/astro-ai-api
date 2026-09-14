@@ -18,8 +18,17 @@ class ChatState(TypedDict, total=False):
     resultado_tool: dict
     rh_decision: object
     rh_route: str
+    sst_decision: object
+    sst_route: str
+    agenda_decision: object
+    agenda_route: str
+    roteador_decision: object
+    acao_pendente: dict | None
+    confirmacao_explicita: bool
     candidato: str
     avaliacao_juiz: dict
     resposta: str
     agentes_chamados: list[str]
     guardar_turno: bool
+    pdf_solicitado: bool
+    pdf_url: str | None

@@ -162,61 +162,61 @@ def buscar_outros_usuarios(
         return {"status": "indisponivel", "mensagem": "Consulta de usuarios indisponivel."}
 
     query = """
-        SELECT usuarios.nome AS nome,
-               usuarios.email AS email,
-               usuarios.tipo AS tipo,
-               cargos.nome AS cargo,
-               unidades.nome AS unidade,
-               usuarios.modalidade AS modalidade,
-               usuarios.status AS status
-          FROM usuarios
-          JOIN cargos ON cargos.id_cargo = usuarios.cargo_id
-          JOIN unidades ON unidades.id_unidade = usuarios.unidade_id
+        SELECT usuario.nome AS nome,
+               usuario.email AS email,
+               usuario.tipo AS tipo,
+               cargo.nome AS cargo,
+               unidade.nome AS unidade,
+               usuario.modalidade AS modalidade,
+               usuario.status AS status
+          FROM usuario
+          JOIN cargo ON cargo.id_cargo = usuario.cargo_id
+          JOIN unidade ON unidade.id_unidade = usuario.unidade_id
          WHERE 1=1
     """
     parameters = []
 
     if user.role == "GESTOR_WORKSPACE":
         query += """
-            AND unidades.workspace_id = (
+            AND unidade.workspace_id = (
                 SELECT unidade_atual.workspace_id
-                  FROM usuarios AS usuario_atual
-                  JOIN unidades AS unidade_atual
+                  FROM usuario AS usuario_atual
+                  JOIN unidade AS unidade_atual
                     ON unidade_atual.id_unidade = usuario_atual.unidade_id
                  WHERE usuario_atual.firebase_uid = %s
                  LIMIT 1
             )
-            AND usuarios.tipo = ANY(%s)
+            AND usuario.tipo = ANY(%s)
         """
         parameters.extend([user.uid, WORKSPACE_MANAGER_VISIBLE_TYPES])
     elif user.role == "GESTOR":
         query += """
-            AND usuarios.unidade_id = (
+            AND usuario.unidade_id = (
                 SELECT unidade_id
-                  FROM usuarios
+                  FROM usuario
                  WHERE firebase_uid = %s
                  LIMIT 1
             )
-            AND usuarios.tipo = ANY(%s)
+            AND usuario.tipo = ANY(%s)
         """
         parameters.extend([user.uid, MANAGER_VISIBLE_TYPES])
     # Esta consulta nunca devolve o próprio usuário; os dados pessoais têm tool dedicada.
-    query += " AND usuarios.firebase_uid <> %s"
+    query += " AND usuario.firebase_uid <> %s"
     parameters.append(user.uid)
     if status:
-        query += " AND usuarios.status = ANY(%s)"
+        query += " AND usuario.status = ANY(%s)"
         parameters.append(list(status))
     if tipos:
-        query += " AND usuarios.tipo = ANY(%s)"
+        query += " AND usuario.tipo = ANY(%s)"
         parameters.append(list(tipos))
     if nome:
-        query += " AND usuarios.nome ILIKE %s ESCAPE '\\'"
+        query += " AND usuario.nome ILIKE %s ESCAPE '\\'"
         parameters.append(_filtro_ilike(nome))
     if cargo:
-        query += " AND cargos.nome ILIKE %s ESCAPE '\\'"
+        query += " AND cargo.nome ILIKE %s ESCAPE '\\'"
         parameters.append(_filtro_ilike(cargo))
 
-    query += " ORDER BY usuarios.nome, usuarios.email LIMIT %s"
+    query += " ORDER BY usuario.nome, usuario.email LIMIT %s"
     parameters.append(limite)
 
     try:
@@ -258,19 +258,19 @@ def buscar_meus_dados(config: RunnableConfig = None) -> dict:
         """
     else:
         query = """
-            SELECT usuarios.nome AS nome,
-                   usuarios.email AS email,
-                   usuarios.cpf AS cpf,
-                   usuarios.tipo AS tipo,
-                   cargos.nome AS cargo,
-                   unidades.nome AS unidade,
-                   usuarios.modalidade AS modalidade,
-                   usuarios.status AS status,
-                   usuarios.criado_em AS criado_em
-              FROM usuarios
-              JOIN cargos ON cargos.id_cargo = usuarios.cargo_id
-              JOIN unidades ON unidades.id_unidade = usuarios.unidade_id
-             WHERE usuarios.firebase_uid = %s
+            SELECT usuario.nome AS nome,
+                   usuario.email AS email,
+                   usuario.cpf AS cpf,
+                   usuario.tipo AS tipo,
+                   cargo.nome AS cargo,
+                   unidade.nome AS unidade,
+                   usuario.modalidade AS modalidade,
+                   usuario.status AS status,
+                   usuario.criado_em AS criado_em
+              FROM usuario
+              JOIN cargo ON cargo.id_cargo = usuario.cargo_id
+              JOIN unidade ON unidade.id_unidade = usuario.unidade_id
+             WHERE usuario.firebase_uid = %s
              LIMIT 1
         """
     try:
