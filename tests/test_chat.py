@@ -1212,6 +1212,7 @@ def test_faq_uses_curated_public_sources_for_official_current_material(
 
 def test_sst_uses_official_guides_for_general_guidance(chat_client, monkeypatch):
     client, model, _ = chat_client
+    monkeypatch.setattr(config, "A2A_PUBLIC_RESEARCH_URL", "")
     model.route = "faq"  # Mesmo se o LLM classificasse como FAQ, o pedido é de SST.
     source = public_sources.PUBLIC_SOURCES["fundacentro_publicacoes"]
 

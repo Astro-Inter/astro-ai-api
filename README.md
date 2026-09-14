@@ -204,6 +204,42 @@ quando esse envio de dados estiver autorizado. Bearer e chaves não são incluí
 nos prompts. As variáveis do Google Calendar são opcionais; sem elas, todo o chat
 continua funcionando, exceto as operações que dependem do calendário.
 
+### Pesquisa pública por A2A
+
+O chat pode delegar consultas de fontes públicas do FAQ e de SST a um agente
+independente pelo protocolo A2A. Ele recebe apenas o termo da consulta, a área
+(`faq_politicas` ou `sst_geral`) e IDs de fontes da allowlist; não recebe o
+Firebase UID, sessão, perfil ou registros internos. O agente A2A usa o MCP Fetch
+para recuperar trechos dos catálogos oficiais já permitidos. O Astro valida o
+Agent Card, o endpoint e as URLs das evidências antes de devolver os trechos ao
+fluxo normal de Juiz e guardrail. Consultas de dados pessoais e operações de
+escrita não são delegadas. Como o termo é texto da pergunta, não configure um
+servidor A2A fora da infraestrutura confiável sem uma política de dados adequada.
+
+Execute o agente em **outro processo**. No `.env` da API e do agente, configure
+o mesmo endereço e uma chave aleatória de pelo menos 32 caracteres:
+
+```dotenv
+A2A_PUBLIC_RESEARCH_URL=http://127.0.0.1:8090
+A2A_SHARED_TOKEN=<chave-aleatoria-de-32-caracteres-ou-mais>
+A2A_PUBLIC_RESEARCH_TIMEOUT_SECONDS=15
+```
+
+Gere a chave localmente com
+`python -c "import secrets; print(secrets.token_urlsafe(48))"` e não a versione.
+Para desenvolvimento local, execute `python -m app.a2a.public_research_server`
+em um terminal e a API em outro. O Agent Card está em
+`/.well-known/agent-card.json` no serviço A2A, e tanto ele quanto as chamadas
+JSON-RPC exigem o cabeçalho `X-Astro-A2A-Key`. Fora do localhost, exponha o
+serviço somente por HTTPS e use rede/reverse proxy privados. O servidor mantém
+as tarefas em memória, apropriado para essas consultas curtas e síncronas.
+
+Sem configuração A2A, ou quando o agente remoto falhar, o chat preserva a
+consulta MCP Fetch local. Nenhuma chave A2A aparece na resposta ou nos prompts.
+Para testar no chat, pergunte: “Busque uma cartilha da Fundacentro sobre riscos
+psicossociais.” O log `Pesquisa pública concluída via A2A` confirma a
+delegação; a resposta continua exibindo somente as fontes oficiais encontradas.
+
 ### Google Calendar por MCP
 
 A integração é sob demanda. O login Firebase não conecta automaticamente uma conta

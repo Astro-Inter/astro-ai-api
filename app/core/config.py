@@ -52,6 +52,13 @@ FETCH_MCP_CACHE_TTL_SECONDS = _bounded_int_env(
     "FETCH_MCP_CACHE_TTL_SECONDS", 900, 0, 86400,
 )
 
+# Agente A2A de pesquisa pública, executado como serviço independente.
+A2A_PUBLIC_RESEARCH_URL = os.getenv("A2A_PUBLIC_RESEARCH_URL", "").strip()
+A2A_SHARED_TOKEN = os.getenv("A2A_SHARED_TOKEN", "")
+A2A_PUBLIC_RESEARCH_TIMEOUT_SECONDS = _bounded_int_env(
+    "A2A_PUBLIC_RESEARCH_TIMEOUT_SECONDS", 15, 2, 30,
+)
+
 LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING", "false").lower() in {
     "1",
     "true",
@@ -84,6 +91,11 @@ def validar_config() -> list[str]:
         for nome, valor in OBRIGATORIAS.items()
         if not valor
     ]
+
+    if A2A_PUBLIC_RESEARCH_URL and len(A2A_SHARED_TOKEN) < 32:
+        problemas.append("A2A_SHARED_TOKEN deve conter pelo menos 32 caracteres.")
+    if A2A_SHARED_TOKEN and not A2A_PUBLIC_RESEARCH_URL:
+        problemas.append("Variavel ausente no .env: A2A_PUBLIC_RESEARCH_URL")
 
     if LANGSMITH_TRACING:
         if not LANGSMITH_ENDPOINT:
