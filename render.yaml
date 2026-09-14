@@ -42,7 +42,7 @@ services:
       - key: A2A_PUBLIC_RESEARCH_TIMEOUT_SECONDS
         value: "30"
       - key: LANGSMITH_TRACING
-        value: "false"
+        value: "true"
       - key: A2A_PUBLIC_RESEARCH_URL
         fromService:
           type: web
