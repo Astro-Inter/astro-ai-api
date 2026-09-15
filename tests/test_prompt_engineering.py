@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.modules.chat.prompts.examples import EXAMPLES, example_messages
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
+from app.modules.chat.prompts.inicial import PROMPT_INICIAL
 from app.modules.chat.prompts.sst import SST_DECISAO_PROMPT_COMPLETO
 from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.chat.schemas import InputDecision, JudgeDecision, OutputDecision
@@ -66,3 +67,12 @@ def test_declared_role_obligations_are_out_of_scope_without_blocking_nr_explanat
     assert "apenas citar um cargo não basta" in ROTEADOR_PROMPT_COMPLETO
     assert "Explicar uma NR não é definir obrigações" in SST_DECISAO_PROMPT_COMPLETO
     assert "não são abuso" in GUARDRAIL_ENTRADA_PROMPT_COMPLETO
+
+
+def test_public_identity_is_astro_agent_not_internal_router():
+    answer = dict(EXAMPLES["roteador"])["Qual é sua função?"]
+    assert answer.startswith("Sou o Agente do Astro")
+    assert "Roteador" not in answer
+    for capability in ("RH", "segurança do trabalho", "agenda", "normas internas", "Google Calendar"):
+        assert capability in answer
+    assert 'como "Agente do Astro"' in PROMPT_INICIAL

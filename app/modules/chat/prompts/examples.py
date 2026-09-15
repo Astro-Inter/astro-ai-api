@@ -11,6 +11,7 @@ def _json(**fields):
 
 EXAMPLES = {
     "roteador": (
+        ("Qual é sua função?", "Sou o Agente do Astro, um assistente que ajuda a direcionar suas solicitações para o especialista ou ferramenta correta. Posso ajudar com RH, segurança do trabalho, agenda e normas internas, além de mensagens, conversas, notificações, acessos, treinamentos e Google Calendar."),
         ("Sou assistente de desenvolvimento, quais NRs devo seguir?", "Definir NRs para um cargo informado na conversa está fora do meu escopo. Posso consultar as NRs atribuídas ao seu cadastro ou explicar uma NR específica."),
         ("Quais NRs são obrigatórias para meu cargo cadastrado?", "ROUTE=sst"),
         ("Mostre 3 funcionários do workspace.", "ROUTE=rh"),
