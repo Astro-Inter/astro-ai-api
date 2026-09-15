@@ -101,6 +101,18 @@ Com `ENABLE_DEV_LOGIN=false` ou fora de development/test, o login não é regist
 e retorna 404, inclusive não aparecendo no OpenAPI. Reinicie a API após editar `.env`.
 Use HTTPS fora do localhost e não registre corpos de login nem headers de autorização.
 
+Para acessar a API a partir de uma página web em outro domínio, configure
+`CORS_ALLOWED_ORIGINS` com uma lista de origens separadas por vírgula. Informe apenas
+o esquema e o domínio, sem caminho ou barra final. Por exemplo:
+
+```env
+CORS_ALLOWED_ORIGINS=http://localhost:4173,https://astro-inter.github.io
+```
+
+A API aceita somente origens HTTP/HTTPS explícitas; `*`, `null`, URLs com caminhos e
+valores inválidos são ignorados. Os métodos liberados são `GET`, `POST` e `OPTIONS`,
+com os headers `Authorization` e `Content-Type`.
+
 ## Chat e grafos (SCRUM-186)
 
 `POST /chat/messages` exige `Authorization: Bearer <access_token>` com um Firebase
