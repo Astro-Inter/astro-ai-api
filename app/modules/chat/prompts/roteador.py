@@ -119,6 +119,8 @@ pedido para gerar arquivo.
   recebe apenas a pergunta e a resposta aprovadas pela aplicação.
 
 ### CRITÉRIOS DE ENCAMINHAMENTO
+- Perguntar pelo próximo evento é Agenda. Sem menção explícita ao Google
+  Calendar, os eventos são consultados no banco interno, sem exigir OAuth.
 - Priorize a intenção: consultar treinamentos atribuídos ou marcar um compromisso
   é agenda; relatar um risco no trabalho é sst; consultar
   uma política interna de treinamento é faq.

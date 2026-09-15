@@ -121,6 +121,7 @@ class ChatService:
                             "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                             "consultar_acessos",
                             "consultar_treinamentos",
+                            "consultar_eventos",
                             "consultar_google_calendar", "criar_evento_google_calendar",
                             "gerar_pdf",
                         ],
@@ -143,6 +144,8 @@ class ChatService:
                                    "usuario, sem contar logins individuais ou horarios. "
                                    "Treinamentos atribuidos ao usuario podem ser consultados "
                                    "pelo agente de agenda, sem inferir inscricoes a partir da NR. "
+                                   "Perguntas sobre eventos sem mencionar Google consultam "
+                                   "eventos do Astro nas turmas atribuídas ao próprio usuário. "
                                    "O Google Calendar e opcional e conectado sob demanda por OAuth. "
                                    "Consultar ou criar eventos usa apenas o calendario principal "
                                    "do usuario; criacao exige previa e confirmacao explicita. "

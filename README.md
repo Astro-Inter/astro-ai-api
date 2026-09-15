@@ -511,6 +511,19 @@ somente inscrições efetivas; uma NR obrigatória para o cargo não comprova qu
 usuário já foi inscrito em uma turma. A tool não cria inscrição, conclusão ou
 evento.
 
+### Consulta de eventos internos da Agenda
+
+Perguntas como “qual é o próximo evento?” usam `consultar_eventos`, sem exigir
+Google Calendar. A consulta lê `evento` e as datas de `turma` somente quando há
+inscrição do usuário autenticado em `turma_funcionario`. Não lista eventos de
+terceiros nem interpreta uma NR obrigatória como inscrição. Por padrão retorna
+eventos ativos com início futuro, ordenados por data e turma, independentemente
+do status da conclusão. “Próximo evento” limita a resposta ao primeiro item.
+O histórico completo usa `proximos:false`, com paginação. Datas sem fuso no banco
+são comparadas com a referência local America/Sao_Paulo, sem atribuir fuso ao
+horário exibido. Filtros de data ou título ainda não são suportados por esta tool.
+Google Calendar continua disponível quando mencionado explicitamente.
+
 ### Tool de consulta dos próprios acessos do Roteador
 
 `consultar_acessos` lê a tabela PostgreSQL `acesso` usando somente o Firebase

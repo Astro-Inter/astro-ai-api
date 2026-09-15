@@ -12,7 +12,7 @@ from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO
 from app.modules.chat.prompts.sst import SST_DECISAO_PROMPT_COMPLETO
 from app.modules.chat.state import ChatState
 from app.modules.agenda.tools import (
-    AgendaToolDecision, ConsultarTreinamentosArgs, TOOLS_AGENDA,
+    AgendaToolDecision, ConsultarEventosArgs, ConsultarTreinamentosArgs, TOOLS_AGENDA,
 )
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision, TOOLS_RH
 from app.modules.shared.public_sources import consultar_fontes_publicas
@@ -171,6 +171,30 @@ def _pedido_situacao_nrs(message: str) -> bool:
         normalized,
     ))
     return mentions_nr and personal_context and situation
+
+
+def _filtros_eventos(message: str) -> ConsultarEventosArgs | None:
+    normalized = "".join(
+        c for c in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(c)
+    )
+    if not re.search(r"\beventos?\b", normalized):
+        return None
+    if re.search(r"\b(google|calendar|nao|como|criar|crie|adicion\w*|coloque|cancel\w*|alter\w*|exclu\w*|outro|outra|colega)\b", normalized):
+        return None
+    if re.search(r"\b(hoje|amanha|semana|mes|ano|dia)\b|\d{2}/\d{2}", normalized):
+        return None
+    if not re.search(r"\b(proxim[oa]s?|meus?|tenho)\b", normalized):
+        return None
+    page = re.search(r"\bpagina\s+(\d+)\b", normalized)
+    try:
+        return ConsultarEventosArgs(
+            proximos=not bool(re.search(r"\b(todos|historico|passados|anteriores)\b", normalized)),
+            limite=1 if re.search(r"\bproximo evento\b", normalized) else 5,
+            pagina=int(page.group(1)) if page else 1,
+        )
+    except ValueError:
+        return None
 
 
 def _filtros_treinamentos(message: str) -> ConsultarTreinamentosArgs | None:
@@ -533,6 +557,22 @@ def _evidencia_treinamentos(result: dict) -> dict:
     }
 
 
+def _formatar_eventos(result: dict) -> str:
+    upcoming = result.get("proximos")
+    if result.get("status") == "sem_dados":
+        return (
+            "Não encontrei próximos eventos atribuídos a você no Astro."
+            if upcoming else "Não encontrei eventos atribuídos a você no Astro."
+        )
+    if result.get("status") != "ok":
+        return "Não foi possível consultar seus eventos no Astro. " + result.get("mensagem", "")
+    trainings = {**result, "treinamentos": result.get("eventos", [])}
+    return _formatar_treinamentos(trainings).replace(
+        "Seus treinamentos atribuídos:",
+        "Seus próximos eventos no Astro:" if upcoming else "Seus eventos no Astro:",
+    ).replace("treinamento", "evento")
+
+
 def _formatar_eventos_google(result: dict) -> str:
     if result.get("status") == "conexao_necessaria":
         return (
@@ -853,10 +893,13 @@ def build_agenda_graph(model: AgentModel):
     async def decide(state: ChatState):
         prepared_decision = state.get("agenda_decision")
         filters = _filtros_treinamentos(state["mensagem"])
+        event_filters = _filtros_eventos(state["mensagem"])
         if isinstance(prepared_decision, AgendaToolDecision):
             decision = prepared_decision
         elif filters is not None:
             decision = AgendaToolDecision(acao="consultar_treinamentos", filtros=filters)
+        elif event_filters is not None:
+            decision = AgendaToolDecision(acao="consultar_eventos", filtros=event_filters)
         else:
             decision = await invoke_agent(
                 model, "agenda", AGENDA_PROMPT_COMPLETO, state, AgendaToolDecision,
@@ -896,7 +939,13 @@ def build_agenda_graph(model: AgentModel):
             "aguardando_confirmacao": "aguardando_confirmacao",
             "confirmacao_invalida": "esclarecer",
         }
-        if tool_name == "consultar_treinamentos":
+        if tool_name == "consultar_eventos":
+            candidate = _formatar_eventos(result)
+            evidence = _evidencia_treinamentos({**result, "treinamentos": result.get("eventos", [])})
+            evidence["eventos"] = evidence.pop("treinamentos", [])
+            evidence["proximos"] = result.get("proximos")
+            intention = "listar"
+        elif tool_name == "consultar_treinamentos":
             candidate = _formatar_treinamentos(result)
             evidence = _evidencia_treinamentos(result)
             intention = "consultar"

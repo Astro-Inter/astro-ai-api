@@ -18,6 +18,7 @@ from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch,
 from app.modules.chat.state import ChatState
 from app.modules.chat.subgraphs import (
     _filtros_treinamentos,
+    _filtros_eventos,
     build_agenda_graph,
     build_faq_graph,
     build_rh_graph,
@@ -447,7 +448,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
-        if _filtros_treinamentos(state["mensagem"]) is not None:
+        if (
+            _filtros_treinamentos(state["mensagem"]) is not None
+            or _filtros_eventos(state["mensagem"]) is not None
+        ):
             return {
                 "rota": "agenda",
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
@@ -787,6 +791,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                 "consultar_acessos",
                 "consultar_treinamentos",
+                "consultar_eventos",
                 "consultar_google_calendar", "criar_evento_google_calendar",
             }
         ):

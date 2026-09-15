@@ -153,7 +153,7 @@ def test_specialist_flow(chat_client, domain):
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
         '"consultar_orientacoes_sst", "consultar_fontes_publicas", '
             '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
-            '"consultar_acessos", "consultar_treinamentos", '
+            '"consultar_acessos", "consultar_treinamentos", "consultar_eventos", '
             '"consultar_google_calendar", "criar_evento_google_calendar", "gerar_pdf"]'
         ) in system
     if domain == "rh":
@@ -213,6 +213,56 @@ def test_agenda_agent_consults_training_instead_of_sst(chat_client, monkeypatch)
         "juiz", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+
+
+def test_next_event_uses_database_without_google_oauth(chat_client, monkeypatch):
+    from datetime import datetime
+    client, model, _ = chat_client
+    model.route = "faq"
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def execute(self, query, params):
+            self.query = query
+            assert params[0] == ("user-a" if "firebase_uid" in query else 7)
+        def fetchone(self):
+            return (7,) if "firebase_uid" in self.query else (1,)
+        def fetchall(self):
+            return [(
+                "Evento futuro", "Treinamento", None, "GESTOR", False, "ATIVO",
+                "Turma A", datetime(2027, 9, 20, 8), datetime(2027, 9, 20, 12),
+                None, None, "PENDENTE", None, None, None, None,
+            )]
+
+    class Connection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(agenda_tools, "get_postgres_connection", lambda: Connection())
+    monkeypatch.setattr(agenda_tools, "get_google_calendar_mcp_client", lambda: pytest.fail("OAuth não deve ser consultado"))
+    response = client.post("/chat/messages", json={"message": "quero saber qual é o próximo evento"})
+    assert response.status_code == 200
+    assert "Evento futuro" in response.json()["resposta"]
+    assert "conectar" not in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "agenda", "consultar_eventos", "juiz", "guardrail_saida",
+    ]
+
+
+def test_internal_event_parser_does_not_override_google_or_writes():
+    from app.modules.chat.subgraphs import _filtros_eventos
+    assert _filtros_eventos("Qual é o próximo evento?").limite == 1
+    assert _filtros_eventos("Mostre todos os meus eventos").proximos is False
+    for message in ("Qual é o próximo evento no Google Calendar?", "Crie meu próximo evento", "Quais eventos tenho amanhã?"):
+        assert _filtros_eventos(message) is None
 
 
 def test_google_calendar_is_connected_on_demand_and_event_stays_pending(

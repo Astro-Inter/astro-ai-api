@@ -1,8 +1,11 @@
 from datetime import date, datetime
+import pytest
+from pydantic import ValidationError
 
 from app.core import config
 from app.modules.agenda import tools as agenda_tools
 from app.modules.agenda.tools import consultar_treinamentos
+from app.modules.agenda.tools import consultar_eventos, ConsultarEventosArgs, AgendaToolDecision
 
 
 class FakeCursor:
@@ -55,6 +58,42 @@ def setup_database(monkeypatch, cursor):
     monkeypatch.setattr(
         agenda_tools, "get_postgres_connection", lambda: FakeConnection(cursor),
     )
+
+
+def test_internal_events_use_user_assignments_and_future_active_dates(monkeypatch):
+    cursor = FakeCursor(rows=[(
+        "Evento futuro", "Descrição", None, "GESTOR", False, "ATIVO", "Turma A",
+        datetime(2027, 9, 20, 8), datetime(2027, 9, 20, 12),
+        None, None, "CONCLUIDO", None, None, None, None,
+    )])
+    setup_database(monkeypatch, cursor)
+    result = consultar_eventos.invoke({"limite": 1}, config=tool_config())
+    assert result["eventos"][0]["titulo"] == "Evento futuro"
+    assert "treinamentos" not in result
+    assert cursor.calls[0][1] == ["firebase-user"]
+    assert cursor.calls[2][1] == [7, 1, 0]
+    for query, _ in cursor.calls[1:]:
+        assert "participacao.usuario_id = %s" in query
+        assert "evento.status = 'ATIVO'" in query
+        assert "turma.data_inicial >=" in query
+        assert "AT TIME ZONE 'America/Sao_Paulo'" in query
+        assert "IN ('PENDENTE', 'REJEITADO')" not in query
+    assert "ORDER BY turma.data_inicial, turma.id_turma" in cursor.calls[2][0]
+
+
+def test_internal_events_history_and_missing_data(monkeypatch):
+    cursor = FakeCursor(total=0)
+    setup_database(monkeypatch, cursor)
+    result = consultar_eventos.invoke({"proximos": False}, config=tool_config())
+    assert result["status"] == "sem_dados"
+    assert result["eventos"] == []
+    assert "turma.data_inicial >=" not in cursor.calls[1][0]
+
+
+def test_internal_events_filters_do_not_accept_another_user():
+    with pytest.raises(ValidationError):
+        ConsultarEventosArgs(uid="another-user")
+    assert isinstance(AgendaToolDecision(acao="consultar_eventos").filtros, ConsultarEventosArgs)
 
 
 def test_training_tool_accepts_only_status_and_pagination():
