@@ -11,6 +11,10 @@ from pydantic import BaseModel, ValidationError
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.errors import InvalidAgentResponse
 from app.modules.chat.state import ChatState
+from app.observability.chat import (
+    finish_agent_measurement,
+    start_agent_measurement,
+)
 
 
 Schema = TypeVar("Schema", bound=BaseModel)
@@ -63,7 +67,7 @@ def _history_for_agent(name: str, history: list[dict[str, str]]):
     return selected
 
 
-async def invoke_agent(
+async def _invoke_agent(
     model: AgentModel, name: str, prompt: str, state: ChatState,
     schema: type[Schema] | None = None,
 ) -> str | Schema:
@@ -143,3 +147,14 @@ async def invoke_agent(
             return schema.model_validate_json(retry)
         except (ValidationError, ValueError):
             raise InvalidAgentResponse(name) from None
+
+
+async def invoke_agent(
+    model: AgentModel, name: str, prompt: str, state: ChatState,
+    schema: type[Schema] | None = None,
+) -> str | Schema:
+    measurement = start_agent_measurement(name)
+    try:
+        return await _invoke_agent(model, name, prompt, state, schema)
+    finally:
+        finish_agent_measurement(measurement)

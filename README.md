@@ -101,6 +101,22 @@ Com `ENABLE_DEV_LOGIN=false` ou fora de development/test, o login não é regist
 e retorna 404, inclusive não aparecendo no OpenAPI. Reinicie a API após editar `.env`.
 Use HTTPS fora do localhost e não registre corpos de login nem headers de autorização.
 
+Para acessar a API a partir de uma página web em outro domínio, configure
+`CORS_ALLOWED_ORIGINS` com uma lista de origens separadas por vírgula. Informe apenas
+o esquema e o domínio, sem caminho ou barra final. Por exemplo:
+
+```env
+CORS_ALLOWED_ORIGINS=http://localhost:4173,https://astro-inter.github.io
+```
+
+A API aceita várias origens HTTP/HTTPS explícitas separadas por vírgula. Para um
+ambiente temporário de testes, o valor exato `CORS_ALLOWED_ORIGINS=*` permite qualquer
+origem; não combine o curinga com outros valores. Essa opção mantém credenciais CORS
+desabilitadas, mas amplia a superfície de abuso das rotas públicas e deve ser evitada
+em produção. `null`, URLs com caminhos e valores inválidos são ignorados. Os métodos
+liberados são `GET`, `POST` e `OPTIONS`, com os headers `Authorization` e
+`Content-Type`.
+
 ## Chat e grafos (SCRUM-186)
 
 `POST /chat/messages` exige `Authorization: Bearer <access_token>` com um Firebase
@@ -209,6 +225,45 @@ traces podem conter mensagens, contexto do usuário e respostas. Habilite soment
 quando esse envio de dados estiver autorizado. Bearer e chaves não são incluídos
 nos prompts. As variáveis do Google Calendar são opcionais; sem elas, todo o chat
 continua funcionando, exceto as operações que dependem do calendário.
+
+### Observabilidade e métricas SRE
+
+Cada chamada autenticada de `POST /chat/messages` cria um trace raiz
+`astro_chat`. O backend registra o feedback numérico `resolved` (`1` para uma
+solicitação concluída e `0` para erro, bloqueio, indisponibilidade, ambiguidade,
+pedido de esclarecimento ou ação aguardando confirmação). Uma consulta concluída
+sem registros, como não possuir notificações, é uma resposta resolvida; a prévia
+de uma escrita só é resolvida depois da confirmação e execução.
+
+O trace raiz também recebe `resolution_status`, rota, tempo total, quantidade e
+latência agregada das chamadas de agentes, além do total, média e máximo do tempo
+de transição entre agentes. `agent_latencies_ms` e `agent_transitions_ms` guardam
+o detalhamento por agente e por transição. O feedback numérico
+`agent_transition_avg_ms` permite acompanhar a latência média de transição em um
+gráfico do LangSmith. Erros preservam somente o tipo e o
+status HTTP, sem mensagem interna, UID, token ou credencial. O próprio LangSmith
+continua calculando tokens, custo, duração e erro dos runs.
+
+No dashboard, use a média do feedback `resolved` como taxa de resolução. O script
+abaixo consulta os traces dos últimos sete dias e calcula índice de erros,
+latência média/p95, cobertura e taxa de resolução, custo por resolução e cenários
+semanais para 100 e 1.000 usuários:
+
+```powershell
+.venv\Scripts\python.exe -m app.scripts.sre_report `
+  --requests-per-user-week 5 `
+  --minutes-saved-per-resolution 15 `
+  --hourly-cost-usd 12
+```
+
+O exemplo assume cinco solicitações por usuário por semana, 15 minutos economizados
+por resolução e custo-hora de US$ 12. Substitua esses três valores pelas premissas
+aprovadas pelo grupo. Também é possível configurar `SRE_REQUESTS_PER_USER_WEEK`,
+`SRE_MINUTES_SAVED_PER_RESOLUTION` e `SRE_HOURLY_COST_USD`; use `--format json`
+para consumir o relatório em outra ferramenta. O custo projetado usa o custo médio
+real por trace do LangSmith. O benefício é `resoluções × valor por resolução`, e
+o ROI é `(benefício - custo) / custo × 100`. Enquanto nenhum trace novo possuir
+feedback `resolved`, o relatório informa que ainda não existe amostra suficiente.
 
 ### Pesquisa pública por A2A
 

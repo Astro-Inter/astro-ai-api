@@ -15,6 +15,7 @@ from app.modules.chat.graph import build_chat_graph
 from app.modules.chat.schemas import ChatRequest, ChatResponse, SessionResponse
 from app.modules.memory.service import ConversationMemory
 from app.modules.shared.tools import PDF_LINK_TTL_HOURS
+from app.observability.chat import ChatObservation, observe_chat
 
 
 CHAT_TIMEZONE = ZoneInfo("America/Sao_Paulo")
@@ -80,6 +81,20 @@ class ChatService:
         self, request: ChatRequest, user: CurrentUser, *, markdown: bool = True,
     ) -> ChatResponse:
         session_id = str(request.session_id or uuid4())
+        with observe_chat(
+            reused_session=request.session_id is not None,
+            markdown=markdown,
+        ) as observation:
+            return await self._chat(request, user, session_id, markdown, observation)
+
+    async def _chat(
+        self,
+        request: ChatRequest,
+        user: CurrentUser,
+        session_id: str,
+        markdown: bool,
+        observation: ChatObservation,
+    ) -> ChatResponse:
         async with self.operation():
             await self.repository.ensure(session_id, user.uid)
             async with self.session_lock(session_id, user.uid) as (doc, token):
@@ -152,6 +167,7 @@ class ChatService:
                     "agentes_chamados": [], "guardar_turno": False,
                     "pdf_solicitado": False, "pdf_url": None,
                 }, config={"recursion_limit": 20})
+                observation.mark_result(result)
                 pdf_url = result.get("pdf_url")
                 public_answer = (
                     result["resposta"]

@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -17,12 +18,37 @@ def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int
     return max(minimum, min(value, maximum))
 
 
+def _cors_origins_env(name: str) -> list[str]:
+    raw_origins = [origin.strip() for origin in os.getenv(name, "").split(",")]
+    if raw_origins == ["*"]:
+        return ["*"]
+
+    origins: list[str] = []
+    for raw_origin in raw_origins:
+        origin = raw_origin.rstrip("/")
+        if not origin or origin in {"*", "null"}:
+            continue
+        parsed = urlsplit(origin)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            continue
+        if origin not in origins:
+            origins.append(origin)
+    return origins
+
+
 APP_ENV = os.getenv("APP_ENV", "development")
 
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
 FIREBASE_CREDENTIALS_BASE64 = os.getenv("FIREBASE_CREDENTIALS_BASE64")
 FIREBASE_WEB_API_KEY = os.getenv("FIREBASE_WEB_API_KEY")
 ENABLE_DEV_LOGIN = os.getenv("ENABLE_DEV_LOGIN", "false").lower() == "true"
+CORS_ALLOWED_ORIGINS = _cors_origins_env("CORS_ALLOWED_ORIGINS")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 

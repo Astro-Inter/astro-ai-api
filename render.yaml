@@ -33,6 +33,8 @@ services:
         value: development
       - key: ENABLE_DEV_LOGIN
         value: "true"
+      - key: CORS_ALLOWED_ORIGINS
+        value: http://localhost:4173,https://astro-inter.github.io
       - key: MONGODB_DATABASE
         value: astro
       - key: FETCH_MCP_ALLOWED_DOMAINS
@@ -42,7 +44,7 @@ services:
       - key: A2A_PUBLIC_RESEARCH_TIMEOUT_SECONDS
         value: "30"
       - key: LANGSMITH_TRACING
-        value: "false"
+        value: "true"
       - key: A2A_PUBLIC_RESEARCH_URL
         fromService:
           type: web
@@ -92,4 +94,4 @@ services:
       - key: LANGSMITH_API_KEY
         sync: false
       - key: LANGSMITH_PROJECT
-        value: astro-ai-api-render
+        value: Astro

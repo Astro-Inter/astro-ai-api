@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.api.login import router as login_router
@@ -26,6 +27,14 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    if config.CORS_ALLOWED_ORIGINS:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=config.CORS_ALLOWED_ORIGINS,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
     application.state.chat_service = ChatService()
     application.state.access_roles = PostgresAccessRoles()
     application.state.google_calendar_oauth = GoogleCalendarOAuthService()
