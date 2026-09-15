@@ -117,10 +117,12 @@ class ChatService:
                             "buscar_historico", "consultar_normas",
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+                            "consultar_nrs_organizacao",
                             "consultar_orientacoes_sst", "consultar_fontes_publicas",
                             "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                             "consultar_acessos",
                             "consultar_treinamentos",
+                            "consultar_eventos",
                             "consultar_google_calendar", "criar_evento_google_calendar",
                             "gerar_pdf",
                         ],
@@ -143,11 +145,15 @@ class ChatService:
                                    "usuario, sem contar logins individuais ou horarios. "
                                    "Treinamentos atribuidos ao usuario podem ser consultados "
                                    "pelo agente de agenda, sem inferir inscricoes a partir da NR. "
+                                   "Perguntas sobre eventos sem mencionar Google consultam "
+                                   "eventos do Astro nas turmas atribuídas ao próprio usuário. "
                                    "O Google Calendar e opcional e conectado sob demanda por OAuth. "
                                    "Consultar ou criar eventos usa apenas o calendario principal "
                                    "do usuario; criacao exige previa e confirmacao explicita. "
                                    "PDFs podem ser gerados da resposta revisada quando pedidos "
                                    "explicitamente; a aplicacao fornece o link temporario. "
+                                   "NRs da unidade ou empresa usam vínculos unidade_nr no PostgreSQL "
+                                   "do workspace autenticado, não o catálogo público genérico. "
                                    "Nao ha outras operacoes de escrita. NRs usam primeiro o portal "
                                    "oficial do MTE via MCP Fetch; a collection MongoDB autorizada "
                                    "serve como contexto interno e fallback. "

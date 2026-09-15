@@ -12,12 +12,13 @@ from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO
 from app.modules.chat.prompts.sst import SST_DECISAO_PROMPT_COMPLETO
 from app.modules.chat.state import ChatState
 from app.modules.agenda.tools import (
-    AgendaToolDecision, ConsultarTreinamentosArgs, TOOLS_AGENDA,
+    AgendaToolDecision, ConsultarEventosArgs, ConsultarTreinamentosArgs, TOOLS_AGENDA,
 )
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision, TOOLS_RH
 from app.modules.shared.public_sources import consultar_fontes_publicas
 from app.modules.sst.tools import (
     ConsultarNrsArgs,
+    ConsultarNrsOrganizacaoArgs,
     ConsultarOrientacoesSstArgs,
     SstToolDecision,
     TOOLS_SST,
@@ -75,6 +76,22 @@ def _pedido_fontes_publicas_faq(message: str) -> bool:
     ))
 
 
+def _filtros_nrs_organizacao(message: str) -> ConsultarNrsOrganizacaoArgs | None:
+    normalized = "".join(
+        c for c in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(c)
+    )
+    if not re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized):
+        return None
+    if not re.search(r"\b(quais|quantas|liste|listar|listagem|todas|todas as|ver|mostre)\b", normalized):
+        return None
+    company = bool(re.search(r"\b(minha empresa|da empresa|meu workspace|do workspace|todas as unidades)\b", normalized))
+    unit = bool(re.search(r"\b(minha unidade|da minha unidade|unidade atual|desta unidade)\b", normalized))
+    if company == unit or re.search(r"\b(ou|outra|outro|nao)\b", normalized):
+        return None
+    return ConsultarNrsOrganizacaoArgs(escopo="empresa" if company else "unidade")
+
+
 def _filtros_deterministicos_nrs(message: str) -> ConsultarNrsArgs | None:
     """Reconhece consultas objetivas de NR sem depender de um provedor de IA."""
     normalized = "".join(
@@ -83,6 +100,8 @@ def _filtros_deterministicos_nrs(message: str) -> ConsultarNrsArgs | None:
     )
     if not re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized):
         return None
+    if re.search(r"\b(empresa|workspace|unidade|unidades)\b", normalized):
+        return None  # O catálogo geral não comprova vínculos organizacionais.
 
     numbers = [int(value) for value in re.findall(r"\bnr\s*-?\s*(\d{1,2})\b", normalized)]
     grouped = re.search(
@@ -171,6 +190,30 @@ def _pedido_situacao_nrs(message: str) -> bool:
         normalized,
     ))
     return mentions_nr and personal_context and situation
+
+
+def _filtros_eventos(message: str) -> ConsultarEventosArgs | None:
+    normalized = "".join(
+        c for c in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(c)
+    )
+    if not re.search(r"\beventos?\b", normalized):
+        return None
+    if re.search(r"\b(google|calendar|nao|como|criar|crie|adicion\w*|coloque|cancel\w*|alter\w*|exclu\w*|outro|outra|colega)\b", normalized):
+        return None
+    if re.search(r"\b(hoje|amanha|semana|mes|ano|dia)\b|\d{2}/\d{2}", normalized):
+        return None
+    if not re.search(r"\b(proxim[oa]s?|meus?|tenho)\b", normalized):
+        return None
+    page = re.search(r"\bpagina\s+(\d+)\b", normalized)
+    try:
+        return ConsultarEventosArgs(
+            proximos=not bool(re.search(r"\b(todos|historico|passados|anteriores)\b", normalized)),
+            limite=1 if re.search(r"\bproximo evento\b", normalized) else 5,
+            pagina=int(page.group(1)) if page else 1,
+        )
+    except ValueError:
+        return None
 
 
 def _filtros_treinamentos(message: str) -> ConsultarTreinamentosArgs | None:
@@ -263,13 +306,9 @@ def _formatar_nrs(result: dict) -> str:
         lines = []
         for nr in result["nrs"]:
             details = [nr.get("situacao")]
-            if nr.get("ultima_atualizacao"):
-                details.append(f"atualizada em {nr['ultima_atualizacao']}")
             suffix = f" | {' | '.join(details)}" if any(details) else ""
             lines.append(f"- NR-{nr.get('numero')} — {nr.get('nome', 'Sem nome')}{suffix}")
         footer = [source_footer]
-        if any(source.get("tipo") == "mongodb" for source in result.get("fontes", [])):
-            footer.append("Contexto complementar: cadastro interno de NRs do Astro.")
         if pagination.get("tem_proxima_pagina"):
             footer.insert(0, f"Há mais resultados. Solicite a página {page + 1}.")
         return "\n".join([
@@ -282,7 +321,6 @@ def _formatar_nrs(result: dict) -> str:
         "nome": "Nome", "objetivo": "Objetivo", "descricao": "Descrição",
         "aplicabilidade": "Aplicabilidade", "revogada": "Revogada",
         "tempo_reciclagem_meses": "Reciclagem (meses)",
-        "ultima_atualizacao": "Última atualização", "data_criacao": "Criada em",
         "usabilidade": "Usabilidade",
     }
     sections = []
@@ -294,10 +332,6 @@ def _formatar_nrs(result: dict) -> str:
         details = []
         if nr.get("situacao"):
             details.append(f"- Situação na fonte oficial: {nr['situacao'].lower()}")
-        if nr.get("pagina_oficial_atualizada_em"):
-            details.append(
-                f"- Página oficial atualizada em: {nr['pagina_oficial_atualizada_em']}"
-            )
         if nr.get("resumo_oficial"):
             details.append(f"- Informação oficial: {nr['resumo_oficial']}")
         for field, label in labels.items():
@@ -317,8 +351,6 @@ def _formatar_nrs(result: dict) -> str:
             details.append(
                 f"- Fonte oficial: [Ministério do Trabalho e Emprego]({source_url})"
             )
-        if any(source.get("tipo") == "mongodb" for source in result.get("fontes", [])):
-            details.append("- Contexto complementar: cadastro interno do Astro")
         sections.append("\n".join([title, *details]))
     return "\n\n".join(sections)
 
@@ -376,6 +408,25 @@ def _evidencia_orientacoes_sst(result: dict) -> dict:
         "protocolo": result.get("protocolo"),
         "formatacao": "resposta gerada deterministicamente a partir dos trechos oficiais",
     }
+
+
+def _formatar_nrs_organizacao(result: dict) -> str:
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar as NRs da organização.")
+    scope = (
+        f"empresa {result['empresa']} (união de todas as unidades)"
+        if result["escopo"] == "empresa" else f"unidade {result['unidade']}"
+    )
+    if not result["nrs"]:
+        return f"Não encontrei NRs vinculadas à {scope} no Astro."
+    lines = [f"NRs vinculadas à {scope}: {result['quantidade']} norma(s) distinta(s).", ""]
+    lines += [
+        f"- NR-{nr['numero']}: {nr['titulo']}"
+        + (" (revogada)" if nr.get("revogada") else "")
+        for nr in result["nrs"]
+    ]
+    lines += ["", "Esses vínculos não comprovam a conformidade da empresa nem a obrigatoriedade para o seu cargo."]
+    return "\n".join(lines)
 
 
 def _formatar_nrs_obrigatorias(result: dict) -> str:
@@ -531,6 +582,22 @@ def _evidencia_treinamentos(result: dict) -> dict:
         "treinamentos": trainings,
         "formatacao": "resposta gerada deterministicamente a partir do resultado da tool",
     }
+
+
+def _formatar_eventos(result: dict) -> str:
+    upcoming = result.get("proximos")
+    if result.get("status") == "sem_dados":
+        return (
+            "Não encontrei próximos eventos atribuídos a você no Astro."
+            if upcoming else "Não encontrei eventos atribuídos a você no Astro."
+        )
+    if result.get("status") != "ok":
+        return "Não foi possível consultar seus eventos no Astro. " + result.get("mensagem", "")
+    trainings = {**result, "treinamentos": result.get("eventos", [])}
+    return _formatar_treinamentos(trainings).replace(
+        "Seus treinamentos atribuídos:",
+        "Seus próximos eventos no Astro:" if upcoming else "Seus eventos no Astro:",
+    ).replace("treinamento", "evento")
 
 
 def _formatar_eventos_google(result: dict) -> str:
@@ -714,6 +781,13 @@ def build_rh_graph(model: AgentModel):
 
 def build_sst_graph(model: AgentModel):
     async def decide(state: ChatState):
+        organization = _filtros_nrs_organizacao(state["mensagem"])
+        if organization is not None:
+            return {
+                "sst_route": "tool",
+                "sst_decision": SstToolDecision(acao="consultar_nrs_organizacao", filtros=organization),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
         if _pedido_situacao_nrs(state["mensagem"]):
             return {
                 "sst_route": "tool",
@@ -816,6 +890,8 @@ def build_sst_graph(model: AgentModel):
             "evidencia_tool": {"nome": tool_name, "resultado": (
                 _evidencia_orientacoes_sst(result)
                 if tool_name == "consultar_orientacoes_sst"
+                else result
+                if tool_name == "consultar_nrs_organizacao"
                 else _evidencia_situacao_nrs(result)
                 if tool_name == "consultar_situacao_nrs"
                 else _evidencia_nrs_obrigatorias(result)
@@ -829,6 +905,8 @@ def build_sst_graph(model: AgentModel):
             "candidato": (
                 _formatar_orientacoes_sst(result)
                 if tool_name == "consultar_orientacoes_sst"
+                else _formatar_nrs_organizacao(result)
+                if tool_name == "consultar_nrs_organizacao"
                 else _formatar_situacao_nrs(result)
                 if tool_name == "consultar_situacao_nrs"
                 else _formatar_nrs_obrigatorias(result)
@@ -853,10 +931,13 @@ def build_agenda_graph(model: AgentModel):
     async def decide(state: ChatState):
         prepared_decision = state.get("agenda_decision")
         filters = _filtros_treinamentos(state["mensagem"])
+        event_filters = _filtros_eventos(state["mensagem"])
         if isinstance(prepared_decision, AgendaToolDecision):
             decision = prepared_decision
         elif filters is not None:
             decision = AgendaToolDecision(acao="consultar_treinamentos", filtros=filters)
+        elif event_filters is not None:
+            decision = AgendaToolDecision(acao="consultar_eventos", filtros=event_filters)
         else:
             decision = await invoke_agent(
                 model, "agenda", AGENDA_PROMPT_COMPLETO, state, AgendaToolDecision,
@@ -896,7 +977,13 @@ def build_agenda_graph(model: AgentModel):
             "aguardando_confirmacao": "aguardando_confirmacao",
             "confirmacao_invalida": "esclarecer",
         }
-        if tool_name == "consultar_treinamentos":
+        if tool_name == "consultar_eventos":
+            candidate = _formatar_eventos(result)
+            evidence = _evidencia_treinamentos({**result, "treinamentos": result.get("eventos", [])})
+            evidence["eventos"] = evidence.pop("treinamentos", [])
+            evidence["proximos"] = result.get("proximos")
+            intention = "listar"
+        elif tool_name == "consultar_treinamentos":
             candidate = _formatar_treinamentos(result)
             evidence = _evidencia_treinamentos(result)
             intention = "consultar"

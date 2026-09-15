@@ -213,6 +213,17 @@ Os nomes de modelos ficam em `app/infrastructure/llm/models.py`, não no `.env`:
 
 - `GROQ_API_KEY`: necessária para guardrails, Roteador, Juiz e Orquestrador, usando
   `openai/gpt-oss-20b`.
+  Aceita uma chave ou uma lista: `GROQ_API_KEY=chave1|chave2|chave3`.
+  No Render, use o mesmo formato no valor da variável. Espaços, posições vazias
+  e chaves duplicadas são ignorados. Reinicie/redeploy após mudar a configuração.
+  Em HTTP 429, tenta a próxima chave disponível na ordem; mantém a chave que
+  funcionar e pausa temporariamente a limitada conforme `retry-after` (60s
+  quando ausente). Cada chamada percorre a lista no máximo uma vez. Se todas
+  estiverem limitadas, retorna 503 sem expor credenciais. A alternância vale
+  também para os especialistas sem Mistral e para o fallback Mistral → Groq.
+  Outros erros não provocam troca de chave. O cooldown é local ao processo,
+  não compartilhado entre réplicas. Chaves da mesma organização compartilham
+  limites e não multiplicam a cota ([limites do Groq](https://console.groq.com/docs/rate-limits)).
 - `MISTRAL_API_KEY`: quando preenchida, os especialistas usam
   `mistral-small-latest` como primeira opção. Sem ela, ou quando a chamada à
   Mistral falhar, os especialistas usam `openai/gpt-oss-20b` no Groq. A falha
@@ -377,6 +388,16 @@ cinco minutos antes de tentar a Mistral novamente.
 
 ### Tool de consulta de NRs do SST
 
+`consultar_nrs_organizacao` consulta os vínculos do PostgreSQL com dois escopos:
+`unidade`, para a unidade atual do usuário, e `empresa`, para a união distinta
+das NRs vinculadas a todas as unidades do mesmo workspace, inclusive inativas.
+Empresa e unidade são resolvidas pelo Firebase UID autenticado; não existem
+filtros de UID, workspace ou unidade de terceiros. A resposta mostra número,
+título, quantidade sem duplicatas e revogação quando cadastrada. Sem vínculo
+organizacional ou registros, informa essa limitação, sem usar o catálogo público
+como substituto. Isso não comprova conformidade nem obrigatoriedade por cargo.
+Exemplos: “Quais NRs da minha empresa?” e “Quais NRs da minha unidade atual?”.
+
 `app/modules/sst/tools.py` registra a tool LangChain `consultar_nrs`, somente
 leitura. A fonte primária é o portal oficial do Ministério do Trabalho e Emprego,
 consultado pelo servidor oficial MCP Fetch; a collection `nrs` do MongoDB fornece
@@ -510,6 +531,19 @@ Exemplo no chat: “Quais treinamentos eu preciso realizar?”. Essa consulta mo
 somente inscrições efetivas; uma NR obrigatória para o cargo não comprova que o
 usuário já foi inscrito em uma turma. A tool não cria inscrição, conclusão ou
 evento.
+
+### Consulta de eventos internos da Agenda
+
+Perguntas como “qual é o próximo evento?” usam `consultar_eventos`, sem exigir
+Google Calendar. A consulta lê `evento` e as datas de `turma` somente quando há
+inscrição do usuário autenticado em `turma_funcionario`. Não lista eventos de
+terceiros nem interpreta uma NR obrigatória como inscrição. Por padrão retorna
+eventos ativos com início futuro, ordenados por data e turma, independentemente
+do status da conclusão. “Próximo evento” limita a resposta ao primeiro item.
+O histórico completo usa `proximos:false`, com paginação. Datas sem fuso no banco
+são comparadas com a referência local America/Sao_Paulo, sem atribuir fuso ao
+horário exibido. Filtros de data ou título ainda não são suportados por esta tool.
+Google Calendar continua disponível quando mencionado explicitamente.
 
 ### Tool de consulta dos próprios acessos do Roteador
 

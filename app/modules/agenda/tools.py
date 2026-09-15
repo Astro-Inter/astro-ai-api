@@ -29,6 +29,15 @@ class ConsultarTreinamentosArgs(BaseModel):
     limite: int = Field(default=5, ge=1, le=10)
 
 
+class ConsultarEventosArgs(BaseModel):
+    """Eventos internos atribuídos ao próprio usuário, sem exigir OAuth."""
+
+    model_config = ConfigDict(extra="forbid")
+    proximos: bool = True
+    pagina: int = Field(default=1, ge=1, le=1000)
+    limite: int = Field(default=5, ge=1, le=10)
+
+
 class ConsultarEventosGoogleArgs(BaseModel):
     """Intervalo autorizado para consultar o calendário do próprio usuário."""
 
@@ -72,11 +81,12 @@ class CriarEventoGoogleArgs(BaseModel):
 
 
 class AgendaToolDecision(BaseModel):
-    """Decisão do agente de Agenda entre consultar treinamentos e responder."""
+    """Decisão de Agenda entre eventos internos, treinamentos e Google Calendar."""
 
     model_config = ConfigDict(extra="forbid")
 
     acao: Literal[
+        "consultar_eventos",
         "consultar_treinamentos",
         "consultar_google_calendar",
         "criar_evento_google_calendar",
@@ -84,6 +94,7 @@ class AgendaToolDecision(BaseModel):
     ]
     filtros: (
         ConsultarTreinamentosArgs
+        | ConsultarEventosArgs
         | ConsultarEventosGoogleArgs
         | CriarEventoGoogleArgs
         | None
@@ -97,9 +108,10 @@ class AgendaToolDecision(BaseModel):
             return data
         action = data.get("acao")
         filters = data.get("filtros")
-        if action == "consultar_treinamentos" and filters is None:
+        if action in {"consultar_treinamentos", "consultar_eventos"} and filters is None:
             filters = {}
         schemas = {
+            "consultar_eventos": ConsultarEventosArgs,
             "consultar_treinamentos": ConsultarTreinamentosArgs,
             "consultar_google_calendar": ConsultarEventosGoogleArgs,
             "criar_evento_google_calendar": CriarEventoGoogleArgs,
@@ -114,6 +126,7 @@ class AgendaToolDecision(BaseModel):
     @model_validator(mode="after")
     def validar_acao(self):
         expected = {
+            "consultar_eventos": ConsultarEventosArgs,
             "consultar_treinamentos": ConsultarTreinamentosArgs,
             "consultar_google_calendar": ConsultarEventosGoogleArgs,
             "criar_evento_google_calendar": CriarEventoGoogleArgs,
@@ -212,6 +225,10 @@ def consultar_treinamentos(
     pendentes, rejeitadas ou sem registro de conclusão. A ferramenta não deduz
     inscrição a partir do cargo ou de NRs obrigatórias.
     """
+    return _consultar_participacoes(situacao, pagina, limite, config)
+
+
+def _consultar_participacoes(situacao, pagina, limite, config, *, proximos=False):
     user = _usuario_do_contexto(config)
     if user is None:
         return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
@@ -231,6 +248,11 @@ def consultar_treinamentos(
         "concluidos": "AND conclusao.status = 'CONCLUIDO'",
         "todos": "",
     }[situacao]
+    if proximos:
+        status_filter += (
+            " AND evento.status = 'ATIVO'"
+            " AND turma.data_inicial >= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')"
+        )
     from_clause = f"""
         FROM turma_funcionario AS participacao
         JOIN turma
@@ -317,6 +339,24 @@ def consultar_treinamentos(
         "total_paginas": (total + limite - 1) // limite,
         "treinamentos": trainings,
     }
+
+
+@tool("consultar_eventos", args_schema=ConsultarEventosArgs)
+def consultar_eventos(
+    proximos: bool = True, pagina: int = 1, limite: int = 5,
+    config: RunnableConfig = None,
+) -> dict:
+    """Consulta eventos do Astro com inscrição do próprio usuário.
+
+    Datas pertencem às turmas. Próximos inclui somente eventos ativos com início
+    futuro, independentemente da conclusão; nunca lista eventos de terceiros.
+    """
+    result = _consultar_participacoes("todos", pagina, limite, config, proximos=proximos)
+    result["proximos"] = proximos
+    result["eventos"] = result.pop("treinamentos", [])
+    if result.get("mensagem"):
+        result["mensagem"] = result["mensagem"].replace("treinamentos", "eventos atribuídos")
+    return result
 
 
 @tool("consultar_google_calendar", args_schema=ConsultarEventosGoogleArgs)
@@ -430,6 +470,7 @@ async def criar_evento_google_calendar(
 
 
 TOOLS_AGENDA = [
+    consultar_eventos,
     consultar_treinamentos,
     consultar_google_calendar,
     criar_evento_google_calendar,

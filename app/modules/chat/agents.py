@@ -6,11 +6,13 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, ValidationError
 
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.errors import InvalidAgentResponse
 from app.modules.chat.state import ChatState
+from app.modules.chat.prompts.examples import example_messages
 from app.observability.chat import (
     finish_agent_measurement,
     start_agent_measurement,
@@ -53,6 +55,7 @@ class _AstroAgentModel(BaseChatModel):
 
 def _history_for_agent(name: str, history: list[dict[str, str]]):
     limits = {
+        "guardrail_entrada": (6, 6000),
         "roteador": (6, 6000),
         "rh": (10, 12000),
         "sst": (10, 12000),
@@ -106,6 +109,16 @@ async def _invoke_agent(
             },
             ensure_ascii=False,
         )))
+    template = ChatPromptTemplate.from_messages([
+        SystemMessage(content=system),
+        MessagesPlaceholder("exemplos"),
+        MessagesPlaceholder("conversa"),
+    ])
+    prepared = template.invoke({
+        "exemplos": example_messages(name, schema.__name__ if schema else None),
+        "conversa": messages,
+    }).to_messages()
+    system_message, messages = prepared[0], prepared[1:]
     # Tal como no projeto de referência, cada papel é instanciado por
     # `create_agent`; o grafo externo conserva roteamento e autorização.
     agent = create_agent(
@@ -113,7 +126,7 @@ async def _invoke_agent(
             backend=model, agent_name=name, json_mode=schema is not None,
         ),
         tools=[],
-        system_prompt=SystemMessage(content=system),
+        system_prompt=system_message,
         name=name,
     )
 

@@ -18,6 +18,7 @@ from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import _pedido_de_publicacao_sst
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
+from app.modules.chat.prompts.examples import example_messages
 from app.modules.agenda import tools as agenda_tools
 from app.modules.rh import tools as rh_tools
 from app.modules.roteador import tools as router_tools
@@ -151,9 +152,10 @@ def test_specialist_flow(chat_client, domain):
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
+        '"consultar_nrs_organizacao", '
         '"consultar_orientacoes_sst", "consultar_fontes_publicas", '
             '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
-            '"consultar_acessos", "consultar_treinamentos", '
+            '"consultar_acessos", "consultar_treinamentos", "consultar_eventos", '
             '"consultar_google_calendar", "criar_evento_google_calendar", "gerar_pdf"]'
         ) in system
     if domain == "rh":
@@ -213,6 +215,128 @@ def test_agenda_agent_consults_training_instead_of_sst(chat_client, monkeypatch)
         "juiz", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
+
+
+@pytest.mark.parametrize("message,scope", [
+    ("quais nrs da minha empresa", "empresa"),
+    ("Quais NRs da minha unidade atual?", "unidade"),
+])
+def test_organization_nrs_do_not_use_public_catalog(chat_client, monkeypatch, message, scope):
+    from app.modules.sst import tools as sst_tools
+    client, model, _ = chat_client
+    model.route = "faq"
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def execute(self, query, params):
+            assert params == ["user-a", scope, scope]
+            assert "SELECT DISTINCT" in query
+        def fetchall(self):
+            return [("Empresa teste", "Matriz", 6, "EPI", False)]
+
+    class Connection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: Connection())
+    monkeypatch.setattr(sst_tools, "get_fetch_mcp_client", lambda: pytest.fail("Não deve consultar catálogo público"))
+    response = client.post("/chat/messages", json={"message": message})
+    assert response.status_code == 200
+    assert "NR-6: EPI" in response.json()["resposta"]
+    assert "38" not in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "sst", "consultar_nrs_organizacao", "juiz", "guardrail_saida",
+    ]
+
+
+def test_next_event_uses_database_without_google_oauth(chat_client, monkeypatch):
+    from datetime import datetime
+    client, model, _ = chat_client
+    model.route = "faq"
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def execute(self, query, params):
+            self.query = query
+            assert params[0] == ("user-a" if "firebase_uid" in query else 7)
+        def fetchone(self):
+            return (7,) if "firebase_uid" in self.query else (1,)
+        def fetchall(self):
+            return [(
+                "Evento futuro", "Treinamento", None, "GESTOR", False, "ATIVO",
+                "Turma A", datetime(2027, 9, 20, 8), datetime(2027, 9, 20, 12),
+                None, None, "PENDENTE", None, None, None, None,
+            )]
+
+    class Connection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(agenda_tools, "get_postgres_connection", lambda: Connection())
+    monkeypatch.setattr(agenda_tools, "get_google_calendar_mcp_client", lambda: pytest.fail("OAuth não deve ser consultado"))
+    response = client.post("/chat/messages", json={"message": "quero saber qual é o próximo evento"})
+    assert response.status_code == 200
+    assert "Evento futuro" in response.json()["resposta"]
+    assert "conectar" not in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "agenda", "consultar_eventos", "juiz", "guardrail_saida",
+    ]
+
+
+@pytest.mark.parametrize("mode", ["listar", "detalhar"])
+def test_nr_responses_omit_metadata_and_keep_content_and_sources(mode):
+    from app.modules.chat.subgraphs import _formatar_nrs
+    result = {
+        "status": "ok", "modo": mode, "quantidade": 1,
+        "fonte": {"url": "https://www.gov.br/nr-30"},
+        "fontes": [{"tipo": "mongodb"}],
+        "nrs": [{
+            "numero": 30, "nome": "Trabalho aquaviário", "situacao": "vigente",
+            "objetivo": "Segurança a bordo", "resumo_oficial": "Orientações oficiais",
+            "ultima_atualizacao": "31/10/2024", "data_criacao": "2026-09-13",
+            "pagina_oficial_atualizada_em": "31/10/2024",
+        }],
+    }
+    answer = _formatar_nrs(result)
+    assert "NR-30" in answer
+    assert "https://www.gov.br/nr-30" in answer
+    for metadata in ("31/10/2024", "2026-09-13", "Criada em", "Última atualização", "Contexto complementar"):
+        assert metadata not in answer
+    if mode == "detalhar":
+        assert "Segurança a bordo" in answer
+        assert "Orientações oficiais" in answer
+    assert result["nrs"][0]["data_criacao"] == "2026-09-13"
+
+
+def test_organization_queries_never_use_deterministic_public_listing():
+    from app.modules.chat.subgraphs import _filtros_deterministicos_nrs, _filtros_nrs_organizacao
+    assert _filtros_nrs_organizacao("Liste as NRs de todas as unidades").escopo == "empresa"
+    assert _filtros_deterministicos_nrs("Quais NRs da minha empresa?") is None
+    assert _filtros_nrs_organizacao("Quais NRs da minha empresa ou da minha unidade?") is None
+
+
+def test_internal_event_parser_does_not_override_google_or_writes():
+    from app.modules.chat.subgraphs import _filtros_eventos
+    assert _filtros_eventos("Qual é o próximo evento?").limite == 1
+    assert _filtros_eventos("Mostre todos os meus eventos").proximos is False
+    for message in ("Qual é o próximo evento no Google Calendar?", "Crie meu próximo evento", "Quais eventos tenho amanhã?"):
+        assert _filtros_eventos(message) is None
 
 
 def test_google_calendar_is_connected_on_demand_and_event_stays_pending(
@@ -360,7 +484,7 @@ def test_sst_agent_consults_multiple_nrs(chat_client, monkeypatch):
     ]
     assert "NR-1" in response.json()["resposta"]
     assert "Objetivo 6" in response.json()["resposta"]
-    assert "Contexto complementar: cadastro interno do Astro" in response.json()["resposta"]
+    assert "Contexto complementar" not in response.json()["resposta"]
     assert collection.query == {"_id": {"$in": [1, 6]}}
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "juiz",
@@ -1555,7 +1679,7 @@ def test_session_history_and_ownership(chat_client):
     assert second.status_code == 200
     assert second.json()["session_id"] == first["session_id"]
     messages = next(call for call in model.calls if call[0] == "roteador")[1]
-    assert [message.content for message in messages[1:]] == [
+    assert [message.content for message in messages[1 + len(example_messages("roteador")):]] == [
         "Primeira mensagem", first["resposta"], "E agora?",
     ]
     assert '"ultima_rota": "rh"' in messages[0].content
@@ -1571,7 +1695,7 @@ def test_session_history_and_ownership(chat_client):
     model.calls.clear()
     new = client.post("/chat/messages", json={"message": "Nova conversa"})
     assert new.status_code == 200
-    assert len(model.calls[0][1]) == 2
+    assert len(model.calls[0][1]) == 2 + len(example_messages("guardrail_entrada"))
 
 
 def test_each_turn_resets_intermediate_results(chat_client):

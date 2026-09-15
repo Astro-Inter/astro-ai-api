@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.prompts.resumo import RESUMO_PROMPT_COMPLETO
+from app.modules.chat.prompts.examples import example_messages
 
 
 class SummaryResult(BaseModel):
@@ -60,6 +61,7 @@ class ConversationMemory:
                 chars += len(message["content"])
             text = await self.model.complete("resumo", [
                 SystemMessage(content=RESUMO_PROMPT_COMPLETO),
+                *example_messages("resumo"),
                 HumanMessage(content=json.dumps({
                     "iniciada_em": doc["iniciada_em"].isoformat(),
                     "resumo_parcial": summary, "mensagens": chunk,

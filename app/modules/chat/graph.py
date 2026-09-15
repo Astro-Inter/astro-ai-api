@@ -18,6 +18,8 @@ from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch,
 from app.modules.chat.state import ChatState
 from app.modules.chat.subgraphs import (
     _filtros_treinamentos,
+    _filtros_eventos,
+    _filtros_nrs_organizacao,
     build_agenda_graph,
     build_faq_graph,
     build_rh_graph,
@@ -41,6 +43,32 @@ def _sem_acentos(message: str) -> str:
         char for char in unicodedata.normalize("NFKD", message.casefold())
         if not unicodedata.combining(char)
     )
+
+
+def _pedido_de_historico_ia(message: str) -> str | None:
+    """Reconhece memória própria, sem confundir mensagens entre pessoas."""
+    normalized = _sem_acentos(message)
+    if re.search(r"\b(?:nao|apague|exclua|delete)\b", normalized):
+        return None
+    if re.search(r"\b(?:outro usuario|outra pessoa|do colega|da colega)\b", normalized):
+        return None
+    if re.search(r"\b(?:conversas?|mensagens?)\s+com\s+(?!o astro\b|astro\b|voce\b)", normalized):
+        return None
+    previous = re.search(
+        r"\b(?:conversas?|sessoes|sessao)\b", normalized,
+    ) and re.search(
+        r"\b(?:anterior(?:es)?|ultima(?:s)?|encerrad[ao]s?|finalizad[ao]s?|outras|passad[ao]s?)\b",
+        normalized,
+    )
+    recalling = re.search(r"\b(?:conversamos|falamos)\b", normalized) and re.search(
+        r"\b(?:antes|anteriormente|ultima vez)\b", normalized,
+    )
+    if not (previous or recalling):
+        return None
+    # Recência não é similaridade: a última sessão vem do Mongo, não do índice.
+    if re.search(r"\b(?:ultima|anterior|acabei de|encerrad[ao]|finalizad[ao])\b", normalized):
+        return ""
+    return message[:1000] if re.search(r"\b(?:sobre|assunto)\b", normalized) else ""
 
 
 def _pedido_de_publicacao_sst(message: str) -> bool:
@@ -360,6 +388,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     async def router(state: ChatState):
+        memory_request = _pedido_de_historico_ia(state["mensagem"])
+        if memory_request is not None and not state.get("memoria_consultada") and search_memory is not None:
+            return {
+                "rota": "memoria", "busca_memoria": memory_request,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         pending = state.get("acao_pendente")
         if isinstance(pending, dict) and pending.get("tipo") == "enviar_mensagem":
             if _cancelamento_explicito(state["mensagem"]):
@@ -416,7 +450,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 }
 
         simple_message = _pedido_simples_de_mensagem(state["mensagem"])
-        if simple_message is not None:
+        if simple_message is not None and memory_request is None:
             return {
                 "rota": "mensagem",
                 "roteador_decision": simple_message,
@@ -424,7 +458,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
 
         simple_conversation = _pedido_simples_de_conversa(state["mensagem"])
-        if simple_conversation is not None:
+        if simple_conversation is not None and memory_request is None:
             return {
                 "rota": "conversa",
                 "roteador_decision": simple_conversation,
@@ -432,7 +466,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
 
         simple_notifications = _pedido_simples_de_notificacoes(state["mensagem"])
-        if simple_notifications is not None:
+        if simple_notifications is not None and memory_request is None:
             return {
                 "rota": "notificacoes",
                 "roteador_decision": simple_notifications,
@@ -440,20 +474,24 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
 
         simple_access = _pedido_simples_de_acessos(state["mensagem"])
-        if simple_access is not None:
+        if simple_access is not None and memory_request is None:
             return {
                 "rota": "acessos",
                 "roteador_decision": simple_access,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
-        if _filtros_treinamentos(state["mensagem"]) is not None:
+        if memory_request is None and (
+            _filtros_treinamentos(state["mensagem"]) is not None
+            or _filtros_eventos(state["mensagem"]) is not None
+        ):
             return {
                 "rota": "agenda",
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
-        if _pedido_de_publicacao_sst(state["mensagem"]):
+        if memory_request is None and (_pedido_de_publicacao_sst(state["mensagem"])
+                or _filtros_nrs_organizacao(state["mensagem"]) is not None):
             return {
                 "rota": "sst",
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
@@ -783,10 +821,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             and evidence.get("nome") in {
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                 "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+                "consultar_nrs_organizacao",
                 "consultar_orientacoes_sst",
                 "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                 "consultar_acessos",
                 "consultar_treinamentos",
+                "consultar_eventos",
                 "consultar_google_calendar", "criar_evento_google_calendar",
             }
         ):
