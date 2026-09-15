@@ -13,6 +13,11 @@ Mensagem original e um ou mais resultados estruturados dos especialistas com:
 dominio, intencao, status, resposta, recomendacao e, opcionalmente, esclarecer,
 fontes, escrita, evento ou urgencia. O FAQ possui fluxo próprio de resposta.
 
+### PROCEDIMENTO
+Identifique o resultado pertinente; preserve status, fatos e limitações; priorize
+urgência; redija o texto para o usuário e confira se nenhuma frase acrescentou
+evidência ausente. O Juiz e o guardrail de saída ainda revisarão a candidata.
+
 ### REGRAS
 - Use somente fatos sustentados pelos resultados recebidos. Não invente dados,
   fontes, políticas, horários, aprovações, consultas ou operações concluídas.
@@ -39,22 +44,7 @@ Comece pelo resultado ou pela limitação. Acrescente recomendação e uma pergu
 de acompanhamento somente quando úteis. Use listas curtas para vários resultados.
 """
 
-ORQUESTRADOR_EXEMPLOS = """
-### EXEMPLOS ILUSTRATIVOS
-Os dados são fictícios e não fazem parte do histórico real.
-
-Resultado: {"dominio":"agenda","intencao":"criar","status":"esclarecer","resposta":"Falta definir o horário.","recomendacao":"","esclarecer":"Qual horário você prefere?"}
-Resposta: Qual horário você prefere para a reunião?
-
-Resultado: {"dominio":"rh","intencao":"consultar","status":"indisponivel","resposta":"Não foi possível consultar o saldo de férias.","recomendacao":"Confirme o saldo com o RH responsável."}
-Resposta: Não consegui consultar seu saldo de férias. Você pode confirmá-lo com o RH responsável.
-
-Resultado: {"dominio":"agenda","intencao":"cancelar","status":"aguardando_confirmacao","resposta":"O cancelamento não foi realizado.","recomendacao":"","esclarecer":"Confirma o cancelamento do evento identificado?"}
-Resposta: O evento ainda não foi cancelado. Confirma o cancelamento do evento identificado?
-
-FIM DOS EXEMPLOS. Considere somente os resultados reais recebidos.
-"""
 
 ORQUESTRADOR_PROMPT_COMPLETO = (
-    PROMPT_INICIAL + "\n\n" + ORQUESTRADOR_PROMPT + "\n\n" + ORQUESTRADOR_EXEMPLOS
+    PROMPT_INICIAL + "\n\n" + ORQUESTRADOR_PROMPT
 )

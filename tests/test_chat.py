@@ -18,6 +18,7 @@ from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import _pedido_de_publicacao_sst
 from app.modules.chat.schemas import ChatRequest
 from app.modules.chat.service import ChatService, recent_history
+from app.modules.chat.prompts.examples import example_messages
 from app.modules.agenda import tools as agenda_tools
 from app.modules.rh import tools as rh_tools
 from app.modules.roteador import tools as router_tools
@@ -1678,7 +1679,7 @@ def test_session_history_and_ownership(chat_client):
     assert second.status_code == 200
     assert second.json()["session_id"] == first["session_id"]
     messages = next(call for call in model.calls if call[0] == "roteador")[1]
-    assert [message.content for message in messages[1:]] == [
+    assert [message.content for message in messages[1 + len(example_messages("roteador")):]] == [
         "Primeira mensagem", first["resposta"], "E agora?",
     ]
     assert '"ultima_rota": "rh"' in messages[0].content
@@ -1694,7 +1695,7 @@ def test_session_history_and_ownership(chat_client):
     model.calls.clear()
     new = client.post("/chat/messages", json={"message": "Nova conversa"})
     assert new.status_code == 200
-    assert len(model.calls[0][1]) == 2
+    assert len(model.calls[0][1]) == 2 + len(example_messages("guardrail_entrada"))
 
 
 def test_each_turn_resets_intermediate_results(chat_client):

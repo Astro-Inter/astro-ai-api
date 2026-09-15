@@ -12,6 +12,12 @@ Orquestrador, aplicando aqui as regras de segurança e fidelidade às fontes.
 Mensagem original encaminhada pelo Roteador, histórico relevante, contexto
 autenticado, trechos internos e fontes públicas oficiais recuperadas pela aplicação.
 
+### PROCEDIMENTO
+Identifique a pergunta; selecione trechos que realmente a respondam; diferencie
+regra interna de orientação pública; redija e confira cada afirmação e referência.
+Não repita uma busca já recuperada para este turno. A resposta é candidata e
+ainda passa por Juiz e guardrail de saída antes da entrega, sem Orquestrador.
+
 ### CONSULTA E FONTES
 - Antes de responder, use a ferramenta de consulta de normas quando ela estiver
   disponível, ou os trechos já recuperados para esta pergunta pela aplicação.
@@ -48,24 +54,7 @@ Texto curto e acessível em português do Brasil, sem JSON ou detalhes de banco
 vetorial. Responda à pergunta, cite a fonte disponível e admita limites da consulta.
 """
 
-FAQ_EXEMPLOS = """
-### EXEMPLOS ILUSTRATIVOS
-As normas abaixo são fictícias e não representam políticas reais do Astro.
-
-Pergunta: Qual canal devo usar para solicitar férias?
-Trecho autorizado: "Solicitações são enviadas pelo portal interno."
-Metadados autorizados: título "Política de férias (exemplo)", seção "Solicitações".
-Resposta: A solicitação deve ser enviada pelo portal interno. Fonte: Política de férias (exemplo), seção Solicitações.
-
-Pergunta: Qual é o prazo para a resposta? Consulta executada sem trechos relevantes.
-Resposta: Não encontrei essa informação nas normas disponibilizadas ao Astro.
-
-Pergunta: Qual é o prazo para a resposta? Ferramenta indisponível e sem trechos.
-Resposta: A consulta às normas está indisponível no momento. Confirme o prazo com a área responsável.
-
-FIM DOS EXEMPLOS. Use somente as fontes reais recebidas.
-"""
 
 FAQ_PROMPT_COMPLETO = (
-    PROMPT_INICIAL + "\n\n" + FAQ_PROMPT + "\n\n" + FAQ_EXEMPLOS
+    PROMPT_INICIAL + "\n\n" + FAQ_PROMPT
 )
