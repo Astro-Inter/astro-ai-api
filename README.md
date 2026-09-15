@@ -222,7 +222,9 @@ de uma escrita só é resolvida depois da confirmação e execução.
 O trace raiz também recebe `resolution_status`, rota, tempo total, quantidade e
 latência agregada das chamadas de agentes, além do total, média e máximo do tempo
 de transição entre agentes. `agent_latencies_ms` e `agent_transitions_ms` guardam
-o detalhamento por agente e por transição. Erros preservam somente o tipo e o
+o detalhamento por agente e por transição. O feedback numérico
+`agent_transition_avg_ms` permite acompanhar a latência média de transição em um
+gráfico do LangSmith. Erros preservam somente o tipo e o
 status HTTP, sem mensagem interna, UID, token ou credencial. O próprio LangSmith
 continua calculando tokens, custo, duração e erro dos runs.
 

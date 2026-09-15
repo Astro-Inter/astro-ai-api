@@ -141,6 +141,15 @@ class ChatObservation:
             metadata["error_status_code"] = self.error_status_code
         return metadata
 
+    def feedback_scores(self) -> dict[str, float | int]:
+        scores: dict[str, float | int] = {"resolved": self.resolved}
+        if self.transitions:
+            durations_ms = [duration * 1000 for _, _, duration in self.transitions]
+            scores["agent_transition_avg_ms"] = round(
+                sum(durations_ms) / len(durations_ms), 2,
+            )
+        return scores
+
 
 _current_observation: ContextVar[ChatObservation | None] = ContextVar(
     "astro_chat_observation", default=None,
@@ -171,22 +180,24 @@ def _tracing_enabled() -> bool:
     return langsmith_utils.tracing_is_enabled(get_tracing_context()) is True
 
 
-def _record_resolution_feedback(trace_id, score: int) -> None:
+def _record_trace_feedback(trace_id, observation: ChatObservation) -> None:
     if not trace_id or not _tracing_enabled():
         return
-    try:
-        _langsmith_client().create_feedback(
-            run_id=trace_id,
-            trace_id=trace_id,
-            key="resolved",
-            score=score,
-            source_info={"source": "astro_backend", "method": "deterministic"},
-        )
-    except Exception as error:
-        logger.warning(
-            "Falha ao registrar feedback de resolucao no LangSmith: %s",
-            type(error).__name__,
-        )
+    for key, score in observation.feedback_scores().items():
+        try:
+            _langsmith_client().create_feedback(
+                run_id=trace_id,
+                trace_id=trace_id,
+                key=key,
+                score=score,
+                source_info={"source": "astro_backend", "method": "deterministic"},
+            )
+        except Exception as error:
+            logger.warning(
+                "Falha ao registrar feedback %s no LangSmith: %s",
+                key,
+                type(error).__name__,
+            )
 
 
 @contextmanager
@@ -236,4 +247,4 @@ def observe_chat(*, reused_session: bool, markdown: bool) -> Iterator[ChatObserv
                 })
     finally:
         _current_observation.reset(token)
-        _record_resolution_feedback(trace_id, observation.resolved)
+        _record_trace_feedback(trace_id, observation)

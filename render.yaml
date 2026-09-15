@@ -92,4 +92,4 @@ services:
       - key: LANGSMITH_API_KEY
         sync: false
       - key: LANGSMITH_PROJECT
-        value: astro-ai-api-render
+        value: Astro

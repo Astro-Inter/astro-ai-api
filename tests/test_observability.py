@@ -43,6 +43,10 @@ def test_observation_exposes_aggregate_agent_metrics(monkeypatch):
     assert metadata["agent_transition_total_ms"] == pytest.approx(300)
     assert '"roteador":200.0' in metadata["agent_latencies_ms"]
     assert '"roteador->sst":300.0' in metadata["agent_transitions_ms"]
+    assert observation.feedback_scores() == {
+        "resolved": 0,
+        "agent_transition_avg_ms": pytest.approx(300),
+    }
 
 
 def test_sre_summary_and_projections_use_observed_metrics():
