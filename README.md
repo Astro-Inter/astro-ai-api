@@ -213,6 +213,17 @@ Os nomes de modelos ficam em `app/infrastructure/llm/models.py`, não no `.env`:
 
 - `GROQ_API_KEY`: necessária para guardrails, Roteador, Juiz e Orquestrador, usando
   `openai/gpt-oss-20b`.
+  Aceita uma chave ou uma lista: `GROQ_API_KEY=chave1|chave2|chave3`.
+  No Render, use o mesmo formato no valor da variável. Espaços, posições vazias
+  e chaves duplicadas são ignorados. Reinicie/redeploy após mudar a configuração.
+  Em HTTP 429, tenta a próxima chave disponível na ordem; mantém a chave que
+  funcionar e pausa temporariamente a limitada conforme `retry-after` (60s
+  quando ausente). Cada chamada percorre a lista no máximo uma vez. Se todas
+  estiverem limitadas, retorna 503 sem expor credenciais. A alternância vale
+  também para os especialistas sem Mistral e para o fallback Mistral → Groq.
+  Outros erros não provocam troca de chave. O cooldown é local ao processo,
+  não compartilhado entre réplicas. Chaves da mesma organização compartilham
+  limites e não multiplicam a cota ([limites do Groq](https://console.groq.com/docs/rate-limits)).
 - `MISTRAL_API_KEY`: quando preenchida, os especialistas usam
   `mistral-small-latest` como primeira opção. Sem ela, ou quando a chamada à
   Mistral falhar, os especialistas usam `openai/gpt-oss-20b` no Groq. A falha
