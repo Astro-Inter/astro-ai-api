@@ -53,6 +53,7 @@ class _AstroAgentModel(BaseChatModel):
 
 def _history_for_agent(name: str, history: list[dict[str, str]]):
     limits = {
+        "guardrail_entrada": (6, 6000),
         "roteador": (6, 6000),
         "rh": (10, 12000),
         "sst": (10, 12000),
