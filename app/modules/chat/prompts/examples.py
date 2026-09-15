@@ -24,6 +24,7 @@ EXAMPLES = {
         ("Preciso resolver um treinamento.", "Você quer consultar seus treinamentos ou tirar uma dúvida sobre segurança?"),
         ("Consulte minhas férias e marque uma reunião.", "Você quer começar pelas férias ou pela reunião?"),
         ("O que conversamos em outras sessões?", 'MEMORY={"busca":""}'),
+        ("Busque o resumo da minha última conversa encerrada com o Astro.", 'MEMORY={"busca":""}'),
         ("Mostre minhas mensagens com Rosa.", 'CONVERSATION={"pessoa":"Rosa","pagina":1,"limite":5}'),
         ("Quais são minhas notificações?", 'NOTIFICATIONS={"pagina":1,"limite":5}'),
         ("Quantas vezes acessei neste mês?", 'ACCESSES={"consulta":"contagem","periodo":"mes_atual"}'),

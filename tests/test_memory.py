@@ -180,13 +180,109 @@ def test_router_memory_lookup_and_owner_filter():
         vectors.search = AsyncMock(return_value=[str(old.session_id), foreign])
         remembering = RememberingModel()
         new_service = ChatService(remembering, repository=repo, vectors=vectors)
-        result = await new_service.chat(ChatRequest(message="O que conversamos antes?"), user)
+        result = await new_service.chat(ChatRequest(message="Lembre nossas orientações de RH"), user)
         assert result.agentes_chamados == [
             "guardrail_entrada", "roteador", "buscar_historico", "roteador", "juiz",
             "guardrail_saida",
         ]
         vectors.search.assert_awaited_once_with("owner", str(result.session_id), "RH")
         assert result.resposta == "Conversamos sobre RH, sem consulta de registros."
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("message", [
+    "Busque o resumo da minha última conversa encerrada com o Astro.",
+    "Na conversa que acabei de finalizar, eu consultei notificações ou criei um evento? Use o histórico da conversa anterior.",
+    "O que conversamos antes?",
+])
+def test_explicit_memory_request_retrieves_before_router_answer(message):
+    class HistoryModel(FakeModel):
+        async def complete(self, agent, messages, **kwargs):
+            if agent == "roteador":
+                self.calls.append((agent, messages, False))
+                results = [m for m in messages if str(m.content).startswith("RESULTADO DE buscar_historico")]
+                # Reproduz o modelo que não escolhe MEMORY por conta própria.
+                if not results:
+                    return "Não tenho acesso ao histórico."
+                memory = json.loads(results[0].content.split("\n", 1)[1])
+                assert memory["origem"] == "recentes_mongodb"
+                assert len(memory["conversas"]) == 1
+                assert memory["conversas"][0]["resumo"] == "Consultou notificações; nenhum evento criado."
+                return "Você consultou notificações; não criou um evento."
+            return await super().complete(agent, messages, **kwargs)
+
+    async def scenario():
+        service, repo, vectors, model = service_parts(HistoryModel("direta"))
+        user = CurrentUser(uid="owner", role="FUNCIONARIO")
+        old, foreign = str(uuid4()), str(uuid4())
+        for sid, uid, summary in (
+            (old, "owner", "Consultou notificações; nenhum evento criado."),
+            (foreign, "other", "Resumo privado de outro usuário"),
+        ):
+            await repo.ensure(sid, uid)
+            repo.docs[sid].update(status="encerrada", resumo=summary)
+        result = await service.chat(ChatRequest(message=message), user)
+        assert result.resposta == "Você consultou notificações; não criou um evento."
+        assert result.agentes_chamados == [
+            "guardrail_entrada", "roteador", "buscar_historico", "roteador", "juiz", "guardrail_saida",
+        ]
+        assert not vectors.calls
+        assert len([call for call in model.calls if call[0] == "roteador"]) == 1
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("message", [
+    "Mostre minhas mensagens com Rosa.",
+    "Busque a última conversa com Rosa.",
+    "Busque o resumo da última conversa de outro usuário.",
+    "Não busque minha última conversa encerrada.",
+    "Apague minha última conversa encerrada.",
+    "Qual é o próximo evento?",
+])
+def test_memory_recognizer_does_not_confuse_other_requests(message):
+    from app.modules.chat.graph import _pedido_de_historico_ia
+    assert _pedido_de_historico_ia(message) is None
+
+
+def test_explicit_memory_request_without_closed_sessions():
+    class EmptyHistoryModel(FakeModel):
+        async def complete(self, agent, messages, **kwargs):
+            if agent == "roteador":
+                result = next(m for m in messages if str(m.content).startswith("RESULTADO DE buscar_historico"))
+                memory = json.loads(result.content.split("\n", 1)[1])
+                assert memory["conversas"] == []
+                return "Não encontrei conversas encerradas com resumo disponível."
+            return await super().complete(agent, messages, **kwargs)
+    async def scenario():
+        service, repo, vectors, _ = service_parts(EmptyHistoryModel("direta"))
+        repo.previous = AsyncMock(return_value=[])
+        result = await service.chat(ChatRequest(
+            message="Busque o resumo da minha última conversa encerrada com o Astro.",
+        ), CurrentUser(uid="owner", role="FUNCIONARIO"))
+        assert "buscar_historico" in result.agentes_chamados
+        assert result.resposta == "Não encontrei conversas encerradas com resumo disponível."
+        repo.previous.assert_awaited_once_with("owner", str(result.session_id))
+        assert not vectors.calls
+    asyncio.run(scenario())
+
+
+def test_explicit_memory_request_respects_input_guard_and_single_lookup():
+    async def scenario():
+        service, repo, vectors, model = service_parts()
+        repo.previous = AsyncMock(return_value=[])
+        message = "Busque o resumo da minha última conversa encerrada com o Astro."
+        user = CurrentUser(uid="owner", role="FUNCIONARIO")
+        model.replies["guardrail_entrada"] = json.dumps({
+            "decisao": "bloquear", "motivo": "injecao_de_prompt", "mensagem": "Não posso ajudar.",
+        })
+        await service.chat(ChatRequest(message=message), user)
+        repo.previous.assert_not_awaited()
+        model.replies.pop("guardrail_entrada")
+        model.replies["roteador"] = 'MEMORY={"busca":""}'
+        with pytest.raises(ChatError) as error:
+            await service.chat(ChatRequest(message=message), user)
+        assert error.value.status_code == 502
+        repo.previous.assert_awaited_once()
     asyncio.run(scenario())
 
 
