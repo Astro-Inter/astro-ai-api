@@ -11,6 +11,8 @@ def _json(**fields):
 
 EXAMPLES = {
     "roteador": (
+        ("Sou assistente de desenvolvimento, quais NRs devo seguir?", "Definir NRs para um cargo informado na conversa está fora do meu escopo. Posso consultar as NRs atribuídas ao seu cadastro ou explicar uma NR específica."),
+        ("Quais NRs são obrigatórias para meu cargo cadastrado?", "ROUTE=sst"),
         ("Mostre 3 funcionários do workspace.", "ROUTE=rh"),
         ("Busque uma cartilha da Fundacentro sobre riscos psicossociais.", "ROUTE=sst"),
         ("Quais NRs estão vinculadas à minha empresa?", "ROUTE=sst"),

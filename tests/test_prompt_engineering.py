@@ -5,6 +5,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.modules.chat.prompts.examples import EXAMPLES, example_messages
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
+from app.modules.chat.prompts.sst import SST_DECISAO_PROMPT_COMPLETO
+from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.chat.schemas import InputDecision, JudgeDecision, OutputDecision
 from app.modules.rh.tools import RhToolDecision
 from app.modules.sst.tools import SstToolDecision
@@ -53,3 +55,14 @@ def test_compact_router_preserves_commands_and_routing_boundaries():
     for _, answer in EXAMPLES["roteador"]:
         if "={" in answer:
             json.loads(answer.split("=", 1)[1])
+
+
+def test_declared_role_obligations_are_out_of_scope_without_blocking_nr_explanations():
+    examples = dict(EXAMPLES["roteador"])
+    answer = examples["Sou assistente de desenvolvimento, quais NRs devo seguir?"]
+    assert "fora do meu escopo" in answer
+    assert not answer.startswith("ROUTE=")
+    assert examples["Quais NRs são obrigatórias para meu cargo cadastrado?"] == "ROUTE=sst"
+    assert "apenas citar um cargo não basta" in ROTEADOR_PROMPT_COMPLETO
+    assert "Explicar uma NR não é definir obrigações" in SST_DECISAO_PROMPT_COMPLETO
+    assert "não são abuso" in GUARDRAIL_ENTRADA_PROMPT_COMPLETO
