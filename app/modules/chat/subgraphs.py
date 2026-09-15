@@ -306,13 +306,9 @@ def _formatar_nrs(result: dict) -> str:
         lines = []
         for nr in result["nrs"]:
             details = [nr.get("situacao")]
-            if nr.get("ultima_atualizacao"):
-                details.append(f"atualizada em {nr['ultima_atualizacao']}")
             suffix = f" | {' | '.join(details)}" if any(details) else ""
             lines.append(f"- NR-{nr.get('numero')} — {nr.get('nome', 'Sem nome')}{suffix}")
         footer = [source_footer]
-        if any(source.get("tipo") == "mongodb" for source in result.get("fontes", [])):
-            footer.append("Contexto complementar: cadastro interno de NRs do Astro.")
         if pagination.get("tem_proxima_pagina"):
             footer.insert(0, f"Há mais resultados. Solicite a página {page + 1}.")
         return "\n".join([
@@ -325,7 +321,6 @@ def _formatar_nrs(result: dict) -> str:
         "nome": "Nome", "objetivo": "Objetivo", "descricao": "Descrição",
         "aplicabilidade": "Aplicabilidade", "revogada": "Revogada",
         "tempo_reciclagem_meses": "Reciclagem (meses)",
-        "ultima_atualizacao": "Última atualização", "data_criacao": "Criada em",
         "usabilidade": "Usabilidade",
     }
     sections = []
@@ -337,10 +332,6 @@ def _formatar_nrs(result: dict) -> str:
         details = []
         if nr.get("situacao"):
             details.append(f"- Situação na fonte oficial: {nr['situacao'].lower()}")
-        if nr.get("pagina_oficial_atualizada_em"):
-            details.append(
-                f"- Página oficial atualizada em: {nr['pagina_oficial_atualizada_em']}"
-            )
         if nr.get("resumo_oficial"):
             details.append(f"- Informação oficial: {nr['resumo_oficial']}")
         for field, label in labels.items():
@@ -360,8 +351,6 @@ def _formatar_nrs(result: dict) -> str:
             details.append(
                 f"- Fonte oficial: [Ministério do Trabalho e Emprego]({source_url})"
             )
-        if any(source.get("tipo") == "mongodb" for source in result.get("fontes", [])):
-            details.append("- Contexto complementar: cadastro interno do Astro")
         sections.append("\n".join([title, *details]))
     return "\n\n".join(sections)
 

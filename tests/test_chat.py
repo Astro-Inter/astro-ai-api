@@ -298,6 +298,31 @@ def test_next_event_uses_database_without_google_oauth(chat_client, monkeypatch)
     ]
 
 
+@pytest.mark.parametrize("mode", ["listar", "detalhar"])
+def test_nr_responses_omit_metadata_and_keep_content_and_sources(mode):
+    from app.modules.chat.subgraphs import _formatar_nrs
+    result = {
+        "status": "ok", "modo": mode, "quantidade": 1,
+        "fonte": {"url": "https://www.gov.br/nr-30"},
+        "fontes": [{"tipo": "mongodb"}],
+        "nrs": [{
+            "numero": 30, "nome": "Trabalho aquaviário", "situacao": "vigente",
+            "objetivo": "Segurança a bordo", "resumo_oficial": "Orientações oficiais",
+            "ultima_atualizacao": "31/10/2024", "data_criacao": "2026-09-13",
+            "pagina_oficial_atualizada_em": "31/10/2024",
+        }],
+    }
+    answer = _formatar_nrs(result)
+    assert "NR-30" in answer
+    assert "https://www.gov.br/nr-30" in answer
+    for metadata in ("31/10/2024", "2026-09-13", "Criada em", "Última atualização", "Contexto complementar"):
+        assert metadata not in answer
+    if mode == "detalhar":
+        assert "Segurança a bordo" in answer
+        assert "Orientações oficiais" in answer
+    assert result["nrs"][0]["data_criacao"] == "2026-09-13"
+
+
 def test_organization_queries_never_use_deterministic_public_listing():
     from app.modules.chat.subgraphs import _filtros_deterministicos_nrs, _filtros_nrs_organizacao
     assert _filtros_nrs_organizacao("Liste as NRs de todas as unidades").escopo == "empresa"
@@ -458,7 +483,7 @@ def test_sst_agent_consults_multiple_nrs(chat_client, monkeypatch):
     ]
     assert "NR-1" in response.json()["resposta"]
     assert "Objetivo 6" in response.json()["resposta"]
-    assert "Contexto complementar: cadastro interno do Astro" in response.json()["resposta"]
+    assert "Contexto complementar" not in response.json()["resposta"]
     assert collection.query == {"_id": {"$in": [1, 6]}}
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "juiz",
