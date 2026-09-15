@@ -45,6 +45,30 @@ def test_cors_preflight_rejects_unconfigured_origin(monkeypatch):
     assert "access-control-allow-origin" not in response.headers
 
 
+def test_cors_preflight_can_allow_any_origin_explicitly(monkeypatch):
+    monkeypatch.setattr(config, "CORS_ALLOWED_ORIGINS", ["*"])
+
+    with TestClient(create_app()) as client:
+        response = client.options(
+            "/chat/messages",
+            headers={
+                "Origin": "https://qualquer-site.example",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-credentials" not in response.headers
+
+
+def test_cors_origin_parser_accepts_exact_wildcard(monkeypatch):
+    monkeypatch.setenv("CORS_TEST_ORIGINS", "*")
+
+    assert config._cors_origins_env("CORS_TEST_ORIGINS") == ["*"]
+
+
 def test_cors_origin_parser_ignores_unsafe_and_invalid_values(monkeypatch):
     monkeypatch.setenv(
         "CORS_TEST_ORIGINS",

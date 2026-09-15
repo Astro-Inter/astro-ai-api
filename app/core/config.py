@@ -19,9 +19,13 @@ def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int
 
 
 def _cors_origins_env(name: str) -> list[str]:
+    raw_origins = [origin.strip() for origin in os.getenv(name, "").split(",")]
+    if raw_origins == ["*"]:
+        return ["*"]
+
     origins: list[str] = []
-    for raw_origin in os.getenv(name, "").split(","):
-        origin = raw_origin.strip().rstrip("/")
+    for raw_origin in raw_origins:
+        origin = raw_origin.rstrip("/")
         if not origin or origin in {"*", "null"}:
             continue
         parsed = urlsplit(origin)

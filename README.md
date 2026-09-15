@@ -109,9 +109,13 @@ o esquema e o domínio, sem caminho ou barra final. Por exemplo:
 CORS_ALLOWED_ORIGINS=http://localhost:4173,https://astro-inter.github.io
 ```
 
-A API aceita somente origens HTTP/HTTPS explícitas; `*`, `null`, URLs com caminhos e
-valores inválidos são ignorados. Os métodos liberados são `GET`, `POST` e `OPTIONS`,
-com os headers `Authorization` e `Content-Type`.
+A API aceita várias origens HTTP/HTTPS explícitas separadas por vírgula. Para um
+ambiente temporário de testes, o valor exato `CORS_ALLOWED_ORIGINS=*` permite qualquer
+origem; não combine o curinga com outros valores. Essa opção mantém credenciais CORS
+desabilitadas, mas amplia a superfície de abuso das rotas públicas e deve ser evitada
+em produção. `null`, URLs com caminhos e valores inválidos são ignorados. Os métodos
+liberados são `GET`, `POST` e `OPTIONS`, com os headers `Authorization` e
+`Content-Type`.
 
 ## Chat e grafos (SCRUM-186)
 
