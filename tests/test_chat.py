@@ -151,6 +151,7 @@ def test_specialist_flow(chat_client, domain):
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
         '"buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs", '
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
+        '"consultar_nrs_organizacao", '
         '"consultar_orientacoes_sst", "consultar_fontes_publicas", '
             '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
             '"consultar_acessos", "consultar_treinamentos", "consultar_eventos", '
@@ -215,6 +216,46 @@ def test_agenda_agent_consults_training_instead_of_sst(chat_client, monkeypatch)
     assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
 
 
+@pytest.mark.parametrize("message,scope", [
+    ("quais nrs da minha empresa", "empresa"),
+    ("Quais NRs da minha unidade atual?", "unidade"),
+])
+def test_organization_nrs_do_not_use_public_catalog(chat_client, monkeypatch, message, scope):
+    from app.modules.sst import tools as sst_tools
+    client, model, _ = chat_client
+    model.route = "faq"
+
+    class Cursor:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def execute(self, query, params):
+            assert params == ["user-a", scope, scope]
+            assert "SELECT DISTINCT" in query
+        def fetchall(self):
+            return [("Empresa teste", "Matriz", 6, "EPI", False)]
+
+    class Connection:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: Connection())
+    monkeypatch.setattr(sst_tools, "get_fetch_mcp_client", lambda: pytest.fail("Não deve consultar catálogo público"))
+    response = client.post("/chat/messages", json={"message": message})
+    assert response.status_code == 200
+    assert "NR-6: EPI" in response.json()["resposta"]
+    assert "38" not in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == [
+        "guardrail_entrada", "roteador", "sst", "consultar_nrs_organizacao", "juiz", "guardrail_saida",
+    ]
+
+
 def test_next_event_uses_database_without_google_oauth(chat_client, monkeypatch):
     from datetime import datetime
     client, model, _ = chat_client
@@ -255,6 +296,13 @@ def test_next_event_uses_database_without_google_oauth(chat_client, monkeypatch)
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "agenda", "consultar_eventos", "juiz", "guardrail_saida",
     ]
+
+
+def test_organization_queries_never_use_deterministic_public_listing():
+    from app.modules.chat.subgraphs import _filtros_deterministicos_nrs, _filtros_nrs_organizacao
+    assert _filtros_nrs_organizacao("Liste as NRs de todas as unidades").escopo == "empresa"
+    assert _filtros_deterministicos_nrs("Quais NRs da minha empresa?") is None
+    assert _filtros_nrs_organizacao("Quais NRs da minha empresa ou da minha unidade?") is None
 
 
 def test_internal_event_parser_does_not_override_google_or_writes():

@@ -119,6 +119,8 @@ pedido para gerar arquivo.
   recebe apenas a pergunta e a resposta aprovadas pela aplicação.
 
 ### CRITÉRIOS DE ENCAMINHAMENTO
+- NRs da empresa ou da unidade atual são SST e usam `consultar_nrs_organizacao`.
+  Não responda com o catálogo genérico nacional como se fosse o da empresa.
 - Perguntar pelo próximo evento é Agenda. Sem menção explícita ao Google
   Calendar, os eventos são consultados no banco interno, sem exigir OAuth.
 - Priorize a intenção: consultar treinamentos atribuídos ou marcar um compromisso

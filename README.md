@@ -377,6 +377,16 @@ cinco minutos antes de tentar a Mistral novamente.
 
 ### Tool de consulta de NRs do SST
 
+`consultar_nrs_organizacao` consulta os vínculos do PostgreSQL com dois escopos:
+`unidade`, para a unidade atual do usuário, e `empresa`, para a união distinta
+das NRs vinculadas a todas as unidades do mesmo workspace, inclusive inativas.
+Empresa e unidade são resolvidas pelo Firebase UID autenticado; não existem
+filtros de UID, workspace ou unidade de terceiros. A resposta mostra número,
+título, quantidade sem duplicatas e revogação quando cadastrada. Sem vínculo
+organizacional ou registros, informa essa limitação, sem usar o catálogo público
+como substituto. Isso não comprova conformidade nem obrigatoriedade por cargo.
+Exemplos: “Quais NRs da minha empresa?” e “Quais NRs da minha unidade atual?”.
+
 `app/modules/sst/tools.py` registra a tool LangChain `consultar_nrs`, somente
 leitura. A fonte primária é o portal oficial do Ministério do Trabalho e Emprego,
 consultado pelo servidor oficial MCP Fetch; a collection `nrs` do MongoDB fornece

@@ -117,6 +117,7 @@ class ChatService:
                             "buscar_historico", "consultar_normas",
                             "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+                            "consultar_nrs_organizacao",
                             "consultar_orientacoes_sst", "consultar_fontes_publicas",
                             "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                             "consultar_acessos",
@@ -151,6 +152,8 @@ class ChatService:
                                    "do usuario; criacao exige previa e confirmacao explicita. "
                                    "PDFs podem ser gerados da resposta revisada quando pedidos "
                                    "explicitamente; a aplicacao fornece o link temporario. "
+                                   "NRs da unidade ou empresa usam vínculos unidade_nr no PostgreSQL "
+                                   "do workspace autenticado, não o catálogo público genérico. "
                                    "Nao ha outras operacoes de escrita. NRs usam primeiro o portal "
                                    "oficial do MTE via MCP Fetch; a collection MongoDB autorizada "
                                    "serve como contexto interno e fallback. "

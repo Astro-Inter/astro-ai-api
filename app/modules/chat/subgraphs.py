@@ -18,6 +18,7 @@ from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision, TOOLS
 from app.modules.shared.public_sources import consultar_fontes_publicas
 from app.modules.sst.tools import (
     ConsultarNrsArgs,
+    ConsultarNrsOrganizacaoArgs,
     ConsultarOrientacoesSstArgs,
     SstToolDecision,
     TOOLS_SST,
@@ -75,6 +76,22 @@ def _pedido_fontes_publicas_faq(message: str) -> bool:
     ))
 
 
+def _filtros_nrs_organizacao(message: str) -> ConsultarNrsOrganizacaoArgs | None:
+    normalized = "".join(
+        c for c in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(c)
+    )
+    if not re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized):
+        return None
+    if not re.search(r"\b(quais|quantas|liste|listar|listagem|todas|todas as|ver|mostre)\b", normalized):
+        return None
+    company = bool(re.search(r"\b(minha empresa|da empresa|meu workspace|do workspace|todas as unidades)\b", normalized))
+    unit = bool(re.search(r"\b(minha unidade|da minha unidade|unidade atual|desta unidade)\b", normalized))
+    if company == unit or re.search(r"\b(ou|outra|outro|nao)\b", normalized):
+        return None
+    return ConsultarNrsOrganizacaoArgs(escopo="empresa" if company else "unidade")
+
+
 def _filtros_deterministicos_nrs(message: str) -> ConsultarNrsArgs | None:
     """Reconhece consultas objetivas de NR sem depender de um provedor de IA."""
     normalized = "".join(
@@ -83,6 +100,8 @@ def _filtros_deterministicos_nrs(message: str) -> ConsultarNrsArgs | None:
     )
     if not re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized):
         return None
+    if re.search(r"\b(empresa|workspace|unidade|unidades)\b", normalized):
+        return None  # O catálogo geral não comprova vínculos organizacionais.
 
     numbers = [int(value) for value in re.findall(r"\bnr\s*-?\s*(\d{1,2})\b", normalized)]
     grouped = re.search(
@@ -400,6 +419,25 @@ def _evidencia_orientacoes_sst(result: dict) -> dict:
         "protocolo": result.get("protocolo"),
         "formatacao": "resposta gerada deterministicamente a partir dos trechos oficiais",
     }
+
+
+def _formatar_nrs_organizacao(result: dict) -> str:
+    if result.get("status") != "ok":
+        return result.get("mensagem", "Não foi possível consultar as NRs da organização.")
+    scope = (
+        f"empresa {result['empresa']} (união de todas as unidades)"
+        if result["escopo"] == "empresa" else f"unidade {result['unidade']}"
+    )
+    if not result["nrs"]:
+        return f"Não encontrei NRs vinculadas à {scope} no Astro."
+    lines = [f"NRs vinculadas à {scope}: {result['quantidade']} norma(s) distinta(s).", ""]
+    lines += [
+        f"- NR-{nr['numero']}: {nr['titulo']}"
+        + (" (revogada)" if nr.get("revogada") else "")
+        for nr in result["nrs"]
+    ]
+    lines += ["", "Esses vínculos não comprovam a conformidade da empresa nem a obrigatoriedade para o seu cargo."]
+    return "\n".join(lines)
 
 
 def _formatar_nrs_obrigatorias(result: dict) -> str:
@@ -754,6 +792,13 @@ def build_rh_graph(model: AgentModel):
 
 def build_sst_graph(model: AgentModel):
     async def decide(state: ChatState):
+        organization = _filtros_nrs_organizacao(state["mensagem"])
+        if organization is not None:
+            return {
+                "sst_route": "tool",
+                "sst_decision": SstToolDecision(acao="consultar_nrs_organizacao", filtros=organization),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
         if _pedido_situacao_nrs(state["mensagem"]):
             return {
                 "sst_route": "tool",
@@ -856,6 +901,8 @@ def build_sst_graph(model: AgentModel):
             "evidencia_tool": {"nome": tool_name, "resultado": (
                 _evidencia_orientacoes_sst(result)
                 if tool_name == "consultar_orientacoes_sst"
+                else result
+                if tool_name == "consultar_nrs_organizacao"
                 else _evidencia_situacao_nrs(result)
                 if tool_name == "consultar_situacao_nrs"
                 else _evidencia_nrs_obrigatorias(result)
@@ -869,6 +916,8 @@ def build_sst_graph(model: AgentModel):
             "candidato": (
                 _formatar_orientacoes_sst(result)
                 if tool_name == "consultar_orientacoes_sst"
+                else _formatar_nrs_organizacao(result)
+                if tool_name == "consultar_nrs_organizacao"
                 else _formatar_situacao_nrs(result)
                 if tool_name == "consultar_situacao_nrs"
                 else _formatar_nrs_obrigatorias(result)

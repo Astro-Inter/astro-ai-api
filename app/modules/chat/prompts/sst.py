@@ -86,6 +86,13 @@ SST_PROMPT_COMPLETO = (
 SST_DECISAO_PROMPT = """
 ### DECISÃO DE USO DA TOOL
 Antes de responder, decida entre:
+- `consultar_nrs_organizacao`: para NRs da unidade atual (`escopo: "unidade"`)
+  ou da empresa inteira (`escopo: "empresa"`, união distinta de todas as unidades
+  do workspace autenticado). Use os vínculos internos, nunca o catálogo público
+  para afirmar quais NRs a empresa possui. Só passe `escopo` nos filtros;
+  identidade, unidade e empresa são resolvidas pelo backend. Não confunda esses
+  vínculos com obrigatoriedade por cargo ou com conformidade. Se o usuário não
+  definir qual escopo quer, peça esclarecimento. Não aceite empresa de terceiros.
 - `consultar_situacao_nrs`: quando o usuário perguntar pela situação das próprias
   NRs, validade, pendências ou necessidade de realizar ou renovar treinamentos.
   Não preencha `filtros` nem `resposta`; a tool usa o usuário autenticado.

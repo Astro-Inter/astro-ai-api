@@ -15,6 +15,7 @@ from app.modules.sst.tools import (
     consultar_orientacoes_sst,
 )
 from app.modules.sst.tools import consultar_nrs_obrigatorias, consultar_situacao_nrs
+from app.modules.sst.tools import ConsultarNrsOrganizacaoArgs, consultar_nrs_organizacao
 
 
 class FakeCursor:
@@ -319,6 +320,7 @@ def test_sst_tool_is_registered_with_safe_schema():
     assert consultar_nrs_obrigatorias.name == "consultar_nrs_obrigatorias"
     assert consultar_situacao_nrs.name == "consultar_situacao_nrs"
     assert sst_tools.TOOLS_SST == [
+        consultar_nrs_organizacao,
         consultar_nrs, consultar_orientacoes_sst,
         consultar_nrs_obrigatorias, consultar_situacao_nrs,
     ]
@@ -327,6 +329,66 @@ def test_sst_tool_is_registered_with_safe_schema():
     assert "query" not in properties
     assert consultar_nrs_obrigatorias.args_schema.model_json_schema()["properties"] == {}
     assert consultar_situacao_nrs.args_schema.model_json_schema()["properties"] == {}
+
+
+@pytest.mark.parametrize("scope", ["unidade", "empresa"])
+def test_organization_nrs_uses_authenticated_workspace_and_distinct_union(monkeypatch, scope):
+    connection = FakePostgresConnection([
+        ("Astro", "Matriz", 6, "EPI", False),
+        ("Astro", "Matriz", 27, "Registro profissional", True),
+    ])
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
+    result = consultar_nrs_organizacao.invoke({"escopo": scope}, config={"configurable": {
+        "usuario_atual": {"uid": "owner", "role": "FUNCIONARIO"},
+    }})
+    assert result["quantidade"] == 2
+    assert result["escopo"] == scope
+    assert result["nrs"][1]["revogada"] is True
+    assert connection.db_cursor.parameters == ["owner", scope, scope]
+    query = connection.db_cursor.query
+    assert "SELECT DISTINCT" in query
+    assert "usuario.firebase_uid = %s" in query
+    assert "alvo.workspace_id = contexto.workspace_id" in query
+    assert "alvo.id_unidade = contexto.id_unidade" in query
+    assert "unidade_nr.unidade_id = alvo.id_unidade" in query
+    assert "cargo_nr" not in query
+    assert "ativo = TRUE" not in query  # Todas as unidades, não apenas as ativas.
+    assert "owner" not in str(result)
+
+
+@pytest.mark.parametrize("rows,status", [([], "nao_aplicavel"), ([("Astro", "Matriz", None, None, None)], "ok")])
+def test_organization_nrs_handles_no_affiliation_and_no_assignments(monkeypatch, rows, status):
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: FakePostgresConnection(rows))
+    result = consultar_nrs_organizacao.invoke({}, config={"configurable": {
+        "usuario_atual": {"uid": "owner", "role": "ADMIN"},
+    }})
+    assert result["status"] == status
+    if rows:
+        assert result["nrs"] == []
+        assert result["quantidade"] == 0
+
+
+def test_organization_schema_rejects_external_selectors():
+    for filters in ({"workspace_id": 2}, {"uid": "someone"}, {"escopo": "todas_empresas"}):
+        with pytest.raises(ValidationError):
+            ConsultarNrsOrganizacaoArgs.model_validate(filters)
+    decision = SstToolDecision.model_validate({"acao": "consultar_nrs_organizacao", "filtros": {"escopo": "empresa"}})
+    assert isinstance(decision.filtros, ConsultarNrsOrganizacaoArgs)
+
+
+def test_organization_missing_identity_and_database_failure_are_not_empty_success(monkeypatch):
+    assert consultar_nrs_organizacao.invoke({})["status"] == "erro"
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    def unavailable():
+        raise RuntimeError("Banco indisponível")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", unavailable)
+    result = consultar_nrs_organizacao.invoke({"escopo": "empresa"}, config={"configurable": {
+        "usuario_atual": {"uid": "owner", "role": "GESTOR"},
+    }})
+    assert result["status"] == "indisponivel"
+    assert "nrs" not in result
 
 
 def test_consultar_nrs_obrigatorias_uses_authenticated_user_and_current_schema(monkeypatch):

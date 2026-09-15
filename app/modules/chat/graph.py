@@ -19,6 +19,7 @@ from app.modules.chat.state import ChatState
 from app.modules.chat.subgraphs import (
     _filtros_treinamentos,
     _filtros_eventos,
+    _filtros_nrs_organizacao,
     build_agenda_graph,
     build_faq_graph,
     build_rh_graph,
@@ -457,7 +458,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
-        if _pedido_de_publicacao_sst(state["mensagem"]):
+        if (_pedido_de_publicacao_sst(state["mensagem"])
+                or _filtros_nrs_organizacao(state["mensagem"]) is not None):
             return {
                 "rota": "sst",
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
@@ -787,6 +789,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             and evidence.get("nome") in {
                 "buscar_outros_usuarios", "buscar_meus_dados", "consultar_nrs",
                 "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
+                "consultar_nrs_organizacao",
                 "consultar_orientacoes_sst",
                 "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
                 "consultar_acessos",

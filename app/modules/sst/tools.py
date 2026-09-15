@@ -135,28 +135,41 @@ class ConsultarOrientacoesSstArgs(BaseModel):
         return values
 
 
+class ConsultarNrsOrganizacaoArgs(BaseModel):
+    """O escopo é público; empresa e unidade vêm apenas da autenticação."""
+
+    model_config = ConfigDict(extra="forbid")
+    escopo: Literal["unidade", "empresa"] = "unidade"
+
+
 class SstToolDecision(BaseModel):
     """Decisão do agente SST entre consultar NRs ou orientar sem consulta."""
 
     model_config = ConfigDict(extra="forbid")
 
     acao: Literal[
+        "consultar_nrs_organizacao",
         "consultar_nrs",
         "consultar_nrs_obrigatorias",
         "consultar_situacao_nrs",
         "consultar_orientacoes_sst",
         "responder",
     ]
-    filtros: ConsultarOrientacoesSstArgs | ConsultarNrsArgs | None = None
+    filtros: ConsultarNrsOrganizacaoArgs | ConsultarOrientacoesSstArgs | ConsultarNrsArgs | None = None
     resposta: SpecialistResult | None = None
 
     @model_validator(mode="before")
     @classmethod
     def normalizar_consulta_sem_filtros(cls, data):
+        if isinstance(data, dict) and data.get("acao") == "consultar_nrs_organizacao":
+            data = {**data, "filtros": ConsultarNrsOrganizacaoArgs.model_validate(data.get("filtros") or {})}
         if isinstance(data, dict) and data.get("acao") == "consultar_nrs" \
                 and data.get("filtros") is None:
             data = dict(data)
-            data["filtros"] = {}
+            data["filtros"] = ConsultarNrsArgs()
+        if isinstance(data, dict) and data.get("acao") == "consultar_nrs" \
+                and not isinstance(data.get("filtros"), ConsultarNrsArgs):
+            data = {**data, "filtros": ConsultarNrsArgs.model_validate(data["filtros"])}
         if isinstance(data, dict) and data.get("acao") in {
             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
         }:
@@ -166,6 +179,10 @@ class SstToolDecision(BaseModel):
 
     @model_validator(mode="after")
     def validar_acao(self):
+        if self.acao == "consultar_nrs_organizacao" and (
+            not isinstance(self.filtros, ConsultarNrsOrganizacaoArgs) or self.resposta is not None
+        ):
+            raise ValueError("Consulta organizacional exige filtros e nao aceita resposta.")
         if self.acao == "consultar_nrs" and (
             not isinstance(self.filtros, ConsultarNrsArgs) or self.resposta is not None
         ):
@@ -525,6 +542,59 @@ async def consultar_orientacoes_sst(
     )
 
 
+@tool("consultar_nrs_organizacao", args_schema=ConsultarNrsOrganizacaoArgs)
+def consultar_nrs_organizacao(
+    escopo: Literal["unidade", "empresa"] = "unidade",
+    config: RunnableConfig = None,
+) -> dict:
+    """Lista NRs vinculadas à unidade atual ou à união das unidades da empresa.
+
+    Empresa significa o workspace da unidade do usuário autenticado. A consulta
+    não aplica cargo, não deduz conformidade e não acessa outras empresas.
+    Inclui vínculos de todas as unidades, inclusive inativas, e informa revogação.
+    """
+    user = _usuario_do_contexto(config)
+    if user is None:
+        return {"status": "erro", "mensagem": "Usuário não identificado no contexto."}
+    if not app_config.DATABASE_URL:
+        return {"status": "indisponivel", "mensagem": "Consulta das NRs da organização indisponível."}
+    query = """
+        WITH contexto AS (
+            SELECT atual.id_unidade, atual.workspace_id,
+                   atual.nome AS unidade, workspace.nome AS empresa
+              FROM usuario
+              JOIN unidade AS atual ON atual.id_unidade = usuario.unidade_id
+              JOIN workspace ON workspace.id_workspace = atual.workspace_id
+             WHERE usuario.firebase_uid = %s
+        )
+        SELECT DISTINCT contexto.empresa, contexto.unidade,
+               nr.codigo_nr, nr.titulo, nr.revogada
+          FROM contexto
+          LEFT JOIN unidade AS alvo ON (
+              (%s = 'empresa' AND alvo.workspace_id = contexto.workspace_id)
+              OR (%s = 'unidade' AND alvo.id_unidade = contexto.id_unidade)
+          )
+          LEFT JOIN unidade_nr ON unidade_nr.unidade_id = alvo.id_unidade
+          LEFT JOIN nr_catalogo AS nr ON nr.codigo_nr = unidade_nr.nr_id
+         ORDER BY nr.codigo_nr NULLS LAST
+    """
+    try:
+        with get_postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, [user.uid, escopo, escopo])
+                rows = cursor.fetchall()
+    except Exception:
+        return {"status": "indisponivel", "mensagem": "Consulta das NRs da organização indisponível."}
+    if not rows:
+        return {"status": "nao_aplicavel", "mensagem": "Não encontrei unidade e empresa vinculadas ao seu cadastro."}
+    nrs = [{"numero": row[2], "titulo": row[3], "revogada": row[4]}
+           for row in rows if row[2] is not None]
+    return {
+        "status": "ok", "escopo": escopo, "empresa": rows[0][0],
+        "unidade": rows[0][1], "quantidade": len(nrs), "nrs": nrs,
+    }
+
+
 @tool("consultar_nrs_obrigatorias")
 def consultar_nrs_obrigatorias(config: RunnableConfig = None) -> dict:
     """Consulta as NRs vigentes obrigatórias para o cargo do usuário autenticado.
@@ -771,6 +841,7 @@ def consultar_situacao_nrs(config: RunnableConfig = None) -> dict:
 
 
 TOOLS_SST = [
+    consultar_nrs_organizacao,
     consultar_nrs,
     consultar_orientacoes_sst,
     consultar_nrs_obrigatorias,
