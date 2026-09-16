@@ -356,6 +356,11 @@ uma mensagem posterior; o ID estável evita duplicar o evento em um retry.
 `buscar_meus_dados` localiza exclusivamente o usuário autenticado pelo Firebase UID
 do `CurrentUser` e retorna nome, e-mail, CPF, perfil, cargo, unidade, modalidade,
 status e data de cadastro. Ela não expõe filtros ou identificadores ao modelo.
+Perguntas inequívocas como “qual é meu nome?”, “como me chamo?” e “qual meu
+e-mail/cargo/unidade?” passam por validação determinística de intenção no guardrail
+e seguem diretamente para RH. Autenticação e restrição ao próprio usuário
+permanecem obrigatórias. Nesses pedidos, apenas o campo solicitado é enviado aos
+revisores e exibido na resposta, sem CPF ou outros dados desnecessários.
 
 A tool `buscar_outros_usuarios` pesquisa exclusivamente outras pessoas no PostgreSQL.
 Ela recebe `CurrentUser` pelo contexto

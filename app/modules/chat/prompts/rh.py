@@ -82,6 +82,9 @@ RH_DECISAO_TOOL_PROMPT = """
 Antes de responder, decida entre:
 - `buscar_meus_dados`: quando o usuário pedir os próprios dados. Não preencha
   `filtros` nem `resposta`.
+  Exemplos: "qual é meu nome?", "como me chamo?", "qual meu e-mail/cargo/unidade?".
+  Consulte a ferramenta antes de responder; não use mensagens antigas como
+  cadastro, não peça UID e responda somente a informação solicitada.
 - `buscar_outros_usuarios`: quando o pedido depender de dados de outras pessoas.
   Preencha somente `filtros`; use `{}` quando não houver filtro e não antecipe
   uma resposta.

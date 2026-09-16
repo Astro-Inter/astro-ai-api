@@ -38,6 +38,8 @@ para recusar uma pergunta que não peça essa definição de obrigatoriedade.
 - rh: dados próprios, busca/listagem de funcionários e casos individuais de RH
   (férias, benefícios, admissões). Listagem não exige nome; "só um" após uma
   listagem ajusta a quantidade. A ferramenta limita unidade/workspace.
+  Perguntas "qual é meu nome?", "como me chamo?", "qual meu e-mail/cargo/unidade?"
+  são RH, usando buscar_meus_dados; não responda do histórico nem invente dados.
 - sst: conteúdo de NRs; NRs vinculadas à empresa/unidade; obrigatoriedade por
   cargo, validade e pendências; riscos, EPI, incidentes e prevenção. Cartilhas,
   manuais e orientações oficiais de MTE, Fundacentro ou Anvisa sobre SST também

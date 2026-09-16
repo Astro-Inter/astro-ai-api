@@ -31,12 +31,25 @@ SST_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_
 AGENDA_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_AGENDA}
 
 
+def _campo_dado_proprio(message: str) -> str | None:
+    """Reconhece somente perguntas completas e inequívocas sobre o próprio cadastro."""
+    normalized = "".join(c for c in unicodedata.normalize("NFKD", message.casefold()) if not unicodedata.combining(c)).strip().rstrip(".!?").strip()
+    if re.fullmatch(r"(?:como (?:eu )?me chamo|voce sabe (?:qual e )?meu nome)", normalized):
+        return "nome"
+    match = re.fullmatch(
+        r"(?:qual (?:e |eh )?(?:o |a )?|(?:me diga|me fale|mostre|informe) (?:qual e )?(?:o |a )?)"
+        r"(?:meu|minha) (nome|e-?mail|cargo|unidade)(?: (?:cadastrad[oa]|no cadastro|no astro))?",
+        normalized,
+    )
+    return {"email": "email", "e-mail": "email"}.get(match.group(1), match.group(1)) if match else None
+
+
 def _pedido_dos_proprios_dados(message: str) -> bool:
     normalized = "".join(
         character for character in unicodedata.normalize("NFKD", message.casefold())
         if not unicodedata.combining(character)
     )
-    return bool(re.search(
+    return _campo_dado_proprio(message) is not None or bool(re.search(
         r"\b(meus dados|meus dados pessoais|meus dados profissionais|"
         r"minhas informacoes|meu cadastro|meu perfil profissional)\b",
         normalized,
@@ -753,6 +766,12 @@ def build_rh_graph(model: AgentModel):
             tool_input,
             config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}},
         )
+        field = _campo_dado_proprio(state["mensagem"])
+        if tool_name == "buscar_meus_dados" and field and result.get("status") == "ok":
+            # Não envia CPF ou outros dados não solicitados aos agentes revisores.
+            result = {**result, "dados": {field: result.get("dados", {}).get(field)}}
+            if result["dados"][field] is None:
+                result = {**result, "status": "sem_dados", "mensagem": f"Não encontrei o campo {field} no seu cadastro."}
         tool_status = result.get("status")
         statuses = {
             "ok": "concluido",

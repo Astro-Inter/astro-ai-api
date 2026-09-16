@@ -21,6 +21,7 @@ from app.modules.chat.subgraphs import (
     _filtros_eventos,
     _filtros_nrs_organizacao,
     _pedido_conformidade_terceiro,
+    _campo_dado_proprio,
     build_agenda_graph,
     build_faq_graph,
     build_rh_graph,
@@ -356,6 +357,13 @@ def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
 
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def input_guard(state: ChatState):
+        if _campo_dado_proprio(state["mensagem"]) is not None:
+            # Intenção read-only estritamente reconhecida. Identidade e acesso
+            # continuam verificados pela autenticação e pela tool de dados próprios.
+            return {
+                "rota": "roteador", "resposta": "", "guardar_turno": True,
+                "pdf_solicitado": False, "agentes_chamados": ["guardrail_entrada"],
+            }
         pending = state.get("acao_pendente")
         if (
             isinstance(pending, dict)
@@ -389,6 +397,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     async def router(state: ChatState):
+        if _campo_dado_proprio(state["mensagem"]) is not None:
+            return {"rota": "rh", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         memory_request = _pedido_de_historico_ia(state["mensagem"])
         if memory_request is not None and not state.get("memoria_consultada") and search_memory is not None:
             return {
