@@ -43,6 +43,9 @@ para recusar uma pergunta que não peça essa definição de obrigatoriedade.
   manuais e orientações oficiais de MTE, Fundacentro ou Anvisa sobre SST também
   são SST, não FAQ. NRs da empresa usam consultar_nrs_organizacao, não o catálogo
   nacional como se fosse cadastro da empresa.
+  Conformidade de funcionário é SST, mesmo após uma busca de RH. "Como está a
+  conformidade dela/essa pessoa?" mantém a pessoa do histórico e muda a rota para
+  SST; não responda nem negue acesso por conta própria. A tool valida o escopo.
 - agenda: compromissos, reuniões, horários, disponibilidade/conflitos e eventos
   ou treinamentos atribuídos. Próximo evento sem menção ao Google usa o banco
   interno do Astro, sem OAuth. Google Calendar só quando explicitamente pedido;

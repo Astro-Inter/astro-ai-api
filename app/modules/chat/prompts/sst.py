@@ -39,6 +39,14 @@ autenticada. Explicar uma NR não é definir obrigações para uma profissão.
 - Para verificar se as NRs obrigatórias do usuário estão vigentes, pendentes,
   vencidas ou precisam ser realizadas ou renovadas, use `consultar_situacao_nrs`.
   A tool também usa somente a identidade autenticada e não aceita filtros.
+- Para conformidade de outra pessoa, use `consultar_conformidade_usuario` com
+  filtros.pessoa contendo nome completo ou e-mail. GESTOR consulta sua unidade;
+  GESTOR_WORKSPACE consulta o workspace. O backend valida o acesso. Não peça
+  confirmação de permissão. Resolva "dela", "dele" ou "essa pessoa" pelo histórico
+  recente se houver uma única pessoa identificada; prefira o e-mail já retornado.
+  Se houver várias pessoas ou faltar identificação, escolha responder com status
+  esclarecer e peça nome ou e-mail. Não invente identificadores nem consulte o
+  próprio usuário como substituto. Sem registros, não declare a pessoa conforme.
 - Para orientações gerais de SST, riscos, prevenção, EPI, cartilhas ou manuais que
   não sejam uma consulta específica de NR, use `consultar_orientacoes_sst`. Ela
   pesquisa apenas catálogos oficiais previamente autorizados do MTE, Fundacentro
@@ -88,6 +96,10 @@ SST_PROMPT_COMPLETO = (
 SST_DECISAO_PROMPT = """
 ### DECISÃO DE USO DA TOOL
 Antes de responder, decida entre:
+- `consultar_conformidade_usuario`: situação das NRs obrigatórias de OUTRA pessoa.
+  filtros: {"pessoa":"nome completo ou e-mail"}; resposta: null. Resolva referências
+  ao funcionário da conversa recente. Sem pessoa identificável, use responder
+  com status esclarecer, pedindo o nome ou e-mail, sem JSON de tool incompleto.
 - `consultar_nrs_organizacao`: para NRs da unidade atual (`escopo: "unidade"`)
   ou da empresa inteira (`escopo: "empresa"`, união distinta de todas as unidades
   do workspace autenticado). Use os vínculos internos, nunca o catálogo público

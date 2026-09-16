@@ -18,6 +18,7 @@ from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision, TOOLS
 from app.modules.shared.public_sources import consultar_fontes_publicas
 from app.modules.sst.tools import (
     ConsultarNrsArgs,
+    ConsultarConformidadeUsuarioArgs,
     ConsultarNrsOrganizacaoArgs,
     ConsultarOrientacoesSstArgs,
     SstToolDecision,
@@ -172,6 +173,31 @@ def _pedido_nrs_obrigatorias(message: str) -> bool:
         normalized,
     ))
     return mentions_nr and obligation
+
+
+def _pedido_conformidade_terceiro(message: str) -> bool:
+    normalized = "".join(c for c in unicodedata.normalize("NFKD", message.casefold()) if not unicodedata.combining(c))
+    return bool(re.search(r"\bconformidade\b", normalized) and not re.search(r"\b(?:minha|meu|para mim)\b", normalized))
+
+
+def _filtros_conformidade(message: str, history: list[dict] | None = None) -> ConsultarConformidadeUsuarioArgs | None:
+    if not _pedido_conformidade_terceiro(message):
+        return None
+    match = re.search(r"\bconformidade\s+(?:de|do|da)\s+(?:(?:funcion[aá]ri[oa]|pessoa)\s+)?(.+?)[?!.,]*$", message, re.IGNORECASE)
+    person = match.group(1).strip() if match else None
+    if person is None or person.casefold() in {"ela", "ele", "dela", "dele", "essa pessoa", "esta pessoa"}:
+        # Só resolve automaticamente uma referência ao último resultado de RH
+        # no formato produzido pela aplicação, contendo exatamente uma pessoa.
+        if not re.search(r"\b(?:del[ae]|dess[ae] pessoa|ess[ae] pessoa|el[ae])\b", message, re.IGNORECASE):
+            return None
+        last_answer = next((item["content"] for item in reversed(history or []) if item["role"] == "assistant"), "")
+        if not re.match(r"Encontrei 1 usuário\(s\):", last_answer):
+            return None
+        emails = set(re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", last_answer))
+        if len(emails) != 1:
+            return None
+        person = emails.pop()
+    return ConsultarConformidadeUsuarioArgs(pessoa=person)
 
 
 def _pedido_situacao_nrs(message: str) -> bool:
@@ -471,6 +497,12 @@ def _evidencia_nrs_obrigatorias(result: dict) -> dict:
 
 
 def _formatar_situacao_nrs(result: dict) -> str:
+    if result.get("consulta_terceiro"):
+        if result.get("status") != "ok":
+            return result.get("mensagem", "Não foi possível consultar a conformidade.")
+        formatted = _formatar_situacao_nrs({k: v for k, v in result.items() if k != "consulta_terceiro"})
+        formatted = formatted.replace("Nenhuma NR vigente está vinculada ao seu cargo.", "Nenhuma NR vigente está vinculada ao cargo cadastrado desta pessoa.")
+        return f"Conformidade registrada de {result['usuario']}:\n\n{formatted}\n\nA consulta considera as NRs atribuídas ao cargo e à unidade no Astro; não certifica conformidade legal completa."
     if result.get("status") == "nao_aplicavel":
         return result["mensagem"]
     if result.get("status") == "sem_dados":
@@ -665,6 +697,8 @@ def _evidencia_google_calendar(tool_name: str, result: dict) -> dict:
 def _evidencia_situacao_nrs(result: dict) -> dict:
     return {
         "status": result.get("status"),
+        "usuario": result.get("usuario"),
+        "mensagem": result.get("mensagem"),
         "cargo": result.get("cargo"),
         "unidade": result.get("unidade"),
         "data_referencia": result.get("data_referencia"),
@@ -781,6 +815,13 @@ def build_rh_graph(model: AgentModel):
 
 def build_sst_graph(model: AgentModel):
     async def decide(state: ChatState):
+        conformidade = _filtros_conformidade(state["mensagem"], state["historico"])
+        if conformidade is not None:
+            return {
+                "sst_route": "tool",
+                "sst_decision": SstToolDecision(acao="consultar_conformidade_usuario", filtros=conformidade),
+                "agentes_chamados": state["agentes_chamados"] + ["sst"],
+            }
         organization = _filtros_nrs_organizacao(state["mensagem"])
         if organization is not None:
             return {
@@ -842,6 +883,7 @@ def build_sst_graph(model: AgentModel):
             "erro": "nao_autorizado",
             "nao_aplicavel": "nao_autorizado",
             "nao_autorizado": "nao_autorizado",
+            "esclarecer": "esclarecer",
         }
         if tool_name == "consultar_orientacoes_sst":
             messages = {
@@ -864,6 +906,8 @@ def build_sst_graph(model: AgentModel):
                 "nao_aplicavel": result.get(
                     "mensagem", "A consulta não se aplica ao perfil autenticado.",
                 ),
+                "esclarecer": result.get("mensagem", "Informe o nome ou e-mail da pessoa."),
+                "nao_autorizado": result.get("mensagem", "Consulta não autorizada."),
             }
         if tool_name in {"consultar_nrs", "consultar_orientacoes_sst"}:
             source_items = [
@@ -893,7 +937,7 @@ def build_sst_graph(model: AgentModel):
                 else result
                 if tool_name == "consultar_nrs_organizacao"
                 else _evidencia_situacao_nrs(result)
-                if tool_name == "consultar_situacao_nrs"
+                if tool_name in {"consultar_situacao_nrs", "consultar_conformidade_usuario"}
                 else _evidencia_nrs_obrigatorias(result)
                 if tool_name == "consultar_nrs_obrigatorias"
                 else _evidencia_compacta_nrs(result)
@@ -908,7 +952,7 @@ def build_sst_graph(model: AgentModel):
                 else _formatar_nrs_organizacao(result)
                 if tool_name == "consultar_nrs_organizacao"
                 else _formatar_situacao_nrs(result)
-                if tool_name == "consultar_situacao_nrs"
+                if tool_name in {"consultar_situacao_nrs", "consultar_conformidade_usuario"}
                 else _formatar_nrs_obrigatorias(result)
                 if tool_name == "consultar_nrs_obrigatorias"
                 else _formatar_nrs(result)

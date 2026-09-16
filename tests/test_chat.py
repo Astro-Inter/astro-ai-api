@@ -618,6 +618,43 @@ def test_sst_agent_consults_mandatory_nrs_for_authenticated_user(chat_client, mo
     assert connection.db_cursor.parameters == ["user-a"]
 
 
+@pytest.mark.parametrize("message", ["Consulte a conformidade de maria@example.com", "Como está a conformidade dela?", "Como está a conformidade dessa pessoa?"])
+def test_manager_consults_employee_conformity_with_recent_history(chat_client, monkeypatch, message):
+    from datetime import date
+    from test_sst_tools import FakePostgresConnection
+    client, model, application = chat_client
+    application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(uid="manager", role="GESTOR")
+    application.state.access_roles.role = "GESTOR"
+    sid = str(uuid4())
+    assert client.post(f"/sessions/{sid}/iniciar").status_code == 200
+    application.state.chat_service.repository.docs[sid]["mensagens"] = [
+        {"role": "human", "content": "Mostre uma funcionária da minha unidade."},
+        {"role": "assistant", "content": "Encontrei 1 usuário(s):\n- Maria Silva: Eletricista | Matriz | FUNCIONARIO | ATIVO | maria@example.com"},
+    ]
+    model.replies["sst"] = json.dumps({"acao": "consultar_conformidade_usuario", "filtros": {"pessoa": "maria@example.com"}, "resposta": None})
+    connections = iter([
+        FakePostgresConnection([("target", "Maria Silva", "maria@example.com")]),
+        FakePostgresConnection([("Maria Silva", "Eletricista", "Matriz", 10, "Eletricidade", date(2026, 1, 1), None, None, "RENOVACAO_NECESSARIA", "RENOVAR", date(2026, 9, 15))]),
+    ])
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: next(connections))
+    response = client.post("/chat/messages", json={"message": message, "session_id": sid})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["agentes_chamados"] == ["guardrail_entrada", "roteador", "sst", "consultar_conformidade_usuario", "juiz", "guardrail_saida"]
+    assert "Maria Silva" in result["resposta"] and "NR-10" in result["resposta"]
+    assert "renovação necessária" in result["resposta"]
+    assert not any(call[0] == "sst" for call in model.calls)
+
+
+def test_employee_cannot_query_other_person_conformity(chat_client, monkeypatch):
+    client, model, _ = chat_client
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: pytest.fail("Consulta não autorizada ao banco"))
+    response = client.post("/chat/messages", json={"message": "Consulte a conformidade de maria@example.com"})
+    assert response.status_code == 200
+    assert "Somente gestores" in response.json()["resposta"]
+
+
 def test_sst_agent_consults_nr_status_for_authenticated_user(chat_client, monkeypatch):
     from datetime import date
 

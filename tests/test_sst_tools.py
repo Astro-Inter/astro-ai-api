@@ -104,6 +104,61 @@ class UnavailableFetchClient:
         return {"status": "indisponivel"}
 
 
+@pytest.mark.parametrize("role,scope", [("GESTOR", "usuario.unidade_id ="), ("GESTOR_WORKSPACE", "unidade.workspace_id =")])
+def test_consultar_conformidade_revalidates_manager_scope(monkeypatch, role, scope):
+    resolver = FakePostgresConnection([("target-uid", "Maria Silva", "maria@example.com")])
+    details = FakePostgresConnection([
+        ("Maria Silva", "Eletricista", "Matriz", 10, "Eletricidade", date(2027, 1, 1), None, None, "VIGENTE", "NENHUMA", date(2026, 9, 15)),
+        ("Maria Silva", "Eletricista", "Matriz", 35, "Altura", None, None, None, "REALIZACAO_NECESSARIA", "REALIZAR", date(2026, 9, 15)),
+    ])
+    connections = iter([resolver, details])
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: next(connections))
+    result = sst_tools.consultar_conformidade_usuario.invoke({"pessoa": "maria@example.com"}, config={"configurable": {"usuario_atual": {"uid": "manager", "role": role}}})
+    assert result["status"] == "ok" and result["usuario"] == "Maria Silva"
+    assert result["nrs"][1]["acao_necessaria"] == "REALIZAR"
+    assert "target-uid" not in str(result)
+    for connection in [resolver, details]:
+        assert scope in connection.db_cursor.query
+        assert "usuario.tipo = ANY(%s)" in connection.db_cursor.query
+        assert "manager" in connection.db_cursor.parameters
+    assert resolver.db_cursor.parameters[0] == "maria@example.com"
+    assert details.db_cursor.parameters[0] == "target-uid"
+
+
+@pytest.mark.parametrize("role", ["FUNCIONARIO", "ADMIN"])
+def test_consultar_conformidade_denies_non_managers_without_database(monkeypatch, role):
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: pytest.fail("Não deveria consultar o banco"))
+    result = sst_tools.consultar_conformidade_usuario.invoke({"pessoa": "Maria"}, config={"configurable": {"usuario_atual": {"uid": "owner", "role": role}}})
+    assert result["status"] == "nao_autorizado"
+
+
+@pytest.mark.parametrize("rows,status", [([], "sem_dados"), ([("a", "Maria", "a@example.com"), ("b", "Maria", "b@example.com")], "esclarecer")])
+def test_consultar_conformidade_missing_or_ambiguous_person(monkeypatch, rows, status):
+    connection = FakePostgresConnection(rows)
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
+    result = sst_tools.consultar_conformidade_usuario.invoke({"pessoa": "Maria"}, config={"configurable": {"usuario_atual": {"uid": "manager", "role": "GESTOR"}}})
+    assert result["status"] == status and "nrs" not in result
+    assert connection.db_cursor.parameters[0] == "Maria"
+    assert "LIMIT 2" in connection.db_cursor.query
+
+
+def test_conformidade_schema_rejects_ids_and_wrong_filter_type():
+    for filters in [{"pessoa": "Maria", "uid": "other"}, {"numeros": [1]}, {}]:
+        with pytest.raises(ValidationError):
+            SstToolDecision.model_validate({"acao": "consultar_conformidade_usuario", "filtros": filters})
+    decision = SstToolDecision.model_validate({"acao": "consultar_conformidade_usuario", "filtros": {"pessoa": "Maria Silva"}})
+    assert decision.filtros.pessoa == "Maria Silva"
+
+
+def test_conformidade_reference_does_not_choose_from_multiple_people():
+    from app.modules.chat.subgraphs import _filtros_conformidade
+    history = [{"role": "assistant", "content": "Encontrei 2 usuário(s):\n- Maria: maria@example.com\n- Ana: ana@example.com"}]
+    assert _filtros_conformidade("Como está a conformidade dela?", history) is None
+    assert _filtros_conformidade("Como está a conformidade dela?", []) is None
+
+
 @pytest.fixture(autouse=True)
 def no_external_fetch(monkeypatch):
     monkeypatch.setattr(
@@ -320,6 +375,7 @@ def test_sst_tool_is_registered_with_safe_schema():
     assert consultar_nrs_obrigatorias.name == "consultar_nrs_obrigatorias"
     assert consultar_situacao_nrs.name == "consultar_situacao_nrs"
     assert sst_tools.TOOLS_SST == [
+        sst_tools.consultar_conformidade_usuario,
         consultar_nrs_organizacao,
         consultar_nrs, consultar_orientacoes_sst,
         consultar_nrs_obrigatorias, consultar_situacao_nrs,

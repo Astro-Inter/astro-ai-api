@@ -388,6 +388,18 @@ cinco minutos antes de tentar a Mistral novamente.
 
 ### Tool de consulta de NRs do SST
 
+`consultar_conformidade_usuario` recebe `pessoa` (nome completo ou e-mail) e
+consulta a situação das NRs obrigatórias registradas para outro funcionário.
+Somente `GESTOR` (mesma unidade) e `GESTOR_WORKSPACE` (mesmo workspace) podem
+usá-la. O backend resolve a identidade e revalida o escopo na leitura das NRs;
+não aceita UID, IDs de unidade ou workspace como filtros. Nomes duplicados
+exigem e-mail; ausência de registros não comprova conformidade. A resposta
+mostra vigência, pendências, realização/renovação necessária e datas disponíveis,
+sem dados médicos ou declaração de conformidade legal completa. Após uma busca
+de RH com exatamente uma pessoa, referências como “conformidade dela” usam o
+e-mail do resultado anterior. Com várias pessoas, é necessário identificá-la.
+Exemplo: “Consulte a conformidade de maria@empresa.com”.
+
 `consultar_nrs_organizacao` consulta os vínculos do PostgreSQL com dois escopos:
 `unidade`, para a unidade atual do usuário, e `empresa`, para a união distinta
 das NRs vinculadas a todas as unidades do mesmo workspace, inclusive inativas.

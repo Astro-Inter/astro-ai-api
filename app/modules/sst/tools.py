@@ -142,6 +142,11 @@ class ConsultarNrsOrganizacaoArgs(BaseModel):
     escopo: Literal["unidade", "empresa"] = "unidade"
 
 
+class ConsultarConformidadeUsuarioArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    pessoa: str = Field(min_length=1, max_length=255, description="Nome ou e-mail da pessoa; nunca UID ou ID interno.")
+
+
 class SstToolDecision(BaseModel):
     """Decisão do agente SST entre consultar NRs ou orientar sem consulta."""
 
@@ -152,15 +157,18 @@ class SstToolDecision(BaseModel):
         "consultar_nrs",
         "consultar_nrs_obrigatorias",
         "consultar_situacao_nrs",
+        "consultar_conformidade_usuario",
         "consultar_orientacoes_sst",
         "responder",
     ]
-    filtros: ConsultarNrsOrganizacaoArgs | ConsultarOrientacoesSstArgs | ConsultarNrsArgs | None = None
+    filtros: ConsultarConformidadeUsuarioArgs | ConsultarNrsOrganizacaoArgs | ConsultarOrientacoesSstArgs | ConsultarNrsArgs | None = None
     resposta: SpecialistResult | None = None
 
     @model_validator(mode="before")
     @classmethod
     def normalizar_consulta_sem_filtros(cls, data):
+        if isinstance(data, dict) and data.get("acao") == "consultar_conformidade_usuario":
+            data = {**data, "filtros": ConsultarConformidadeUsuarioArgs.model_validate(data.get("filtros") or {})}
         if isinstance(data, dict) and data.get("acao") == "consultar_nrs_organizacao":
             data = {**data, "filtros": ConsultarNrsOrganizacaoArgs.model_validate(data.get("filtros") or {})}
         if isinstance(data, dict) and data.get("acao") == "consultar_nrs" \
@@ -179,6 +187,10 @@ class SstToolDecision(BaseModel):
 
     @model_validator(mode="after")
     def validar_acao(self):
+        if self.acao == "consultar_conformidade_usuario" and (
+            not isinstance(self.filtros, ConsultarConformidadeUsuarioArgs) or self.resposta is not None
+        ):
+            raise ValueError("Consulta de conformidade exige pessoa e nao aceita resposta.")
         if self.acao == "consultar_nrs_organizacao" and (
             not isinstance(self.filtros, ConsultarNrsOrganizacaoArgs) or self.resposta is not None
         ):
@@ -700,6 +712,11 @@ def consultar_situacao_nrs(config: RunnableConfig = None) -> dict:
             "mensagem": "Consulta da situacao das NRs indisponivel.",
         }
 
+    return _consultar_situacao_nrs_filtrada("usuario.firebase_uid = %s", [user.uid])
+
+
+def _consultar_situacao_nrs_filtrada(condition: str, parameters: list) -> dict:
+    """Compartilha os critérios de validade com predicados internos autorizados."""
     query = """
         WITH usuario_atual AS (
             SELECT usuario.id_usuario,
@@ -789,10 +806,11 @@ def consultar_situacao_nrs(config: RunnableConfig = None) -> dict:
           ) AS pendencia ON TRUE
          ORDER BY nrs_obrigatorias.numero
     """
+    query = query.replace("usuario.firebase_uid = %s", condition)
     try:
         with get_postgres_connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(query, [user.uid])
+                cursor.execute(query, parameters)
                 rows = cursor.fetchall()
     except Exception:
         return {
@@ -803,7 +821,7 @@ def consultar_situacao_nrs(config: RunnableConfig = None) -> dict:
     if not rows:
         return {
             "status": "sem_dados",
-            "mensagem": "Usuario autenticado nao encontrado no cadastro funcional.",
+            "mensagem": "Nao encontrei cadastro funcional no escopo permitido.",
         }
 
     employee, role_name, unit = rows[0][:3]
@@ -840,7 +858,52 @@ def consultar_situacao_nrs(config: RunnableConfig = None) -> dict:
     }
 
 
+def _escopo_conformidade(user: CurrentUser) -> tuple[str, list]:
+    if user.role == "GESTOR_WORKSPACE":
+        scope = "unidade.workspace_id = (SELECT u.workspace_id FROM usuario a JOIN unidade u ON u.id_unidade = a.unidade_id WHERE a.firebase_uid = %s LIMIT 1)"
+        types = ["GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"]
+    else:
+        scope = "usuario.unidade_id = (SELECT a.unidade_id FROM usuario a WHERE a.firebase_uid = %s LIMIT 1)"
+        types = ["GESTOR", "FUNCIONARIO"]
+    return scope + " AND usuario.tipo = ANY(%s) AND usuario.firebase_uid <> %s", [user.uid, types, user.uid]
+
+
+@tool("consultar_conformidade_usuario", args_schema=ConsultarConformidadeUsuarioArgs)
+def consultar_conformidade_usuario(pessoa: str, config: RunnableConfig = None) -> dict:
+    """Consulta NRs obrigatórias e validade de outra pessoa no escopo do gestor.
+
+    Gestor vê sua unidade; gestor de workspace vê apenas seu workspace.
+    Não avalia aptidão médica nem certifica conformidade legal da empresa.
+    """
+    user = _usuario_do_contexto(config)
+    if user is None or user.role not in {"GESTOR", "GESTOR_WORKSPACE"}:
+        return {"status": "nao_autorizado", "mensagem": "Somente gestores podem consultar a conformidade de outras pessoas no seu escopo."}
+    person = pessoa.strip()
+    if not person or person.casefold() in {"ela", "ele", "dela", "dele", "essa pessoa", "esta pessoa"}:
+        return {"status": "esclarecer", "mensagem": "Informe o nome ou e-mail da pessoa cuja conformidade deseja consultar."}
+    if not app_config.DATABASE_URL:
+        return {"status": "indisponivel", "mensagem": "Consulta de conformidade indisponivel."}
+    scope, scope_parameters = _escopo_conformidade(user)
+    selector = "LOWER(usuario.email) = LOWER(%s)" if "@" in person else "LOWER(usuario.nome) = LOWER(%s)"
+    query = "SELECT usuario.firebase_uid, usuario.nome, usuario.email FROM usuario JOIN unidade ON unidade.id_unidade = usuario.unidade_id WHERE " + selector + " AND " + scope + " ORDER BY usuario.nome, usuario.email LIMIT 2"
+    try:
+        with get_postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, [person, *scope_parameters])
+                people = cursor.fetchall()
+    except Exception:
+        return {"status": "indisponivel", "mensagem": "Consulta de conformidade indisponivel."}
+    if not people:
+        return {"status": "sem_dados", "mensagem": "Nao encontrei essa pessoa no seu escopo de acesso. Informe o nome completo ou e-mail."}
+    if len(people) > 1:
+        return {"status": "esclarecer", "mensagem": "Há mais de uma pessoa com esse nome. Informe o e-mail para consultar a pessoa correta."}
+    # Revalida o escopo na leitura de conformidade, inclusive após a resolução.
+    result = _consultar_situacao_nrs_filtrada("usuario.firebase_uid = %s AND " + scope, [people[0][0], *scope_parameters])
+    return {**result, "consulta_terceiro": True}
+
+
 TOOLS_SST = [
+    consultar_conformidade_usuario,
     consultar_nrs_organizacao,
     consultar_nrs,
     consultar_orientacoes_sst,
