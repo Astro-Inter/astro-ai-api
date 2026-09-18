@@ -91,6 +91,21 @@ def _pedido_de_publicacao_sst(message: str) -> bool:
     return bool(material and (fundacentro or sst_topic))
 
 
+def _duvida_conexao_google_calendar(message: str) -> bool:
+    normalized = _sem_acentos(message)
+    asks_how = bool(re.search(r"\b(?:como|o que preciso fazer|como faco)\b", normalized))
+    action = bool(re.search(
+        r"\b(?:crie|criar|adicione|adicionar|marque|marcar|envie|enviar)\b",
+        normalized,
+    ))
+    return bool(
+        re.search(r"\bgoogle (?:calendar|agenda)\b", normalized)
+        and re.search(r"\bconect\w*\b", normalized)
+        and re.search(r"\b(?:como|preciso|quero|ainda nao|desconectad\w*)\b", normalized)
+        and (not action or (asks_how and re.search(r"\bainda nao conect\w*\b", normalized)))
+    )
+
+
 def _pedido_pdf(message: str) -> bool:
     """Distingue pedido de arquivo de uma pergunta genérica sobre PDFs."""
     normalized = _sem_acentos(message)
@@ -213,12 +228,36 @@ def _pedido_simples_de_conversa(message: str) -> ConsultarConversasArgs | None:
         return None
 
 
-def _pedido_simples_de_notificacoes(message: str) -> ConsultarNotificacoesArgs | None:
+_NUMEROS_PAGINACAO = {
+    "um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "quatro": 4,
+    "cinco": 5, "seis": 6, "sete": 7, "oito": 8, "nove": 9, "dez": 10,
+}
+
+
+def _limite_notificacoes(message: str) -> int | None:
+    normalized = _sem_acentos(message)
+    match = re.search(
+        r"\b(?:no maximo|ate|com|mostre|liste)\s+(\d{1,2}|"
+        + "|".join(_NUMEROS_PAGINACAO) + r")\b", normalized,
+    )
+    if match is None:
+        return None
+    value = match.group(1)
+    limit = int(value) if value.isdigit() else _NUMEROS_PAGINACAO[value]
+    return limit if 1 <= limit <= 10 else None
+
+
+def _pedido_simples_de_notificacoes(
+    message: str, history: list[dict[str, str]] | None = None,
+    last_route: str = "",
+) -> ConsultarNotificacoesArgs | None:
     """Consulta própria explícita sem depender da classificação do modelo."""
     normalized = _sem_acentos(message)
-    if not re.search(r"\bnotificacoes?\b", normalized):
+    mentions_notifications = bool(re.search(r"\bnotificacoes?\b", normalized))
+    next_page = bool(re.search(r"\b(?:proxima|seguinte) pagina\b", normalized))
+    if not mentions_notifications and not (next_page and last_route == "notificacoes"):
         return None
-    if not re.search(
+    if not next_page and not re.search(
         r"\b(?:mostre|mostrar|liste|listar|veja|ver|consulte|consultar|"
         r"busque|buscar|quais|tenho)\b", normalized,
     ):
@@ -227,10 +266,29 @@ def _pedido_simples_de_notificacoes(message: str) -> ConsultarNotificacoesArgs |
         return None
     if re.search(r"\bnotificacoes?\s+(?:de|do|da|para)\s+(?!mim\b)\w+", normalized):
         return None
-    page_match = re.search(r"\bp[aá]gina\s+(\d+)\b", message, re.IGNORECASE)
+    page_match = re.search(r"\bpagina\s+(\d+)\b", normalized)
+    limit = _limite_notificacoes(message)
+    page = int(page_match.group(1)) if page_match else 1
+    if next_page and not page_match:
+        previous_page = 1
+        for turn in history or []:
+            if turn.get("role") not in {"human", "user"}:
+                continue
+            previous = _sem_acentos(turn.get("content", ""))
+            if re.search(r"\bnotificacoes?\b", previous):
+                explicit = re.search(r"\bpagina\s+(\d+)\b", previous)
+                previous_page = int(explicit.group(1)) if explicit else 1
+            elif re.search(r"\b(?:proxima|seguinte) pagina\b", previous):
+                previous_page += 1
+            if re.search(r"\b(?:proxima|seguinte) pagina\b", previous) and not re.search(
+                r"\bpagina\s+\d+\b", previous,
+            ) and re.search(r"\bnotificacoes?\b", previous):
+                previous_page += 1
+            limit = _limite_notificacoes(previous) or limit
+        page = previous_page + 1
     try:
         return ConsultarNotificacoesArgs(
-            pagina=int(page_match.group(1)) if page_match else 1,
+            pagina=page, limite=limit or 5,
         )
     except ValidationError:
         return None
@@ -405,6 +463,18 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "rota": "memoria", "busca_memoria": memory_request,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
+        if _duvida_conexao_google_calendar(state["mensagem"]):
+            return {
+                "rota": "direta",
+                "candidato": (
+                    "A conexão do Google Calendar é opcional. Quando quiser usá-lo, "
+                    "acesse a rota autenticada GET /integracoes/google-calendar/conectar "
+                    "e abra o authorization_url retornado para autorizar sua conta. "
+                    "Depois, volte ao chat e faça o pedido novamente. "
+                    "Seus eventos e treinamentos internos do Astro continuam disponíveis sem essa conexão."
+                ),
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         pending = state.get("acao_pendente")
         if isinstance(pending, dict) and pending.get("tipo") == "enviar_mensagem":
             if _cancelamento_explicito(state["mensagem"]):
@@ -476,7 +546,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
 
-        simple_notifications = _pedido_simples_de_notificacoes(state["mensagem"])
+        simple_notifications = _pedido_simples_de_notificacoes(
+            state["mensagem"], state["historico"], state["contexto"].get("ultima_rota", ""),
+        )
         if simple_notifications is not None and memory_request is None:
             return {
                 "rota": "notificacoes",

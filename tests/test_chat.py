@@ -934,6 +934,43 @@ def test_simple_notification_request_never_targets_someone_else():
     assert _pedido_simples_de_notificacoes("Crie notificações para mim") is None
 
 
+def test_notification_pagination_preserves_limit_and_context():
+    from app.modules.chat.graph import _pedido_simples_de_notificacoes
+
+    first = "Quais são minhas notificações? Mostre no máximo duas."
+    second = "Mostre a próxima página das minhas notificações, também com duas."
+    third = "E a próxima página?"
+    assert _pedido_simples_de_notificacoes(first).model_dump() == {
+        "pagina": 1, "limite": 2,
+    }
+    assert _pedido_simples_de_notificacoes(second, [
+        {"role": "human", "content": first},
+    ], "notificacoes").model_dump() == {"pagina": 2, "limite": 2}
+    assert _pedido_simples_de_notificacoes(third, [
+        {"role": "human", "content": first},
+        {"role": "assistant", "content": "Página 1."},
+        {"role": "human", "content": second},
+        {"role": "assistant", "content": "Página 2."},
+    ], "notificacoes").model_dump() == {"pagina": 3, "limite": 2}
+    assert _pedido_simples_de_notificacoes(third, [], "conversa") is None
+
+
+def test_google_connection_guidance_uses_real_endpoint(chat_client):
+    client, model, _ = chat_client
+    response = client.post("/chat/messages", json={
+        "message": (
+            "Quero adicionar um evento ao Google Agenda, mas ainda não "
+            "conectei minha conta. O que preciso fazer?"
+        ),
+    })
+
+    assert response.status_code == 200
+    assert "/integracoes/google-calendar/conectar" in response.json()["resposta"]
+    assert "authorization_url" in response.json()["resposta"]
+    assert "botão" not in response.json()["resposta"]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz", "guardrail_saida"]
+
+
 @pytest.mark.parametrize("message,expected_period,expected_consult", [
     ("Quantas vezes acessei o sistema neste mês?", "mes_atual", "contagem"),
     ("Qual foi meu primeiro acesso ao sistema?", "todo_historico", "primeiro"),
