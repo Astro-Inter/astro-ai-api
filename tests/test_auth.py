@@ -105,6 +105,15 @@ def test_login_hidden(monkeypatch, env, enabled):
         assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_version_exposes_only_render_commit(client, monkeypatch):
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    response = client.get("/version")
+    assert response.json() == {"commit": "a" * 40}
+    assert response.headers["Cache-Control"] == "no-store"
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "not-a-commit\nsecret")
+    assert client.get("/version").json() == {"commit": "unknown"}
+
+
 def test_missing_key(client, monkeypatch, firebase_http):
     monkeypatch.setattr(config, "FIREBASE_WEB_API_KEY", "")
     firebase_http(lambda request: pytest.fail("No request should be sent without an API key"))

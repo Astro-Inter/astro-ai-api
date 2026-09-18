@@ -63,6 +63,8 @@ class ChatObservation:
     response_length: int = 0
     error_type: str = ""
     error_status_code: int | None = None
+    error_stage: str = ""
+    error_reason: str = ""
     agent_calls: list[tuple[str, float]] = field(default_factory=list)
     transitions: list[tuple[str, str, float]] = field(default_factory=list)
     last_agent_name: str | None = None
@@ -95,6 +97,8 @@ class ChatObservation:
         self.error_type = type(error).__name__
         status_code = getattr(error, "status_code", None)
         self.error_status_code = status_code if isinstance(status_code, int) else None
+        self.error_stage = str(getattr(error, "stage", "") or "")
+        self.error_reason = str(getattr(error, "reason", "") or "")
 
     def metadata(self) -> dict[str, Any]:
         agent_totals: defaultdict[str, float] = defaultdict(float)
@@ -139,6 +143,10 @@ class ChatObservation:
             metadata["error_type"] = self.error_type
         if self.error_status_code is not None:
             metadata["error_status_code"] = self.error_status_code
+        if self.error_stage:
+            metadata["error_stage"] = self.error_stage
+        if self.error_reason:
+            metadata["error_reason"] = self.error_reason
         return metadata
 
     def feedback_scores(self) -> dict[str, float | int]:

@@ -79,11 +79,17 @@ class LanguageModels:
         if json_mode:
             model = model.bind(response_format={"type": "json_object"})
         result = await model.ainvoke(messages, config={"run_name": agent})
-        if not isinstance(result.content, str) or not result.content.strip():
+        content = result.content
+        if isinstance(content, list) and content and all(
+            isinstance(block, dict) and block.get("type") == "text"
+            and isinstance(block.get("text"), str) for block in content
+        ):
+            content = "\n".join(block["text"] for block in content)
+        if not isinstance(content, str) or not content.strip():
             raise InvalidAgentResponse()
-        if len(result.content) > 16000:
+        if len(content) > 16000:
             raise InvalidAgentResponse()
-        return result.content.strip()
+        return content.strip()
 
     async def _invoke_groq(
         self, model, agent: str, messages: list[BaseMessage], json_mode: bool,
@@ -137,7 +143,9 @@ class LanguageModels:
                 )
         # Não espera nem percorre a lista indefinidamente; novas requisições
         # podem reutilizar as chaves depois do cooldown informado pelo provedor.
-        raise ChatError(503, "Servico de IA indisponivel. Tente novamente.")
+        raise ChatError(
+            503, "Servico de IA indisponivel. Tente novamente.", reason="rate_limited",
+        )
 
     async def complete(
         self, agent: str, messages: list[BaseMessage], *, json_mode: bool = False,

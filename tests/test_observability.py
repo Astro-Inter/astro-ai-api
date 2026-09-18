@@ -1,6 +1,7 @@
 import pytest
 
 from app.observability.chat import ChatObservation, classify_resolution
+from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.observability.report import TraceMetric, project_scenario, summarize_traces
 
 
@@ -47,6 +48,14 @@ def test_observation_exposes_aggregate_agent_metrics(monkeypatch):
         "resolved": 0,
         "agent_transition_avg_ms": pytest.approx(300),
     }
+
+
+def test_observation_records_safe_error_cause_without_payload():
+    observation = ChatObservation()
+    observation.mark_error(InvalidAgentResponse("roteador"))
+    assert observation.metadata()["error_stage"] == "roteador"
+    observation.mark_error(ChatError(503, "indisponível", reason="rate_limited"))
+    assert observation.metadata()["error_reason"] == "rate_limited"
 
 
 def test_sre_summary_and_projections_use_observed_metrics():

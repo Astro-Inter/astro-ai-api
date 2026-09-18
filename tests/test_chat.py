@@ -953,6 +953,45 @@ def test_notification_pagination_preserves_limit_and_context():
         {"role": "assistant", "content": "Página 2."},
     ], "notificacoes").model_dump() == {"pagina": 3, "limite": 2}
     assert _pedido_simples_de_notificacoes(third, [], "conversa") is None
+    assert _pedido_simples_de_notificacoes(
+        "Mostre a próxima página das minhas notificações com três.",
+        [{"role": "human", "content": first}], "notificacoes",
+    ).limite == 3
+
+
+def test_short_notification_followup_skips_invalid_guardrail_reply(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, _ = chat_client
+    pages = []
+
+    class Notifications:
+        async def ainvoke(self, args, config=None):
+            pages.append((args["pagina"], args["limite"]))
+            return {
+                "status": "ok", "pagina": args["pagina"], "limite": args["limite"],
+                "total": 3, "total_paginas": 2,
+                "notificacoes": [{
+                    "data_criacao": "2026-09-13T00:00:00+00:00",
+                    "mensagem": f"Aviso {args['pagina']}", "trecho": False,
+                }] if args["pagina"] <= 2 else [],
+            }
+
+    monkeypatch.setitem(chat_graph.ROTEADOR_TOOLS, "consultar_notificacoes", Notifications())
+    first = client.post("/chat/messages", json={
+        "message": "Quais são minhas notificações? Mostre no máximo duas.",
+    })
+    assert first.status_code == 200
+    model.calls.clear()
+    model.replies["guardrail_entrada"] = "JSON inválido"
+    second = client.post("/chat/messages", json={
+        "message": "E a próxima página?", "session_id": first.json()["session_id"],
+    })
+
+    assert second.status_code == 200
+    assert "Aviso 2" in second.json()["resposta"]
+    assert pages == [(1, 2), (2, 2)]
+    assert [call[0] for call in model.calls] == ["juiz"]
 
 
 def test_google_connection_guidance_uses_real_endpoint(chat_client):
@@ -1771,6 +1810,36 @@ def test_invalid_agent_reply_fails_closed(chat_client, agent, reply):
     assert all(not doc["mensagens"] and "lock_token" not in doc
                for doc in application.state.chat_service.repository.docs.values())
     assert application.state.chat_service.active_requests == 0
+
+
+def test_fenced_structured_reply_and_spaced_router_command_are_accepted(chat_client):
+    client, model, _ = chat_client
+    model.replies["guardrail_entrada"] = (
+        '```json\n{"decisao":"aprovar","motivo":"legitimo","mensagem":""}\n```'
+    )
+    model.replies["roteador"] = "```text\nROUTE = faq\n```"
+
+    response = client.post("/chat/messages", json={"message": "Qual é o objetivo do Astro?"})
+
+    assert response.status_code == 200
+    assert "faq" in response.json()["agentes_chamados"]
+
+
+@pytest.mark.parametrize("message", [
+    "Qual é a sua função?",
+    "Quem é você dentro do Astro?",
+    "Você é o Roteador do Astro ou o Agente do Astro?",
+])
+def test_identity_answers_do_not_depend_on_guardrail_or_router_model(chat_client, message):
+    client, model, _ = chat_client
+    model.replies["guardrail_entrada"] = "resposta inválida"
+    model.replies["roteador"] = "ROUTE=desconhecido"
+
+    response = client.post("/chat/messages", json={"message": message})
+
+    assert response.status_code == 200
+    assert "Sou o Agente do Astro" in response.json()["resposta"]
+    assert [call[0] for call in model.calls] == ["juiz", "guardrail_saida"]
 
 
 def test_session_history_and_ownership(chat_client):

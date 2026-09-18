@@ -34,6 +34,10 @@ Nesse caso, `A2A_PUBLIC_RESEARCH_URL` deve corresponder à URL pela qual o agent
 4. Aguarde os dois health checks e teste `https://astro-ai-api.onrender.com/health`
    e `https://astro-ai-api.onrender.com/docs` usando o endereço real atribuído.
 
+Para confirmar qual código está atendendo às perguntas, consulte `GET /version`
+na API. O campo `commit` deve coincidir com o SHA do deploy no Render; `unknown`
+indica que o ambiente não forneceu `RENDER_GIT_COMMIT`.
+
 O Blueprint gera a chave A2A e a compartilha automaticamente com a API. A URL
 externa do agente também é ligada automaticamente. O endpoint A2A exige essa
 chave; somente `/health` é público.

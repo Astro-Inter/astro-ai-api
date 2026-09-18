@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Any, TypeVar
 
 from langchain.agents import create_agent
@@ -21,6 +22,13 @@ from app.observability.chat import (
 
 Schema = TypeVar("Schema", bound=BaseModel)
 logger = logging.getLogger(__name__)
+
+
+def _structured_payload(text: str) -> str:
+    """Aceita somente um objeto JSON, com ou sem uma cerca Markdown externa."""
+    value = text.strip().lstrip("\ufeff")
+    fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", value, re.DOTALL | re.IGNORECASE)
+    return fenced.group(1).strip() if fenced else value
 
 
 class _AstroAgentModel(BaseChatModel):
@@ -140,7 +148,7 @@ async def _invoke_agent(
     if schema is None:
         return text.strip()
     try:
-        return schema.model_validate_json(text)
+        return schema.model_validate_json(_structured_payload(text))
     except (ValidationError, ValueError):
         # Uma única correção cobre JSON truncado, campos extras e omissões comuns
         # sem reutilizar a resposta inválida como conteúdo do novo prompt.
@@ -157,7 +165,7 @@ async def _invoke_agent(
         if not isinstance(retry, str) or not retry.strip() or len(retry) > 16000:
             raise InvalidAgentResponse(name)
         try:
-            return schema.model_validate_json(retry)
+            return schema.model_validate_json(_structured_payload(retry))
         except (ValidationError, ValueError):
             raise InvalidAgentResponse(name) from None
 
@@ -169,5 +177,9 @@ async def invoke_agent(
     measurement = start_agent_measurement(name)
     try:
         return await _invoke_agent(model, name, prompt, state, schema)
+    except InvalidAgentResponse as error:
+        if error.stage == "desconhecido":
+            raise InvalidAgentResponse(name) from None
+        raise
     finally:
         finish_agent_measurement(measurement)

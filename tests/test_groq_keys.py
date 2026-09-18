@@ -84,6 +84,7 @@ def test_all_keys_limited_do_not_loop_or_retry_during_cooldown(groq_setup):
         with pytest.raises(ChatError) as error:
             asyncio.run(backend.complete("roteador", []))
         assert error.value.status_code == 503
+        assert error.value.reason == "rate_limited"
         assert "secret" not in str(error.value)
     assert [key for key, _ in calls] == ["secret-a", "secret-b", "secret-c"]
 
@@ -122,6 +123,20 @@ def test_single_key_remains_supported(groq_setup, monkeypatch):
     monkeypatch.setattr(config, "GROQ_API_KEY", " secret-a ")
     assert asyncio.run(models.LanguageModels().complete("roteador", [])) == '{"ok":true}'
     assert [key for key, _ in calls] == ["secret-a"]
+
+
+def test_text_content_blocks_are_accepted_but_nontext_is_rejected():
+    class TextBlocks:
+        async def ainvoke(self, *_args, **_kwargs):
+            return AIMessage(content=[{"type": "text", "text": '{"ok":true}'}])
+
+    class ToolBlock:
+        async def ainvoke(self, *_args, **_kwargs):
+            return AIMessage(content=[{"type": "tool_use", "id": "x", "name": "foo", "input": {}}])
+
+    assert asyncio.run(models.LanguageModels._invoke(TextBlocks(), "juiz", [], False)) == '{"ok":true}'
+    with pytest.raises(ChatError):
+        asyncio.run(models.LanguageModels._invoke(ToolBlock(), "juiz", [], False))
 
 
 def test_mistral_fallback_uses_multiple_groq_keys(groq_setup, monkeypatch):

@@ -91,6 +91,15 @@ def _pedido_de_publicacao_sst(message: str) -> bool:
     return bool(material and (fundacentro or sst_topic))
 
 
+def _pergunta_identidade_astro(message: str) -> bool:
+    normalized = _sem_acentos(message).strip().rstrip(".!? ")
+    return normalized in {
+        "qual e a sua funcao", "qual e sua funcao",
+        "quem e voce dentro do astro", "quem e voce",
+        "voce e o roteador do astro ou o agente do astro",
+    }
+
+
 def _duvida_conexao_google_calendar(message: str) -> bool:
     normalized = _sem_acentos(message)
     asks_how = bool(re.search(r"\b(?:como|o que preciso fazer|como faco)\b", normalized))
@@ -268,6 +277,7 @@ def _pedido_simples_de_notificacoes(
         return None
     page_match = re.search(r"\bpagina\s+(\d+)\b", normalized)
     limit = _limite_notificacoes(message)
+    requested_limit = limit
     page = int(page_match.group(1)) if page_match else 1
     if next_page and not page_match:
         previous_page = 1
@@ -286,12 +296,23 @@ def _pedido_simples_de_notificacoes(
                 previous_page += 1
             limit = _limite_notificacoes(previous) or limit
         page = previous_page + 1
+        limit = requested_limit or limit
     try:
         return ConsultarNotificacoesArgs(
             pagina=page, limite=limit or 5,
         )
     except ValidationError:
         return None
+
+
+def _continuacao_segura_notificacoes(state: ChatState) -> bool:
+    if state.get("contexto", {}).get("ultima_rota") != "notificacoes":
+        return False
+    normalized = _sem_acentos(state["mensagem"]).strip().rstrip(".!? ")
+    return normalized in {
+        "e a proxima pagina", "a proxima pagina", "mostre a proxima pagina",
+        "mostre a proxima pagina das minhas notificacoes",
+    }
 
 
 _MESES = {
@@ -415,7 +436,9 @@ def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
 
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def input_guard(state: ChatState):
-        if _campo_dado_proprio(state["mensagem"]) is not None:
+        if (_campo_dado_proprio(state["mensagem"]) is not None
+                or _pergunta_identidade_astro(state["mensagem"])
+                or _continuacao_segura_notificacoes(state)):
             # Intenção read-only estritamente reconhecida. Identidade e acesso
             # continuam verificados pela autenticação e pela tool de dados próprios.
             return {
@@ -455,6 +478,16 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     async def router(state: ChatState):
+        if _pergunta_identidade_astro(state["mensagem"]):
+            return {
+                "rota": "direta",
+                "candidato": (
+                    "Sou o Agente do Astro. Posso ajudar com informações de RH, "
+                    "segurança do trabalho, agenda, treinamentos, políticas internas "
+                    "e notificações, conforme suas permissões."
+                ),
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         if _campo_dado_proprio(state["mensagem"]) is not None:
             return {"rota": "rh", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         memory_request = _pedido_de_historico_ia(state["mensagem"])
@@ -582,18 +615,27 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
 
         text = await invoke_agent(model, "roteador", ROTEADOR_PROMPT_COMPLETO, state)
-        if text.startswith("MEMORY="):
+        command = text.strip()
+        code_block = re.fullmatch(
+            r"```(?:json|text)?\s*(.*?)\s*```", command,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if code_block:
+            command = code_block.group(1).strip()
+        memory_match = re.fullmatch(r"MEMORY\s*=\s*(\{.*\})", command, re.DOTALL)
+        if memory_match:
             if state.get("memoria_consultada") or search_memory is None:
                 raise InvalidAgentResponse("roteador")
             try:
-                search = MemorySearch.model_validate_json(text[len("MEMORY="):])
+                search = MemorySearch.model_validate_json(memory_match.group(1))
             except ValidationError:
                 raise InvalidAgentResponse("roteador") from None
             return {"rota": "memoria", "busca_memoria": search.busca,
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        if text.startswith("MESSAGE="):
+        message_match = re.fullmatch(r"MESSAGE\s*=\s*(\{.*\})", command, re.DOTALL)
+        if message_match:
             try:
-                decision = EnviarMensagemArgs.model_validate_json(text[len("MESSAGE="):])
+                decision = EnviarMensagemArgs.model_validate_json(message_match.group(1))
             except ValidationError:
                 raise InvalidAgentResponse("roteador") from None
             decision.confirmar_envio = False
@@ -602,13 +644,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "roteador_decision": decision,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
-        conversation_text = text.strip()
-        code_block = re.fullmatch(
-            r"```(?:json)?\s*(.*?)\s*```", conversation_text,
-            re.DOTALL | re.IGNORECASE,
-        )
-        if code_block:
-            conversation_text = code_block.group(1).strip()
+        conversation_text = command
         if conversation_text.startswith("NOTIFICATIONS"):
             match = re.fullmatch(r"NOTIFICATIONS\s*=\s*(\{.*\})", conversation_text, re.DOTALL)
             if match is None:
@@ -650,17 +686,15 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "roteador_decision": decision,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
-        route = re.fullmatch(r"ROUTE=(rh|sst|agenda|faq)", text)
-        if not route and any(
-            marker in text.upper() for marker in (
-                "ROUTE", "MEMORY=", "MESSAGE=", "CONVERSATION=", "NOTIFICATIONS=",
-                "ACCESSES=",
-            )
+        route = re.fullmatch(r"ROUTE\s*=\s*(rh|sst|agenda|faq)", command, re.IGNORECASE)
+        if not route and re.search(
+            r"\b(?:ROUTE|MEMORY|MESSAGE|CONVERSATION|NOTIFICATIONS|ACCESSES)\s*=",
+            command, re.IGNORECASE,
         ):
             raise InvalidAgentResponse("roteador")
         return {
-            "rota": route.group(1) if route else "direta",
-            "candidato": "" if route else text,
+            "rota": route.group(1).lower() if route else "direta",
+            "candidato": "" if route else command,
             "agentes_chamados": state["agentes_chamados"] + ["roteador"],
         }
 
