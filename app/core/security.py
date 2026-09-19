@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-AccessRole = Literal["ADMIN", "GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"]
+AccessRole = Literal["ADMIN", "GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]
 
 
 class CurrentUser(BaseModel):

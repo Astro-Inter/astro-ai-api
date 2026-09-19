@@ -7,7 +7,7 @@ from app.modules.shared import tools as pdf_tools
 
 
 def auth_config():
-    return {"configurable": {"usuario_atual": {"uid": "firebase-self", "role": "FUNCIONARIO"}}}
+    return {"configurable": {"usuario_atual": {"uid": "firebase-self", "role": "COLABORADOR"}}}
 
 
 def test_dynamic_pdf_contains_question_answer_sources_and_multiple_pages():

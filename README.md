@@ -92,7 +92,7 @@ desabilitados. O antigo header `X-Dev-Auth-Token` não concede mais acesso.
 Depois de validar o Firebase ID Token, cada rota protegida consulta o PostgreSQL
 com `SELECT fn_retornar_nivel_acesso(%s)`, usando o UID como parâmetro. O claim
 `role` do Firebase é ignorado. Os perfis aceitos são `ADMIN`, `GESTOR`,
-`GESTOR_WORKSPACE` e `FUNCIONARIO`; `SEM_ACESSO` retorna `403`. Falha, retorno
+`GESTOR_WORKSPACE` e `COLABORADOR`; `SEM_ACESSO` retorna `403`. Falha, retorno
 inválido ou role desconhecida retorna `503`, sem expor detalhes da conexão.
 Configure `DATABASE_URL` e conceda ao usuário do banco somente as permissões
 necessárias para conectar e executar essa função.
@@ -370,9 +370,9 @@ são escapados antes do `ILIKE`. Status, tipos e limite são parâmetros da cons
 nunca SQL produzido pelo modelo.
 
 `ADMIN` pode pesquisar todos os usuários. `GESTOR_WORKSPACE` pesquisa os perfis
-`GESTOR`, `GESTOR_WORKSPACE` e `FUNCIONARIO` somente no workspace associado à sua
-unidade. `GESTOR` pesquisa apenas `GESTOR` e `FUNCIONARIO` da própria unidade.
-`FUNCIONARIO` não pode executar a consulta de terceiros e acessa somente seus dados
+`GESTOR`, `GESTOR_WORKSPACE` e `COLABORADOR` somente no workspace associado à sua
+unidade. `GESTOR` pesquisa apenas `GESTOR` e `COLABORADOR` da própria unidade.
+`COLABORADOR` não pode executar a consulta de terceiros e acessa somente seus dados
 pela tool `buscar_meus_dados`.
 A consulta de terceiros exclui o próprio Firebase UID, retorna no máximo 50 registros
 e apenas nome, e-mail, tipo, cargo,

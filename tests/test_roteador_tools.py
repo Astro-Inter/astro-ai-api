@@ -105,7 +105,7 @@ class FakeMessagesCursor:
 
 def tool_config(*, pending=None, explicit=False):
     return {"configurable": {
-        "usuario_atual": {"uid": "firebase-sender", "role": "FUNCIONARIO"},
+        "usuario_atual": {"uid": "firebase-sender", "role": "COLABORADOR"},
         "session_id": "session-1",
         "acao_pendente": pending,
         "confirmacao_explicita": explicit,

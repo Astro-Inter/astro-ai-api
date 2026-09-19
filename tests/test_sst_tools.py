@@ -126,7 +126,7 @@ def test_consultar_conformidade_revalidates_manager_scope(monkeypatch, role, sco
     assert details.db_cursor.parameters[0] == "target-uid"
 
 
-@pytest.mark.parametrize("role", ["FUNCIONARIO", "ADMIN"])
+@pytest.mark.parametrize("role", ["COLABORADOR", "ADMIN"])
 def test_consultar_conformidade_denies_non_managers_without_database(monkeypatch, role):
     monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: pytest.fail("Não deveria consultar o banco"))
     result = sst_tools.consultar_conformidade_usuario.invoke({"pessoa": "Maria"}, config={"configurable": {"usuario_atual": {"uid": "owner", "role": role}}})
@@ -396,7 +396,7 @@ def test_organization_nrs_uses_authenticated_workspace_and_distinct_union(monkey
     monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
     monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
     result = consultar_nrs_organizacao.invoke({"escopo": scope}, config={"configurable": {
-        "usuario_atual": {"uid": "owner", "role": "FUNCIONARIO"},
+        "usuario_atual": {"uid": "owner", "role": "COLABORADOR"},
     }})
     assert result["quantidade"] == 2
     assert result["escopo"] == scope
@@ -459,7 +459,7 @@ def test_consultar_nrs_obrigatorias_uses_authenticated_user_and_current_schema(m
     result = consultar_nrs_obrigatorias.invoke(
         {},
         config={"configurable": {
-            "usuario_atual": {"uid": "firebase-owner", "role": "FUNCIONARIO"},
+            "usuario_atual": {"uid": "firebase-owner", "role": "COLABORADOR"},
         }},
     )
 
@@ -498,7 +498,7 @@ def test_consultar_nrs_obrigatorias_returns_empty_assignment(monkeypatch):
     result = consultar_nrs_obrigatorias.invoke(
         {},
         config={"configurable": {
-            "usuario_atual": {"uid": "firebase-owner", "role": "FUNCIONARIO"},
+            "usuario_atual": {"uid": "firebase-owner", "role": "COLABORADOR"},
         }},
     )
 
@@ -550,7 +550,7 @@ def test_consultar_situacao_nrs_classifies_requirements_for_authenticated_user(m
     result = consultar_situacao_nrs.invoke(
         {},
         config={"configurable": {
-            "usuario_atual": {"uid": "firebase-owner", "role": "FUNCIONARIO"},
+            "usuario_atual": {"uid": "firebase-owner", "role": "COLABORADOR"},
         }},
     )
 

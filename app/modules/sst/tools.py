@@ -861,10 +861,10 @@ def _consultar_situacao_nrs_filtrada(condition: str, parameters: list) -> dict:
 def _escopo_conformidade(user: CurrentUser) -> tuple[str, list]:
     if user.role == "GESTOR_WORKSPACE":
         scope = "unidade.workspace_id = (SELECT u.workspace_id FROM usuario a JOIN unidade u ON u.id_unidade = a.unidade_id WHERE a.firebase_uid = %s LIMIT 1)"
-        types = ["GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"]
+        types = ["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]
     else:
         scope = "usuario.unidade_id = (SELECT a.unidade_id FROM usuario a WHERE a.firebase_uid = %s LIMIT 1)"
-        types = ["GESTOR", "FUNCIONARIO"]
+        types = ["GESTOR", "COLABORADOR"]
     return scope + " AND usuario.tipo = ANY(%s) AND usuario.firebase_uid <> %s", [user.uid, types, user.uid]
 
 

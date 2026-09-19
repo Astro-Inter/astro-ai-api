@@ -52,7 +52,7 @@ class FakeMCPClient:
 
 def tool_config(*, pending=None, explicit=False):
     return {"configurable": {
-        "usuario_atual": {"uid": "user-a", "role": "FUNCIONARIO"},
+        "usuario_atual": {"uid": "user-a", "role": "COLABORADOR"},
         "session_id": "session-a",
         "acao_pendente": pending,
         "confirmacao_explicita": explicit,
@@ -171,7 +171,7 @@ def test_optional_oauth_routes(monkeypatch):
     service = FakeOAuthService()
     application.state.google_calendar_oauth = service
     application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
-        uid="user-a", role="FUNCIONARIO",
+        uid="user-a", role="COLABORADOR",
     )
 
     with TestClient(application) as client:

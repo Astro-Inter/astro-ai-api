@@ -58,7 +58,7 @@ def setup_db(monkeypatch, *, user_id=7, days=()):
 
 
 def auth_config(uid="firebase-self"):
-    return {"configurable": {"usuario_atual": {"uid": uid, "role": "FUNCIONARIO"}}}
+    return {"configurable": {"usuario_atual": {"uid": uid, "role": "COLABORADOR"}}}
 
 
 def test_schema_does_not_accept_target_user_and_validates_period():

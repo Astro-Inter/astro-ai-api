@@ -41,7 +41,7 @@ def service_parts(model=None):
 def test_session_end_summary_persistence_and_idempotence():
     async def scenario():
         service, repo, vectors, model = service_parts()
-        user, sid = CurrentUser(uid="owner", role="FUNCIONARIO"), uuid4()
+        user, sid = CurrentUser(uid="owner", role="COLABORADOR"), uuid4()
         await service.start(sid, user)
         first_date = repo.docs[str(sid)]["iniciada_em"]
         await service.start(sid, user)
@@ -70,7 +70,7 @@ def test_session_end_summary_persistence_and_idempotence():
 def test_empty_and_missing_sessions():
     async def scenario():
         service, repo, vectors, model = service_parts()
-        user, sid = CurrentUser(uid="owner", role="FUNCIONARIO"), uuid4()
+        user, sid = CurrentUser(uid="owner", role="COLABORADOR"), uuid4()
         with pytest.raises(ChatError) as error:
             await service.end(sid, user)
         assert error.value.status_code == 404 and not repo.docs
@@ -84,7 +84,7 @@ def test_empty_and_missing_sessions():
 def test_qdrant_failure_keeps_summary_for_retry():
     async def scenario():
         service, repo, vectors, model = service_parts()
-        user = CurrentUser(uid="owner", role="FUNCIONARIO")
+        user = CurrentUser(uid="owner", role="COLABORADOR")
         first = await service.chat(ChatRequest(message="Oi"), user)
         vectors.failure = True
         with pytest.raises(ChatError) as error:
@@ -107,7 +107,7 @@ def test_qdrant_failure_keeps_summary_for_retry():
 def test_resume_after_qdrant_success_but_mongo_finalization_failure():
     async def scenario():
         service, repo, vectors, model = service_parts()
-        user = CurrentUser(uid="owner", role="FUNCIONARIO")
+        user = CurrentUser(uid="owner", role="COLABORADOR")
         first = await service.chat(ChatRequest(message="Oi"), user)
         original = repo.update
         async def fail_final(sid, uid, token, fields, messages=None):
@@ -129,7 +129,7 @@ def test_resume_after_qdrant_success_but_mongo_finalization_failure():
 def test_summary_checkpoints_resume_all_chunks():
     async def scenario():
         service, repo, vectors, model = service_parts()
-        user, sid = CurrentUser(uid="owner", role="FUNCIONARIO"), uuid4()
+        user, sid = CurrentUser(uid="owner", role="COLABORADOR"), uuid4()
         await service.start(sid, user)
         repo.docs[str(sid)]["mensagens"] = [
             {"role": "human" if i % 2 == 0 else "assistant", "content": f"trecho-{i}:" + "x" * 3990}
@@ -170,7 +170,7 @@ def test_router_memory_lookup_and_owner_filter():
             return await super().complete(agent, messages, **kwargs)
     async def scenario():
         service, repo, vectors, model = service_parts()
-        user = CurrentUser(uid="owner", role="FUNCIONARIO")
+        user = CurrentUser(uid="owner", role="COLABORADOR")
         old = await service.chat(ChatRequest(message="Oi"), user)
         await service.end(old.session_id, user)
         foreign = str(uuid4())
@@ -213,7 +213,7 @@ def test_explicit_memory_request_retrieves_before_router_answer(message):
 
     async def scenario():
         service, repo, vectors, model = service_parts(HistoryModel("direta"))
-        user = CurrentUser(uid="owner", role="FUNCIONARIO")
+        user = CurrentUser(uid="owner", role="COLABORADOR")
         old, foreign = str(uuid4()), str(uuid4())
         for sid, uid, summary in (
             (old, "owner", "Consultou notificações; nenhum evento criado."),
@@ -258,7 +258,7 @@ def test_explicit_memory_request_without_closed_sessions():
         repo.previous = AsyncMock(return_value=[])
         result = await service.chat(ChatRequest(
             message="Busque o resumo da minha última conversa encerrada com o Astro.",
-        ), CurrentUser(uid="owner", role="FUNCIONARIO"))
+        ), CurrentUser(uid="owner", role="COLABORADOR"))
         assert "buscar_historico" in result.agentes_chamados
         assert result.resposta == "Não encontrei conversas encerradas com resumo disponível."
         repo.previous.assert_awaited_once_with("owner", str(result.session_id))
@@ -271,7 +271,7 @@ def test_explicit_memory_request_respects_input_guard_and_single_lookup():
         service, repo, vectors, model = service_parts()
         repo.previous = AsyncMock(return_value=[])
         message = "Busque o resumo da minha última conversa encerrada com o Astro."
-        user = CurrentUser(uid="owner", role="FUNCIONARIO")
+        user = CurrentUser(uid="owner", role="COLABORADOR")
         model.replies["guardrail_entrada"] = json.dumps({
             "decisao": "bloquear", "motivo": "injecao_de_prompt", "mensagem": "Não posso ajudar.",
         })
@@ -293,7 +293,7 @@ def test_router_rejects_untrusted_memory_arguments(reply):
         model.replies["roteador"] = reply
         with pytest.raises(ChatError) as error:
             await service.chat(ChatRequest(message="Lembre RH"), CurrentUser(
-                uid="owner", role="FUNCIONARIO",
+                uid="owner", role="COLABORADOR",
             ))
         assert error.value.status_code == 502
         assert not vectors.calls
@@ -306,7 +306,7 @@ def test_router_allows_only_one_lookup_and_blocks_before_lookup():
         model.replies["roteador"] = 'MEMORY={"busca":"RH"}'
         with pytest.raises(ChatError) as error:
             await service.chat(ChatRequest(message="Histórico"), CurrentUser(
-                uid="owner", role="FUNCIONARIO",
+                uid="owner", role="COLABORADOR",
             ))
         assert error.value.status_code == 502 and len(vectors.calls) == 1
         vectors.calls.clear()
@@ -314,7 +314,7 @@ def test_router_allows_only_one_lookup_and_blocks_before_lookup():
             "decisao": "bloquear", "motivo": "injecao_de_prompt", "mensagem": "Não posso ajudar.",
         })
         await service.chat(ChatRequest(message="Histórico"), CurrentUser(
-            uid="owner", role="FUNCIONARIO",
+            uid="owner", role="COLABORADOR",
         ))
         assert not vectors.calls
     asyncio.run(scenario())
@@ -348,20 +348,20 @@ def test_session_routes_authentication_and_ownership():
         for action in ("iniciar", "encerrar"):
             assert client.post(f"/sessions/{sid}/{action}").status_code == 401
         app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
-            uid="owner", role="FUNCIONARIO",
+            uid="owner", role="COLABORADOR",
         )
         result = client.post(f"/sessions/{sid}/iniciar")
         assert result.status_code == 200 and result.headers["cache-control"] == "no-store"
         assert result.json()["session_id"] == sid
         assert client.post("/chat/messages", json={"message": "Oi", "session_id": sid}).status_code == 200
         app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
-            uid="other", role="FUNCIONARIO",
+            uid="other", role="COLABORADOR",
         )
         for action in ("iniciar", "encerrar"):
             assert client.post(f"/sessions/{sid}/{action}").status_code == 404
         assert client.post("/chat/messages", json={"message": "Oi", "session_id": sid}).status_code == 404
         app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
-            uid="owner", role="FUNCIONARIO",
+            uid="owner", role="COLABORADOR",
         )
         assert client.post(f"/sessions/{sid}/encerrar").json()["resumo_indexado"] is True
         assert client.post("/sessions/not-uuid/iniciar").status_code == 422
@@ -476,7 +476,7 @@ def test_wrong_vector_dimensions_fail_without_recreation(monkeypatch):
 def test_invalid_summary_never_reaches_qdrant():
     async def scenario():
         service, repo, vectors, model = service_parts()
-        user = CurrentUser(uid="owner", role="FUNCIONARIO")
+        user = CurrentUser(uid="owner", role="COLABORADOR")
         first = await service.chat(ChatRequest(message="Oi"), user)
         model.replies["resumo"] = '{"resumo":"   "}'
         with pytest.raises(ChatError) as error:
@@ -492,7 +492,7 @@ def test_chat_and_end_serialize_across_service_instances():
     async def scenario():
         first, repo, vectors, model = service_parts()
         second = ChatService(model, repository=repo, vectors=vectors)
-        user, sid = CurrentUser(uid="owner", role="FUNCIONARIO"), uuid4()
+        user, sid = CurrentUser(uid="owner", role="COLABORADOR"), uuid4()
         await first.start(sid, user)
         entered, release = asyncio.Event(), asyncio.Event()
         original = model.complete

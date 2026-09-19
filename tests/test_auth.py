@@ -83,6 +83,21 @@ def test_login_success_and_bearer(client, firebase_http, monkeypatch, caplog):
         assert secret not in caplog.text
 
 
+def test_collaborator_role_authenticates_successfully(client, monkeypatch):
+    monkeypatch.setattr(
+        auth, "verify_firebase_id_token", Mock(return_value={"uid": "collaborator-123"}),
+    )
+    client.app.state.access_roles.get_role.return_value = "COLABORADOR"
+
+    result = client.get(
+        "/protected-for-tests", headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    assert result.status_code == 200
+    assert result.json() == {"uid": "collaborator-123", "role": "COLABORADOR"}
+    client.app.state.access_roles.get_role.assert_awaited_once_with("collaborator-123")
+
+
 @pytest.mark.parametrize("code", [
     "EMAIL_NOT_FOUND", "INVALID_PASSWORD", "INVALID_LOGIN_CREDENTIALS", "USER_DISABLED",
 ])

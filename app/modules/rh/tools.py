@@ -11,9 +11,9 @@ from app.modules.chat.schemas import SpecialistResult
 
 
 UserStatus = Literal["ATIVO", "PRE_CADASTRADO", "DESATIVADO"]
-UserType = Literal["GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"]
-MANAGER_VISIBLE_TYPES = ["GESTOR", "FUNCIONARIO"]
-WORKSPACE_MANAGER_VISIBLE_TYPES = ["GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"]
+UserType = Literal["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]
+MANAGER_VISIBLE_TYPES = ["GESTOR", "COLABORADOR"]
+WORKSPACE_MANAGER_VISIBLE_TYPES = ["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]
 
 OTHER_USER_COLUMNS = ("nome", "email", "tipo", "cargo", "unidade", "modalidade", "status")
 CURRENT_USER_COLUMNS = (
@@ -35,7 +35,7 @@ class BuscarOutrosUsuariosArgs(BaseModel):
     tipos: list[UserType] = Field(
         default_factory=list,
         max_length=3,
-        description="Perfis a consultar: GESTOR, GESTOR_WORKSPACE ou FUNCIONARIO.",
+        description="Perfis a consultar: GESTOR, GESTOR_WORKSPACE ou COLABORADOR.",
     )
     nome: str | None = Field(
         default=None, min_length=1, max_length=255,
@@ -153,7 +153,7 @@ def buscar_outros_usuarios(
     user = _usuario_do_contexto(config)
     if user is None:
         return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
-    if user.role == "FUNCIONARIO":
+    if user.role == "COLABORADOR":
         return {
             "status": "nao_autorizado",
             "mensagem": "Seu perfil nao permite consultar outros usuarios.",

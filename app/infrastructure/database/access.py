@@ -8,7 +8,7 @@ from app.core.security import AccessRole
 
 
 NO_ACCESS = "SEM_ACESSO"
-ACCESS_ROLES = frozenset({"ADMIN", "GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"})
+ACCESS_ROLES = frozenset({"ADMIN", "GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"})
 
 
 class AccessLookupError(Exception):

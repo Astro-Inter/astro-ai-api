@@ -102,7 +102,7 @@ class FakeFaqVectors:
 
 
 class FakeAccessRoles:
-    def __init__(self, role="FUNCIONARIO"):
+    def __init__(self, role="COLABORADOR"):
         self.role = role
         self.calls = []
 

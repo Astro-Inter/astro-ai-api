@@ -122,7 +122,7 @@ def chat_client(monkeypatch):
     )
     application.state.access_roles = FakeAccessRoles()
     application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
-        uid="user-a", role="FUNCIONARIO",
+        uid="user-a", role="COLABORADOR",
     )
     with TestClient(application) as client:
         yield client, model, application
@@ -629,7 +629,7 @@ def test_manager_consults_employee_conformity_with_recent_history(chat_client, m
     assert client.post(f"/sessions/{sid}/iniciar").status_code == 200
     application.state.chat_service.repository.docs[sid]["mensagens"] = [
         {"role": "human", "content": "Mostre uma funcionária da minha unidade."},
-        {"role": "assistant", "content": "Encontrei 1 usuário(s):\n- Maria Silva: Eletricista | Matriz | FUNCIONARIO | ATIVO | maria@example.com"},
+        {"role": "assistant", "content": "Encontrei 1 usuário(s):\n- Maria Silva: Eletricista | Matriz | COLABORADOR | ATIVO | maria@example.com"},
     ]
     model.replies["sst"] = json.dumps({"acao": "consultar_conformidade_usuario", "filtros": {"pessoa": "maria@example.com"}, "resposta": None})
     connections = iter([
@@ -1207,7 +1207,7 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
             self.query, self.parameters = query, parameters
         def fetchall(self):
             return [(
-                "Ana", "ana@example.com", "FUNCIONARIO", "Analista",
+                "Ana", "ana@example.com", "COLABORADOR", "Analista",
                 "Matriz", "HIBRIDO", "ATIVO",
             )]
 
@@ -1240,7 +1240,7 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "rh", "juiz",
     ]
-    assert connection.db_cursor.parameters == ["user-a", ["GESTOR", "FUNCIONARIO"], "user-a", ["ATIVO"], 20]
+    assert connection.db_cursor.parameters == ["user-a", ["GESTOR", "COLABORADOR"], "user-a", ["ATIVO"], 20]
     assert [call[0] for call in model.calls].count("rh") == 1
     judge_call = next(call for call in model.calls if call[0] == "juiz")
     tool_result = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
@@ -1273,7 +1273,7 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, fiel
             self.query, self.parameters = query, parameters
         def fetchone(self):
             return (
-                "Lucas", "lucas@example.com", "12345678901", "FUNCIONARIO",
+                "Lucas", "lucas@example.com", "12345678901", "COLABORADOR",
                 "Analista", "Matriz", "HIBRIDO", "ATIVO", None,
             )
 
@@ -1858,7 +1858,7 @@ def test_session_history_and_ownership(chat_client):
     assert '"ultima_rota": "rh"' in messages[0].content
     assert '"fuso": "America/Sao_Paulo"' in messages[0].content
     application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
-        uid="user-b", role="FUNCIONARIO",
+        uid="user-b", role="COLABORADOR",
     )
     model.calls.clear()
     forbidden = client.post("/chat/messages", json={"message": "Oi", "session_id": first["session_id"]})
@@ -1958,7 +1958,7 @@ def test_chat_requires_verified_firebase_token(chat_client, monkeypatch):
         "Authorization": "Bearer fake-valid-token",
     }).status_code == 200
     assert '"uid": "firebase-user"' in model.calls[0][1][0].content
-    assert '"role": "FUNCIONARIO"' in model.calls[0][1][0].content
+    assert '"role": "COLABORADOR"' in model.calls[0][1][0].content
     assert application.state.access_roles.calls == ["firebase-user"]
     assert "fake-valid-token" not in str(model.calls)
 
@@ -1967,7 +1967,7 @@ def test_persistent_history_with_bounded_model_context():
     async def scenario():
         repository = FakeSessions()
         service = ChatService(FakeModel("direta"), repository=repository, vectors=FakeVectors())
-        user = CurrentUser(uid="user-a", role="FUNCIONARIO")
+        user = CurrentUser(uid="user-a", role="COLABORADOR")
         first = await service.chat(ChatRequest(message="Olá"), user)
         for _ in range(12):
             await service.chat(ChatRequest(message="x" * 4000, session_id=first.session_id), user)
@@ -1989,7 +1989,7 @@ def test_concurrency_and_timeout_release_session():
     async def scenario():
         model = FakeModel("direta")
         service = ChatService(model, repository=FakeSessions(), vectors=FakeVectors())
-        user = CurrentUser(uid="user-a", role="FUNCIONARIO")
+        user = CurrentUser(uid="user-a", role="COLABORADOR")
         first = await service.chat(ChatRequest(message="Oi"), user)
         entered, release = asyncio.Event(), asyncio.Event()
         original = model.complete

@@ -28,7 +28,7 @@ essas obrigações está fora do escopo, sem pedir que o usuário confirme seu c
   inclusive listas sem nome específico, são pedidos legítimos de RH: encaminhe
   ao Roteador; a ferramenta verificará o escopo e poderá negar o acesso.
   ADMIN consulta terceiros; GESTOR_WORKSPACE consulta seu workspace; GESTOR
-  consulta sua unidade; FUNCIONARIO consulta seus próprios dados. Ser GESTOR
+  consulta sua unidade; COLABORADOR consulta seus próprios dados. Ser GESTOR
   não autoriza consultar todo o workspace nem outra empresa.
 - Consultas de conformidade de funcionários, inclusive "dela" ou "essa pessoa"
   após uma busca de RH, são legítimas para gestores no seu escopo. Encaminhe ao
