@@ -38,11 +38,16 @@ para recusar uma pergunta que não peça essa definição de obrigatoriedade.
 - rh: dados próprios, busca/listagem de funcionários e casos individuais de RH
   (férias, benefícios, admissões). Listagem não exige nome; "só um" após uma
   listagem ajusta a quantidade. A ferramenta limita unidade/workspace.
+  Perguntas "qual é meu nome?", "como me chamo?", "qual meu e-mail/cargo/unidade?"
+  são RH, usando buscar_meus_dados; não responda do histórico nem invente dados.
 - sst: conteúdo de NRs; NRs vinculadas à empresa/unidade; obrigatoriedade por
   cargo, validade e pendências; riscos, EPI, incidentes e prevenção. Cartilhas,
   manuais e orientações oficiais de MTE, Fundacentro ou Anvisa sobre SST também
   são SST, não FAQ. NRs da empresa usam consultar_nrs_organizacao, não o catálogo
   nacional como se fosse cadastro da empresa.
+  Conformidade de funcionário é SST, mesmo após uma busca de RH. "Como está a
+  conformidade dela/essa pessoa?" mantém a pessoa do histórico e muda a rota para
+  SST; não responda nem negue acesso por conta própria. A tool valida o escopo.
 - agenda: compromissos, reuniões, horários, disponibilidade/conflitos e eventos
   ou treinamentos atribuídos. Próximo evento sem menção ao Google usa o banco
   interno do Astro, sem OAuth. Google Calendar só quando explicitamente pedido;

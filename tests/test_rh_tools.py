@@ -51,7 +51,7 @@ class FakeConnection:
 
 def run_search(monkeypatch, role, filters, rows=None, uid="firebase-owner"):
     rows = rows if rows is not None else [(
-        "Ana Lima", "ana@example.com", "FUNCIONARIO", "Soldador", "Matriz",
+        "Ana Lima", "ana@example.com", "COLABORADOR", "Soldador", "Matriz",
         "PRESENCIAL", "ATIVO",
     )]
     connection = FakeConnection(rows)
@@ -107,7 +107,7 @@ def test_other_users_decision_treats_missing_filters_as_search_all(payload):
 def test_manager_search_is_limited_to_own_unit_and_allowed_profiles(monkeypatch):
     filters = BuscarOutrosUsuariosArgs(
         status=["ATIVO", "PRE_CADASTRADO"],
-        tipos=["FUNCIONARIO"],
+        tipos=["COLABORADOR"],
         nome="Ana%_",
         cargo="soldador",
         limite=15,
@@ -126,15 +126,15 @@ def test_manager_search_is_limited_to_own_unit_and_allowed_profiles(monkeypatch)
     assert "usuario.nome ILIKE %s" in query
     assert "cargo.nome ILIKE %s" in query
     assert connection.db_cursor.parameters == [
-        "firebase-owner", ["GESTOR", "FUNCIONARIO"], "firebase-owner",
-        ["ATIVO", "PRE_CADASTRADO"], ["FUNCIONARIO"],
+        "firebase-owner", ["GESTOR", "COLABORADOR"], "firebase-owner",
+        ["ATIVO", "PRE_CADASTRADO"], ["COLABORADOR"],
         r"%Ana\%\_%", "%soldador%", 15,
     ]
     assert result == {
         "status": "ok",
         "quantidade": 1,
         "usuarios": [{
-            "nome": "Ana Lima", "email": "ana@example.com", "tipo": "FUNCIONARIO",
+            "nome": "Ana Lima", "email": "ana@example.com", "tipo": "COLABORADOR",
             "cargo": "Soldador", "unidade": "Matriz", "modalidade": "PRESENCIAL",
             "status": "ATIVO",
         }],
@@ -150,7 +150,7 @@ def test_workspace_manager_search_is_limited_to_workspace_and_allowed_profiles(m
     assert "unidade_atual.workspace_id" in query
     assert "usuario.unidade_id = (" not in query
     assert connection.db_cursor.parameters == [
-        "firebase-owner", ["GESTOR", "GESTOR_WORKSPACE", "FUNCIONARIO"],
+        "firebase-owner", ["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"],
         "firebase-owner", 20,
     ]
     assert result == {"status": "sem_dados", "quantidade": 0, "usuarios": []}
@@ -159,12 +159,12 @@ def test_workspace_manager_search_is_limited_to_workspace_and_allowed_profiles(m
 def test_employee_cannot_search_other_users_or_open_database(monkeypatch):
     monkeypatch.setattr(
         rh_tools, "get_conn",
-        lambda: pytest.fail("A conexão não deveria ser aberta para FUNCIONARIO."),
+        lambda: pytest.fail("A conexão não deveria ser aberta para COLABORADOR."),
     )
     result = buscar_outros_usuarios.invoke(
         {},
         config={"configurable": {
-            "usuario_atual": {"uid": "employee", "role": "FUNCIONARIO"},
+            "usuario_atual": {"uid": "employee", "role": "COLABORADOR"},
         }},
     )
     assert result == {
@@ -189,7 +189,7 @@ def test_current_user_tool_returns_only_authenticated_user(monkeypatch):
     from datetime import datetime
 
     row = (
-        "Lucas Lima", "lucas@example.com", "12345678901", "FUNCIONARIO",
+        "Lucas Lima", "lucas@example.com", "12345678901", "COLABORADOR",
         "Analista", "Matriz", "HIBRIDO", "ATIVO", datetime(2026, 9, 10, 10, 30),
     )
     connection = FakeConnection([row])
@@ -199,7 +199,7 @@ def test_current_user_tool_returns_only_authenticated_user(monkeypatch):
     result = buscar_meus_dados.invoke(
         {},
         config={"configurable": {
-            "usuario_atual": {"uid": "firebase-owner", "role": "FUNCIONARIO"},
+            "usuario_atual": {"uid": "firebase-owner", "role": "COLABORADOR"},
         }},
     )
 
@@ -219,7 +219,7 @@ def test_current_user_tool_returns_sem_dados(monkeypatch):
     monkeypatch.setattr(rh_tools, "get_conn", lambda: connection)
     result = buscar_meus_dados.invoke(
         {},
-        config={"configurable": {"usuario_atual": {"uid": "missing", "role": "FUNCIONARIO"}}},
+        config={"configurable": {"usuario_atual": {"uid": "missing", "role": "COLABORADOR"}}},
     )
     assert result == {"status": "sem_dados", "dados": None}
 

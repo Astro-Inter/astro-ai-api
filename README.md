@@ -92,7 +92,7 @@ desabilitados. O antigo header `X-Dev-Auth-Token` não concede mais acesso.
 Depois de validar o Firebase ID Token, cada rota protegida consulta o PostgreSQL
 com `SELECT fn_retornar_nivel_acesso(%s)`, usando o UID como parâmetro. O claim
 `role` do Firebase é ignorado. Os perfis aceitos são `ADMIN`, `GESTOR`,
-`GESTOR_WORKSPACE` e `FUNCIONARIO`; `SEM_ACESSO` retorna `403`. Falha, retorno
+`GESTOR_WORKSPACE` e `COLABORADOR`; `SEM_ACESSO` retorna `403`. Falha, retorno
 inválido ou role desconhecida retorna `503`, sem expor detalhes da conexão.
 Configure `DATABASE_URL` e conceda ao usuário do banco somente as permissões
 necessárias para conectar e executar essa função.
@@ -356,6 +356,11 @@ uma mensagem posterior; o ID estável evita duplicar o evento em um retry.
 `buscar_meus_dados` localiza exclusivamente o usuário autenticado pelo Firebase UID
 do `CurrentUser` e retorna nome, e-mail, CPF, perfil, cargo, unidade, modalidade,
 status e data de cadastro. Ela não expõe filtros ou identificadores ao modelo.
+Perguntas inequívocas como “qual é meu nome?”, “como me chamo?” e “qual meu
+e-mail/cargo/unidade?” passam por validação determinística de intenção no guardrail
+e seguem diretamente para RH. Autenticação e restrição ao próprio usuário
+permanecem obrigatórias. Nesses pedidos, apenas o campo solicitado é enviado aos
+revisores e exibido na resposta, sem CPF ou outros dados desnecessários.
 
 A tool `buscar_outros_usuarios` pesquisa exclusivamente outras pessoas no PostgreSQL.
 Ela recebe `CurrentUser` pelo contexto
@@ -365,9 +370,9 @@ são escapados antes do `ILIKE`. Status, tipos e limite são parâmetros da cons
 nunca SQL produzido pelo modelo.
 
 `ADMIN` pode pesquisar todos os usuários. `GESTOR_WORKSPACE` pesquisa os perfis
-`GESTOR`, `GESTOR_WORKSPACE` e `FUNCIONARIO` somente no workspace associado à sua
-unidade. `GESTOR` pesquisa apenas `GESTOR` e `FUNCIONARIO` da própria unidade.
-`FUNCIONARIO` não pode executar a consulta de terceiros e acessa somente seus dados
+`GESTOR`, `GESTOR_WORKSPACE` e `COLABORADOR` somente no workspace associado à sua
+unidade. `GESTOR` pesquisa apenas `GESTOR` e `COLABORADOR` da própria unidade.
+`COLABORADOR` não pode executar a consulta de terceiros e acessa somente seus dados
 pela tool `buscar_meus_dados`.
 A consulta de terceiros exclui o próprio Firebase UID, retorna no máximo 50 registros
 e apenas nome, e-mail, tipo, cargo,
@@ -387,6 +392,18 @@ especialista, dez. Após uma falha da Mistral, os especialistas usam Groq durant
 cinco minutos antes de tentar a Mistral novamente.
 
 ### Tool de consulta de NRs do SST
+
+`consultar_conformidade_usuario` recebe `pessoa` (nome completo ou e-mail) e
+consulta a situação das NRs obrigatórias registradas para outro funcionário.
+Somente `GESTOR` (mesma unidade) e `GESTOR_WORKSPACE` (mesmo workspace) podem
+usá-la. O backend resolve a identidade e revalida o escopo na leitura das NRs;
+não aceita UID, IDs de unidade ou workspace como filtros. Nomes duplicados
+exigem e-mail; ausência de registros não comprova conformidade. A resposta
+mostra vigência, pendências, realização/renovação necessária e datas disponíveis,
+sem dados médicos ou declaração de conformidade legal completa. Após uma busca
+de RH com exatamente uma pessoa, referências como “conformidade dela” usam o
+e-mail do resultado anterior. Com várias pessoas, é necessário identificá-la.
+Exemplo: “Consulte a conformidade de maria@empresa.com”.
 
 `consultar_nrs_organizacao` consulta os vínculos do PostgreSQL com dois escopos:
 `unidade`, para a unidade atual do usuário, e `empresa`, para a união distinta

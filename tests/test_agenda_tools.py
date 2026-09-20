@@ -49,7 +49,7 @@ class FakeConnection:
         return self.db_cursor
 
 
-def tool_config(role="FUNCIONARIO"):
+def tool_config(role="COLABORADOR"):
     return {"configurable": {"usuario_atual": {"uid": "firebase-user", "role": role}}}
 
 
@@ -146,7 +146,7 @@ def test_pending_training_is_scoped_to_authenticated_user_and_returns_schedule(m
 
 def test_training_filters_and_pagination_are_applied_without_user_ids(monkeypatch):
     cursor = FakeCursor(total=7, rows=[(
-        "NR-6", "Descrição", None, "FUNCIONARIO", False, "CONCLUIDO", "Turma B",
+        "NR-6", "Descrição", None, "COLABORADOR", False, "CONCLUIDO", "Turma B",
         datetime(2026, 8, 1, 9), datetime(2026, 8, 1, 12),
         6, "EPI", "CONCLUIDO", datetime(2026, 8, 1, 12), date(2027, 8, 1),
         datetime(2026, 8, 2, 10), None,
@@ -158,6 +158,7 @@ def test_training_filters_and_pagination_are_applied_without_user_ids(monkeypatc
     )
 
     assert result["total_paginas"] == 3
+    assert result["treinamentos"][0]["modo_conclusao"] == "COLABORADOR"
     assert result["treinamentos"][0]["data_validade"] == "2027-08-01"
     assert cursor.calls[2][1] == [7, 3, 3]
     assert "conclusao.status = 'CONCLUIDO'" in cursor.calls[2][0]

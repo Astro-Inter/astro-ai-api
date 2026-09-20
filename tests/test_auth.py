@@ -83,6 +83,21 @@ def test_login_success_and_bearer(client, firebase_http, monkeypatch, caplog):
         assert secret not in caplog.text
 
 
+def test_collaborator_role_authenticates_successfully(client, monkeypatch):
+    monkeypatch.setattr(
+        auth, "verify_firebase_id_token", Mock(return_value={"uid": "collaborator-123"}),
+    )
+    client.app.state.access_roles.get_role.return_value = "COLABORADOR"
+
+    result = client.get(
+        "/protected-for-tests", headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    assert result.status_code == 200
+    assert result.json() == {"uid": "collaborator-123", "role": "COLABORADOR"}
+    client.app.state.access_roles.get_role.assert_awaited_once_with("collaborator-123")
+
+
 @pytest.mark.parametrize("code", [
     "EMAIL_NOT_FOUND", "INVALID_PASSWORD", "INVALID_LOGIN_CREDENTIALS", "USER_DISABLED",
 ])
@@ -103,6 +118,15 @@ def test_login_hidden(monkeypatch, env, enabled):
         assert client.post("/auth/login", json={}).status_code == 404
         assert "/auth/login" not in client.get("/openapi.json").json()["paths"]
         assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_version_exposes_only_render_commit(client, monkeypatch):
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    response = client.get("/version")
+    assert response.json() == {"commit": "a" * 40}
+    assert response.headers["Cache-Control"] == "no-store"
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "not-a-commit\nsecret")
+    assert client.get("/version").json() == {"commit": "unknown"}
 
 
 def test_missing_key(client, monkeypatch, firebase_http):

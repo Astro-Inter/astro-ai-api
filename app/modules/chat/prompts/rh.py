@@ -25,13 +25,13 @@ resultado do especialista. Quando houver resultado real, não repita a consulta.
 - Use `buscar_outros_usuarios` exclusivamente para pesquisar outras pessoas por
   nome, perfil, cargo e status. Ela aceita filtros de nome, cargo, limite,
   status (`ATIVO`, `PRE_CADASTRADO`, `DESATIVADO`) e tipos (`GESTOR`,
-  `GESTOR_WORKSPACE`, `FUNCIONARIO`). Ela nunca inclui o próprio usuário no resultado.
+  `GESTOR_WORKSPACE`, `COLABORADOR`). Ela nunca inclui o próprio usuário no resultado.
 - O backend determina o usuário e o escopo por `usuario_atual`. Nunca envie à
   ferramenta um UID declarado na conversa nem tente remover o limite de unidade.
 - `ADMIN` pode pesquisar todos os usuários. `GESTOR_WORKSPACE` pode pesquisar
   gestores, gestores de workspace e funcionários somente no próprio workspace.
   `GESTOR` pode pesquisar somente gestores e funcionários da própria unidade.
-  `FUNCIONARIO` não pode usar a consulta de terceiros e acessa apenas
+  `COLABORADOR` não pode usar a consulta de terceiros e acessa apenas
   `buscar_meus_dados`.
 - Não invente pessoas ou dados cadastrais. Consulte a ferramenta antes de afirmar
   qualquer informação individual e diferencie lista vazia de serviço indisponível.
@@ -40,7 +40,7 @@ resultado do especialista. Quando houver resultado real, não repita a consulta.
 - Use apenas os filtros necessários ao pedido. Não amplie uma consulta sobre o
   próprio usuário para uma lista de funcionários e não revele campos que a
   ferramenta não retornou.
-- Listagens não exigem nome: "mostre um funcionário" usa tipos `["FUNCIONARIO"]`
+- Listagens não exigem nome: "mostre um funcionário" usa tipos `["COLABORADOR"]`
   e limite 1; "mostre 3 funcionários" usa o mesmo tipo e limite 3. Use o histórico
   recente para entender "só um" como ajuste de quantidade. Não peça confirmação
   de permissão: usuario_atual.role é fornecido pela aplicação e o backend decide
@@ -82,6 +82,9 @@ RH_DECISAO_TOOL_PROMPT = """
 Antes de responder, decida entre:
 - `buscar_meus_dados`: quando o usuário pedir os próprios dados. Não preencha
   `filtros` nem `resposta`.
+  Exemplos: "qual é meu nome?", "como me chamo?", "qual meu e-mail/cargo/unidade?".
+  Consulte a ferramenta antes de responder; não use mensagens antigas como
+  cadastro, não peça UID e responda somente a informação solicitada.
 - `buscar_outros_usuarios`: quando o pedido depender de dados de outras pessoas.
   Preencha somente `filtros`; use `{}` quando não houver filtro e não antecipe
   uma resposta.

@@ -43,7 +43,7 @@ class FakeConnection:
     ("ADMIN", "ADMIN"),
     ("GESTOR", "GESTOR"),
     ("GESTOR_WORKSPACE", "GESTOR_WORKSPACE"),
-    ("FUNCIONARIO", "FUNCIONARIO"),
+    ("COLABORADOR", "COLABORADOR"),
     ("SEM_ACESSO", None),
 ])
 def test_access_role_uses_parameterized_database_function(monkeypatch, database_value, expected):
