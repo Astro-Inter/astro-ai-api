@@ -239,6 +239,51 @@ continua funcionando, exceto as operações que dependem do calendário.
 
 ### Observabilidade e métricas SRE
 
+#### Logs no Grafana Cloud via OpenTelemetry
+
+A API e o agente A2A mantêm logs estruturados em JSON no console e podem enviar
+os mesmos registros ao Grafana Cloud por OTLP/HTTP. A exportação é opcional: ela
+só é habilitada quando as duas variáveis abaixo estão preenchidas; sem elas, a
+aplicação continua funcionando apenas com o console.
+
+```dotenv
+OTEL_EXPORTER_OTLP_ENDPOINT=https://<seu-endpoint-otlp>/otlp
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20<credencial-base64>
+```
+
+Use o endpoint e o header exibidos no cartão OpenTelemetry da sua stack. O valor
+de `OTEL_EXPORTER_OTLP_ENDPOINT` é a URL base: não acrescente `/v1/logs`, pois o
+exportador HTTP faz isso automaticamente. Nunca versione esses valores no `.env`.
+Os recursos enviados usam `service.name=astro-ai-api` na API e
+`service.name=astro-ai-a2a` no agente, além de `service.version`,
+`deployment.environment` e, no agente, `worker.name=public-research`.
+
+No GitHub Actions, crie os secrets `GRAFANA_OTLP_ENDPOINT` e
+`GRAFANA_OTLP_HEADERS` e exponha-os somente no job que executa a aplicação:
+
+```yaml
+env:
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.GRAFANA_OTLP_ENDPOINT }}
+  OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.GRAFANA_OTLP_HEADERS }}
+```
+
+No Render, preencha as duas variáveis secretas solicitadas pelo Blueprint. No
+Kubernetes, adicione-as a `deploy/k8s/secrets.env` antes de gerar o Secret; os
+manifests não contêm credenciais.
+
+Para validar localmente, inicie a API normalmente e confirme no console o log
+`Observabilidade iniciada` com status `console_only`. Para testar o envio, defina
+as duas variáveis, reinicie o processo e confirme o status `console_and_otlp`.
+No Grafana Cloud, abra **Explore > Logs** (ou **Logs Drilldown**) e consulte:
+
+```logql
+{service_name=~"astro-ai-api|astro-ai-a2a"}
+```
+
+Filtre também por `deployment_environment` e `severity_text` para conferir os
+atributos estruturados. O envio usa fila e lotes para não bloquear requisições;
+no encerramento normal, a fila é drenada antes de o processo terminar.
+
 Cada chamada autenticada de `POST /chat/messages` cria um trace raiz
 `astro_chat`. O backend registra o feedback numérico `resolved` (`1` para uma
 solicitação concluída e `0` para erro, bloqueio, indisponibilidade, ambiguidade,

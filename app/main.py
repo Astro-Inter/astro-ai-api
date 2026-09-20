@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,18 +10,39 @@ from app.core import config
 from app.infrastructure.database.access import PostgresAccessRoles
 from app.infrastructure.google_calendar import GoogleCalendarOAuthService
 from app.modules.chat.service import ChatService
+from app.observability.logging import configure_logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(application):
+        observability = configure_logging(
+            service_name="astro-ai-api",
+            environment=config.APP_ENV,
+        )
+        logger.info(
+            "Observabilidade iniciada",
+            extra={"operation": "startup", "status": (
+                "console_and_otlp" if observability.otlp_enabled else "console_only"
+            )},
+        )
         try:
             yield
         finally:
             try:
                 await application.state.chat_service.close()
             finally:
-                await application.state.google_calendar_oauth.close()
+                try:
+                    await application.state.google_calendar_oauth.close()
+                finally:
+                    logger.info(
+                        "Aplicacao encerrada",
+                        extra={"operation": "shutdown", "status": "success"},
+                    )
+                    observability.shutdown()
 
     application = FastAPI(
         title="Astro AI API",

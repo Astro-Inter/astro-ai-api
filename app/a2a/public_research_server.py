@@ -35,6 +35,7 @@ from app.modules.shared.public_sources import (
     AREA_SOURCES, PublicSourceArea, PublicSourceId,
     _consultar_fontes_publicas_local,
 )
+from app.observability.logging import configure_logging
 
 
 logger = logging.getLogger(__name__)
@@ -172,8 +173,26 @@ def main() -> None:
         raise ValueError("PORT deve ser um número inteiro.") from error
     if not 1 <= port <= 65535:
         raise ValueError("PORT deve estar entre 1 e 65535.")
-    app = create_app(base_url=base_url)
-    uvicorn.run(app, host=host, port=port)
+    observability = configure_logging(
+        service_name="astro-ai-a2a",
+        environment=config.APP_ENV,
+        worker_name="public-research",
+    )
+    logger.info(
+        "Agente A2A iniciado",
+        extra={"operation": "startup", "status": (
+            "console_and_otlp" if observability.otlp_enabled else "console_only"
+        )},
+    )
+    try:
+        app = create_app(base_url=base_url)
+        uvicorn.run(app, host=host, port=port)
+    finally:
+        logger.info(
+            "Agente A2A encerrado",
+            extra={"operation": "shutdown", "status": "success"},
+        )
+        observability.shutdown()
 
 
 if __name__ == "__main__":
