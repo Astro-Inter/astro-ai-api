@@ -98,6 +98,18 @@ spec:
                 secretKeyRef:
                   name: astro-ai-api-secrets
                   key: A2A_SHARED_TOKEN
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: astro-ai-api-secrets
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+                  optional: true
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: astro-ai-api-secrets
+                  key: OTEL_EXPORTER_OTLP_HEADERS
+                  optional: true
           envFrom:
             - configMapRef:
                 name: astro-ai-api-config

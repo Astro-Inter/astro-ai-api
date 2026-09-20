@@ -14,6 +14,10 @@ services:
         value: 0.0.0.0
       - key: A2A_SHARED_TOKEN
         generateValue: true
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
       - key: FETCH_MCP_ALLOWED_DOMAINS
         value: gov.br
       - key: FETCH_MCP_CACHE_TTL_SECONDS
@@ -95,3 +99,7 @@ services:
         sync: false
       - key: LANGSMITH_PROJECT
         value: Astro
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
