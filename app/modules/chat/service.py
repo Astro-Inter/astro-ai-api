@@ -12,7 +12,13 @@ from app.infrastructure.vectorstore.memory import SummaryVectors
 from app.modules.chat.errors import ChatError
 from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import build_chat_graph
-from app.modules.chat.schemas import ChatRequest, ChatResponse, SessionResponse
+from app.modules.chat.schemas import (
+    ChatRequest,
+    ChatResponse,
+    SessionMessage,
+    SessionMessagesResponse,
+    SessionResponse,
+)
 from app.modules.memory.service import ConversationMemory
 from app.modules.shared.tools import PDF_LINK_TTL_HOURS
 from app.observability.chat import ChatObservation, observe_chat
@@ -76,6 +82,28 @@ class ChatService:
             if doc.get("status", "ativa") != "ativa":
                 raise ChatError(409, "Conversa encerrada ou em encerramento. Use um novo session_id.")
             return SessionResponse(session_id=session_id, status="ativa", resumo=None)
+
+    async def messages(self, session_id: UUID, user: CurrentUser) -> SessionMessagesResponse:
+        async with self.operation():
+            doc = await self.repository.get(str(session_id), user.uid)
+            messages = [
+                SessionMessage(
+                    role="user" if message["role"] == "human" else "assistant",
+                    content=message["content"],
+                )
+                for message in doc.get("mensagens", [])
+                if message.get("role") in {"human", "assistant"}
+                and isinstance(message.get("content"), str)
+            ]
+            status = doc.get("status", "ativa")
+            if status not in {"ativa", "encerrando", "encerrada"}:
+                raise ChatError(503, "Historico de conversas indisponivel.")
+            return SessionMessagesResponse(
+                session_id=session_id,
+                status=status,
+                total=len(messages),
+                mensagens=messages,
+            )
 
     async def chat(
         self, request: ChatRequest, user: CurrentUser, *, markdown: bool = True,
