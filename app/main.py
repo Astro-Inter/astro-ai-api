@@ -11,6 +11,7 @@ from app.infrastructure.database.access import PostgresAccessRoles
 from app.infrastructure.google_calendar import GoogleCalendarOAuthService
 from app.modules.chat.service import ChatService
 from app.modules.support.nr_recommendations import PositionNrRecommendationService
+from app.modules.support.unit_nr_recommendations import UnitNrRecommendationService
 from app.observability.logging import configure_logging
 
 
@@ -40,13 +41,16 @@ def create_app() -> FastAPI:
                     await application.state.nr_recommendation_service.close()
                 finally:
                     try:
-                        await application.state.google_calendar_oauth.close()
+                        await application.state.unit_nr_recommendation_service.close()
                     finally:
-                        logger.info(
-                            "Aplicacao encerrada",
-                            extra={"operation": "shutdown", "status": "success"},
-                        )
-                        observability.shutdown()
+                        try:
+                            await application.state.google_calendar_oauth.close()
+                        finally:
+                            logger.info(
+                                "Aplicacao encerrada",
+                                extra={"operation": "shutdown", "status": "success"},
+                            )
+                            observability.shutdown()
 
     application = FastAPI(
         title="Astro AI API",
@@ -63,6 +67,7 @@ def create_app() -> FastAPI:
         )
     application.state.chat_service = ChatService()
     application.state.nr_recommendation_service = PositionNrRecommendationService()
+    application.state.unit_nr_recommendation_service = UnitNrRecommendationService()
     application.state.access_roles = PostgresAccessRoles()
     application.state.google_calendar_oauth = GoogleCalendarOAuthService()
     application.include_router(api_router)
