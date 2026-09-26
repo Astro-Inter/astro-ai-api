@@ -35,9 +35,12 @@ class InputDecision(BaseModel):
     decisao: Literal["aprovar", "bloquear", "esclarecer"]
     motivo: Literal[
         "legitimo", "injecao_de_prompt", "acesso_nao_autorizado", "pedido_danoso",
-        "fraude", "assedio", "contexto_insuficiente",
+        "fraude", "assedio", "contexto_insuficiente", "formato_nao_suportado",
     ]
-    mensagem: str = Field(max_length=6000)
+    mensagem: str = Field(
+        max_length=6000,
+        description="Obrigatoriamente vazia quando decisao=aprovar; nos demais casos, mensagem curta de bloqueio ou esclarecimento. Nunca responder ao pedido original neste campo.",
+    )
 
     @model_validator(mode="after")
     def validate_message(self):

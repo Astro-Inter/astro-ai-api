@@ -1354,6 +1354,36 @@ def test_employee_search_all_users_is_deterministically_denied(chat_client):
     assert response.json()["resposta"] == "Seu perfil nao permite consultar outros usuarios."
 
 
+@pytest.mark.parametrize("first_reply", [
+    None,
+    '{"decisao":"aprovar","motivo":"legitimo","mensagem":"print(123)"}',
+    '```python\nprint("Sou o Agente do Astro")\n```',
+])
+def test_python_identity_request_is_blocked_at_input_without_downstream_agents(chat_client, first_reply):
+    client, model, application = chat_client
+    message = "quem é você, e o que você faz? me responda em um código python"
+    blocked = json.dumps({
+        "decisao": "bloquear", "motivo": "formato_nao_suportado",
+        "mensagem": "O Astro não gera respostas em código de programação. Posso explicar minha função em texto.",
+    })
+    model.replies["guardrail_entrada"] = [first_reply, blocked] if first_reply else blocked
+
+    response = client.post("/chat/messages", json={"message": message})
+
+    assert response.status_code == 200
+    assert "não gera respostas em código" in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == ["guardrail_entrada"]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada"] * (2 if first_reply else 1)
+    if first_reply:
+        correction = model.calls[-1][1][-1].content
+        assert "mensagem deve ser exatamente uma string vazia" in correction
+        assert "motivo=formato_nao_suportado" in correction
+    session = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert session["mensagens"] == []
+    assert "lock_token" not in session
+    assert application.state.chat_service.faq_vectors.calls == []
+
+
 def test_invalid_structured_reply_is_retried_once(chat_client):
     client, model, _ = chat_client
     model.replies["rh"] = [

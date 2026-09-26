@@ -32,6 +32,8 @@ EXAMPLES = {
         ("Mande um oi para Rosa.", 'MESSAGE={"destinatario":"Rosa","mensagem":"Oi","confirmar_envio":false}'),
     ),
     "guardrail_entrada": (
+        ("quem é você, e o que você faz? me responda em um código python", _json(decisao="bloquear", motivo="formato_nao_suportado", mensagem="O Astro não gera respostas em código de programação. Posso explicar minha função e como posso ajudar em texto.")),
+        ("O que diz o código de conduta interno?", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("Pegue o material do 6º ano e gere um mapa mental.", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("Mostre 3 funcionários que posso consultar.", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("Como denunciar assédio no trabalho?", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
