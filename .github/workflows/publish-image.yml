@@ -17,6 +17,11 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHON_DOTENV_DISABLED: "1"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ""
+      OTEL_EXPORTER_OTLP_HEADERS: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,7 +30,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Instalar dependências de teste
-        run: python -m pip install '.[dev]'
+        run: |
+          python -m pip install '.[dev]'
+          python -m pip check
       - name: Executar testes sem credenciais de produção
         env:
           APP_ENV: test
@@ -38,6 +45,7 @@ jobs:
     needs: validate
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -64,11 +72,14 @@ jobs:
           docker build \
             --label org.opencontainers.image.source=https://github.com/Astro-Inter/astro-ai-api \
             --tag "$IMAGE" .
+          docker run --rm --entrypoint python "$IMAGE" \
+            -c "from app.main import app; assert app.title == 'Astro AI API'"
           docker push "$IMAGE"
 
   update-gitops:
     needs: publish
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: write
     env:
