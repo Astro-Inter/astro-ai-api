@@ -7,12 +7,14 @@ Siga [o guia central](https://github.com/Astro-Inter/astro-gitops/blob/main/docs
 
 Neste repositório permanece o workflow de testes/publicação GHCR e promoção
 da tag no GitOps. Configure o Secret Actions ASTRO_GITOPS_TOKEN antes do merge:
-token fine-grained, owner Astro-Inter, somente repo astro-gitops, Contents
-Read and write, expiração curta. Não envie seu valor no chat ou em commits.
+token fine-grained, owner Astro-Inter, somente repo astro-gitops, Contents e
+Pull requests Read and write, expiração curta. Não envie seu valor no chat ou em commits.
 Ele não é o PAT classic read:packages usado pelo Kubernetes.
 
-O job update-gitops muda somente a tag em
-apps/astro-ai-api/overlays/academy/kustomization.yaml na main do repo central.
+O job update-gitops propõe somente a tag em
+apps/astro-ai-api/overlays/academy/kustomization.yaml numa branch ci/SCRUM-393-...
+do repo central e abre PR para main. Nunca faz push direto ou merge automático
+na main. Outra pessoa precisa aprovar e fazer merge para o Argo CD aplicar.
 Não cria branches GitOps aqui, não acessa a AWS e não gerencia Secrets.
 PRs apenas validam; publicação/promoção ocorrem na main após testes bem-sucedidos.
 Os manifestos AWS de produção preexistentes em deploy/k8s não foram alterados.

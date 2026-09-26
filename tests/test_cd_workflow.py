@@ -23,7 +23,14 @@ def test_publishing_requires_tests_and_main():
     assert checkout["with"]["repository"] == "Astro-Inter/astro-gitops"
     assert checkout["with"]["ref"] == "main"
     assert checkout["with"]["token"] == "${{ secrets.ASTRO_GITOPS_TOKEN }}"
-    script = update["steps"][-1]["run"]
+    script = update["steps"][-2]["run"]
     assert "apps/astro-ai-api/overlays/academy/kustomization.yaml" in script
-    assert "git push origin HEAD:main" in script
+    assert "git switch -c" in script
+    assert "HEAD:refs/heads/ci/SCRUM-393-atualizar-ia-" in script
+    assert "HEAD:main" not in script
     assert "--force" not in script
+    pr = update["steps"][-1]
+    assert pr["env"]["GH_TOKEN"] == "${{ secrets.ASTRO_GITOPS_TOKEN }}"
+    assert "gh pr create" in pr["run"]
+    assert "--base main" in pr["run"]
+    assert "gh pr merge" not in pr["run"]

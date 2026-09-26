@@ -88,7 +88,7 @@ jobs:
           GITOPS_TOKEN: ${{ secrets.ASTRO_GITOPS_TOKEN }}
         run: |
           if [ -z "$GITOPS_TOKEN" ]; then
-            echo '::error::Configure ASTRO_GITOPS_TOKEN com acesso Contents read/write somente ao Astro-Inter/astro-gitops.'
+            echo '::error::Configure ASTRO_GITOPS_TOKEN com Contents e Pull requests read/write somente ao Astro-Inter/astro-gitops.'
             exit 1
           fi
       - name: Baixar configuração central
@@ -98,6 +98,7 @@ jobs:
           ref: main
           token: ${{ secrets.ASTRO_GITOPS_TOKEN }}
       - name: Atualizar somente a imagem da API de IA
+        id: propose
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -107,6 +108,20 @@ jobs:
           if [ "$LATEST_SHA" != "$SOURCE_SHA" ]; then
             echo 'Execução antiga: uma versão mais nova já chegou à main.'
             exit 0
+          fi
+          BRANCH="ci/SCRUM-393-atualizar-ia-${SOURCE_SHA}"
+          # Reexecuções reutilizam a mesma proposta, sem sobrescrever histórico.
+          set +e
+          git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null
+          result=$?
+          set -e
+          if [ "$result" -eq 0 ]; then
+            git fetch origin "$BRANCH"
+            git switch -c "$BRANCH" FETCH_HEAD
+          elif [ "$result" -eq 2 ]; then
+            git switch -c "$BRANCH"
+          else
+            exit "$result"
           fi
           python - <<'PY'
           import os
@@ -123,10 +138,34 @@ jobs:
           git add apps/astro-ai-api/overlays/academy/kustomization.yaml
           if git diff --cached --quiet; then
             echo 'Configuração GitOps já atualizada.'
+            if [ "$result" -eq 0 ]; then
+              echo 'ready=true' >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m "ci(SCRUM-393): atualizar imagem da api de ia para sha-${SOURCE_SHA}"
-          # Nunca força push: alterações concorrentes resultam em falha segura.
-          git push origin HEAD:main
+          # Envia somente a branch de proposta, nunca a main; não força push.
+          git push origin "HEAD:refs/heads/ci/SCRUM-393-atualizar-ia-${SOURCE_SHA}"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+      - name: Abrir PR para aprovação humana
+        if: steps.propose.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.ASTRO_GITOPS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="ci/SCRUM-393-atualizar-ia-${SOURCE_SHA}"
+          if ! git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
+            echo 'Nenhuma proposta nova para abrir.'
+            exit 0
+          fi
+          EXISTING="$(gh pr list --repo Astro-Inter/astro-gitops --head "$BRANCH" --base main --state all --json url --jq '.[0].url // empty')"
+          if [ -n "$EXISTING" ]; then
+            echo "PR já existente: $EXISTING"
+            exit 0
+          fi
+          gh pr create --repo Astro-Inter/astro-gitops --base main --head "$BRANCH" \
+            --title "[SCRUM-393] ci: Atualizar API de IA para ${SOURCE_SHA:0:7}" \
+            --body "$(printf '%s\n' '<!-- O título da PR deve seguir o seguinte padrão: [<JIRA>] <tipo>: descrição -->' '' '## Descrição' '' "Promover imagem já publicada: ghcr.io/astro-inter/astro-ai-api:sha-${SOURCE_SHA}. Deploy somente após aprovação e merge." '' '## Jira' '' 'SCRUM-393 — URL do card não fornecida.' '' '## O que foi alterado' '' '- Somente a tag da API de IA no overlay Academy.' '- Não altera Secrets nem infraestrutura AWS.' '' '## Tipo da alteração' '' '- [x] Feature' '- [ ] Bug Fix' '- [ ] Refactor' '- [ ] Documentação')"
