@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: astro-ai
+resources:
+  - ../../base
+images:
+  - name: astro-ai-api
+    newName: ghcr.io/astro-inter/astro-ai-api
+    newTag: sha-9bbc5149f259d33c09b11e19dc1b94e222989373
+patches:
+  - path: deployment-patch.yaml
+  - path: pdb-patch.yaml
