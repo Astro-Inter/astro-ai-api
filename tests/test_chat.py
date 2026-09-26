@@ -2091,6 +2091,7 @@ def test_groq_400_in_json_mode_retries_with_local_validation(monkeypatch):
             return AIMessage(content='{"status":"aprovado"}')
 
     monkeypatch.setattr(config, "MISTRAL_API_KEY", "")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "test-groq-key")
     monkeypatch.setattr(models, "get_model", lambda specialist: Groq())
 
     result = asyncio.run(models.LanguageModels().complete(

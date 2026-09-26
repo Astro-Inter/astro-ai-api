@@ -1,5 +1,19 @@
 # astro-ai-api
 
+## Integração contínua
+
+O workflow `.github/workflows/ci.yml` executa em pushes, pull requests e
+manualmente pela aba **Actions** do GitHub. Ele instala as dependências,
+verifica sua compatibilidade com `pip check` e executa a suíte de testes em
+Python 3.12, a mesma versão utilizada pelo Dockerfile. Após os testes, constrói
+a imagem Docker e verifica a importação da API dentro do container.
+
+O CI usa dados simulados dos testes e não exige secrets de bancos, provedores
+de IA ou Grafana. O carregamento do `.env` e o envio de telemetria ficam
+desabilitados nos testes. Esse workflow valida o projeto; não publica imagens
+nem realiza deploy. Em **Settings > Rules > Rulesets**, os checks
+**Testes Python** e **Build Docker** podem ser exigidos antes do merge.
+
 ## Deploy
 
 O projeto inclui uma imagem Docker, um Blueprint provisório para Render e
