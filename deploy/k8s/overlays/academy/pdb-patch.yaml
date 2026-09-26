@@ -1,6 +1,0 @@
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: astro-ai-api
-spec:
-  minAvailable: 0

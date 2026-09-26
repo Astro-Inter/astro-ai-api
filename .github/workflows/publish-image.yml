@@ -38,8 +38,6 @@ jobs:
           APP_ENV: test
           LANGSMITH_TRACING: "false"
         run: python -m pytest -q
-      - name: Validar manifests do laboratório
-        run: kubectl kustomize deploy/k8s/overlays/academy > /dev/null
 
   publish:
     needs: validate
@@ -81,53 +79,54 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      contents: write
+      contents: read
     env:
-      GITOPS_BRANCH: deploy/SCRUM-393-gitops-aws-academy
       SOURCE_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verificar permissão do repositório central
+        env:
+          GITOPS_TOKEN: ${{ secrets.ASTRO_GITOPS_TOKEN }}
+        run: |
+          if [ -z "$GITOPS_TOKEN" ]; then
+            echo '::error::Configure ASTRO_GITOPS_TOKEN com acesso Contents read/write somente ao Astro-Inter/astro-gitops.'
+            exit 1
+          fi
+      - name: Baixar configuração central
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
-      - name: Atualizar somente a branch GitOps após publicar a imagem
+          repository: Astro-Inter/astro-gitops
+          ref: main
+          token: ${{ secrets.ASTRO_GITOPS_TOKEN }}
+      - name: Atualizar somente a imagem da API de IA
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          git fetch origin main
-          if [ "$(git rev-parse origin/main)" != "$SOURCE_SHA" ]; then
+          LATEST_SHA="$(gh api repos/Astro-Inter/astro-ai-api/commits/main --jq .sha)"
+          if [ "$LATEST_SHA" != "$SOURCE_SHA" ]; then
             echo 'Execução antiga: uma versão mais nova já chegou à main.'
             exit 0
           fi
-          set +e
-          git ls-remote --exit-code --heads origin "$GITOPS_BRANCH" > /dev/null
-          result=$?
-          set -e
-          if [ "$result" -eq 0 ]; then
-            git fetch origin "$GITOPS_BRANCH"
-            git switch -c "$GITOPS_BRANCH" "origin/$GITOPS_BRANCH"
-          elif [ "$result" -eq 2 ]; then
-            git switch -c "$GITOPS_BRANCH" "$SOURCE_SHA"
-          else
-            exit "$result"
-          fi
-          git restore --source="$SOURCE_SHA" --staged --worktree -- deploy/k8s/base deploy/k8s/overlays/academy
           python - <<'PY'
           import os
           import re
           from pathlib import Path
           sha = os.environ['SOURCE_SHA']
           assert re.fullmatch(r'[0-9a-f]{40}', sha), 'SHA inválido'
-          path = Path('deploy/k8s/overlays/academy/kustomization.yaml')
+          path = Path('apps/astro-ai-api/overlays/academy/kustomization.yaml')
           content, count = re.subn(r'(?m)^    newTag: .+$', '    newTag: sha-' + sha, path.read_text())
           assert count == 1, 'Esperada exatamente uma tag de imagem'
           path.write_text(content)
           PY
-          git add deploy/k8s/base deploy/k8s/overlays/academy
+          kubectl kustomize apps/astro-ai-api/overlays/academy > /dev/null
+          git add apps/astro-ai-api/overlays/academy/kustomization.yaml
           if git diff --cached --quiet; then
             echo 'Configuração GitOps já atualizada.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m "ci(SCRUM-393): atualizar imagem do laboratório para sha-${SOURCE_SHA}"
-          git push origin "HEAD:refs/heads/$GITOPS_BRANCH"
+          git commit -m "ci(SCRUM-393): atualizar imagem da api de ia para sha-${SOURCE_SHA}"
+          # Nunca força push: alterações concorrentes resultam em falha segura.
+          git push origin HEAD:main
