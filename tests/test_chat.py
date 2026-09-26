@@ -1825,6 +1825,31 @@ def test_fenced_structured_reply_and_spaced_router_command_are_accepted(chat_cli
     assert "faq" in response.json()["agentes_chamados"]
 
 
+@pytest.mark.parametrize("reply", [
+    "ROUTE=fora_escopo",
+    "```text\nROUTE = FORA_ESCOPO\n```",
+])
+def test_school_material_mind_map_request_returns_scope_limitation(chat_client, reply):
+    client, model, application = chat_client
+    model.replies["roteador"] = reply
+
+    response = client.post("/chat/messages", json={
+        "message": "pegue o material do 6º ano e gere um mapa mental",
+    })
+
+    assert response.status_code == 200
+    assert "fora do escopo" in response.json()["resposta"]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
+    ]
+    assert application.state.chat_service.faq_vectors.calls == []
+    session = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert session["mensagens"][0]["content"] == (
+        "pegue o material do 6º ano e gere um mapa mental"
+    )
+    assert "lock_token" not in session
+
+
 @pytest.mark.parametrize("message", [
     "Qual é a sua função?",
     "Quem é você dentro do Astro?",

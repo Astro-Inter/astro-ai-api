@@ -686,7 +686,20 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "roteador_decision": decision,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
-        route = re.fullmatch(r"ROUTE\s*=\s*(rh|sst|agenda|faq)", command, re.IGNORECASE)
+        route = re.fullmatch(
+            r"ROUTE\s*=\s*(rh|sst|agenda|faq|fora_escopo)", command, re.IGNORECASE,
+        )
+        if route and route.group(1).lower() == "fora_escopo":
+            return {
+                "rota": "direta",
+                "candidato": (
+                    "Esse pedido está fora do escopo do Astro. Posso ajudar com RH, "
+                    "segurança do trabalho, agenda e normas internas. Não consigo "
+                    "buscar ou criar esse conteúdo com as fontes e ferramentas disponíveis."
+                ),
+                "resultado": {"status": "fora_escopo"},
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         if not route and re.search(
             r"\b(?:ROUTE|MEMORY|MESSAGE|CONVERSATION|NOTIFICATIONS|ACCESSES)\s*=",
             command, re.IGNORECASE,
