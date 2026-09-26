@@ -14,8 +14,35 @@ QUERY_VECTOR = [1.0] + [0.0] * 1023
 OTHER_VECTOR = [0.0, 1.0] + [0.0] * 1022
 
 
+@pytest.mark.parametrize("source,expected", [
+    (r"C:\documentos\norma.pdf", "norma.pdf"),
+    ("/home/runner/documentos/norma.pdf", "norma.pdf"),
+    (r"\\servidor\compartilhamento\norma.pdf", "norma.pdf"),
+    (r"C:/documentos\norma.pdf", "norma.pdf"),
+    (r"documentos\norma.pdf", "norma.pdf"),
+    ("documentos/norma.pdf", "norma.pdf"),
+    ("norma.pdf", "norma.pdf"),
+    ("  /documentos/norma.pdf  ", "norma.pdf"),
+    (None, "Documento FAQ"),
+    (123, "Documento FAQ"),
+    ("", "Documento FAQ"),
+    ("   ", "Documento FAQ"),
+    ("/", "Documento FAQ"),
+    ("C:\\", "Documento FAQ"),
+    (r"\\servidor\compartilhamento", "Documento FAQ"),
+])
+def test_faq_source_sanitization_is_platform_independent(source, expected):
+    assert faq._fonte_publica(source) == expected
+
+
 @pytest.mark.parametrize("vector_name", [None, "", "default"])
-def test_faq_search_returns_relevant_sanitized_chunks(monkeypatch, vector_name):
+@pytest.mark.parametrize("source", [
+    r"C:\documentos\Astro_Instrucao_Normativa_v1.0.pdf",
+    "/home/runner/documentos/Astro_Instrucao_Normativa_v1.0.pdf",
+    r"\\servidor\documentos\Astro_Instrucao_Normativa_v1.0.pdf",
+    r"C:/documentos\Astro_Instrucao_Normativa_v1.0.pdf",
+])
+def test_faq_search_returns_relevant_sanitized_chunks(monkeypatch, vector_name, source):
     async def scenario():
         store = FaqVectors()
         store.client = AsyncQdrantClient(":memory:")
@@ -29,7 +56,7 @@ def test_faq_search_returns_relevant_sanitized_chunks(monkeypatch, vector_name):
             models.PointStruct(id=str(uuid4()), vector=vector(QUERY_VECTOR), payload={
                 "page_content": "O objetivo do Astro é organizar as informações.",
                 "page_number": 0,
-                "source": r"C:\documentos\Astro_Instrucao_Normativa_v1.0.pdf",
+                "source": source,
             }),
             models.PointStruct(id=str(uuid4()), vector=vector(OTHER_VECTOR), payload={
                 "page_content": "Trecho sem relação.", "page_number": 1, "source": "outro.pdf",

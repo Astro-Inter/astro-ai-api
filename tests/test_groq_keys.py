@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -7,7 +8,52 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.core import config
 from app.infrastructure.llm import models
-from app.modules.chat.errors import ChatError
+from app.modules.chat.errors import ChatError, InvalidAgentResponse
+
+
+@pytest.mark.parametrize("truncated_content", ["", "ROUTE=r"])
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_truncated_response_retries_once_preserving_request(truncated_content, json_mode):
+    class TruncatedModel:
+        def __init__(self):
+            self.bindings = []
+            self.calls = []
+
+        def bind(self, **kwargs):
+            self.bindings.append(kwargs)
+            return self
+
+        async def ainvoke(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            if len(self.calls) == 1:
+                return AIMessage(content=truncated_content, response_metadata={"finish_reason": "length"})
+            return AIMessage(content="ROUTE=fora_escopo", response_metadata={"finish_reason": "stop"})
+
+    model = TruncatedModel()
+    messages = [HumanMessage(content="pegue o material do 6º ano e gere um mapa mental")]
+    assert asyncio.run(models.LanguageModels._invoke(model, "roteador", messages, json_mode)) == "ROUTE=fora_escopo"
+    assert model.calls == [(messages, {"config": {"run_name": "roteador"}})] * 2
+    assert model.bindings == (
+        [{"response_format": {"type": "json_object"}}] if json_mode else []
+    ) + [{"max_tokens": models.TRUNCATION_RETRY_MAX_TOKENS}]
+
+
+@pytest.mark.parametrize("finish_reason,expected_calls", [("length", 2), ("stop", 1)])
+def test_empty_response_retries_only_for_token_limit_and_remains_bounded(finish_reason, expected_calls):
+    class EmptyModel:
+        calls = 0
+
+        def bind(self, **kwargs):
+            return self
+
+        async def ainvoke(self, *_args, **_kwargs):
+            self.calls += 1
+            return AIMessage(content="", response_metadata={"finish_reason": finish_reason})
+
+    model = EmptyModel()
+    with pytest.raises(InvalidAgentResponse):
+        asyncio.run(models.LanguageModels._invoke(model, "roteador", [], False))
+    assert model.calls == expected_calls
 
 
 class ProviderError(Exception):
@@ -15,6 +61,37 @@ class ProviderError(Exception):
         self.status_code = status
         self.response = SimpleNamespace(headers={"retry-after": retry_after})
         super().__init__("secret-provider-payload")
+
+
+def test_real_groq_sdk_increases_budget_after_empty_truncated_response(monkeypatch):
+    monkeypatch.setattr(config, "GROQ_API_KEY", "fake-key")
+    monkeypatch.setattr(config, "MISTRAL_API_KEY", "")
+    requests = []
+
+    async def send(client, request, **kwargs):
+        requests.append(json.loads(request.content))
+        first = len(requests) == 1
+        return httpx.Response(200, request=request, json={
+            "id": "test-completion", "object": "chat.completion", "created": 1,
+            "model": models.GROQ_FAST_MODEL,
+            "choices": [{"index": 0, "finish_reason": "length" if first else "stop", "message": {
+                "role": "assistant", "content": "" if first else '{"ok":true}',
+            }}],
+        })
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+    models.get_model.cache_clear()
+    try:
+        assert asyncio.run(models.LanguageModels().complete(
+            "roteador", [HumanMessage(content="Teste")], json_mode=True,
+        )) == '{"ok":true}'
+        assert len(requests) == 2
+        assert requests[0]["max_tokens"] == 1600
+        assert requests[1]["max_tokens"] == models.TRUNCATION_RETRY_MAX_TOKENS
+        assert requests[0]["messages"] == requests[1]["messages"]
+        assert requests[0]["response_format"] == requests[1]["response_format"] == {"type": "json_object"}
+    finally:
+        models.get_model.cache_clear()
 
 
 @pytest.fixture

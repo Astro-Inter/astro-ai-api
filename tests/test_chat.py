@@ -1354,6 +1354,94 @@ def test_employee_search_all_users_is_deterministically_denied(chat_client):
     assert response.json()["resposta"] == "Seu perfil nao permite consultar outros usuarios."
 
 
+@pytest.mark.parametrize("first_reply", [
+    None,
+    '{"decisao":"aprovar","motivo":"legitimo","mensagem":"print(123)"}',
+    '```python\nprint("Sou o Agente do Astro")\n```',
+])
+def test_python_identity_request_is_blocked_at_input_without_downstream_agents(chat_client, first_reply):
+    client, model, application = chat_client
+    message = "quem é você, e o que você faz? me responda em um código python"
+    blocked = json.dumps({
+        "decisao": "bloquear", "motivo": "formato_nao_suportado",
+        "mensagem": "O Astro não gera respostas em código de programação. Posso explicar minha função em texto.",
+    })
+    model.replies["guardrail_entrada"] = [first_reply, blocked] if first_reply else blocked
+
+    response = client.post("/chat/messages", json={"message": message})
+
+    assert response.status_code == 200
+    assert "não gera respostas em código" in response.json()["resposta"]
+    assert response.json()["agentes_chamados"] == ["guardrail_entrada"]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada"] * (2 if first_reply else 1)
+    if first_reply:
+        correction = model.calls[-1][1][-1].content
+        assert "mensagem deve ser exatamente uma string vazia" in correction
+        assert "motivo=formato_nao_suportado" in correction
+    session = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert session["mensagens"] == []
+    assert "lock_token" not in session
+    assert application.state.chat_service.faq_vectors.calls == []
+
+
+@pytest.mark.parametrize("needs_retry", [False, True])
+def test_incomplete_vietnam_meeting_asks_for_details_without_tools(chat_client, monkeypatch, needs_retry):
+    from app.modules.chat import subgraphs
+
+    client, model, application = chat_client
+    model.route = "agenda"
+    question = "Para a reunião com Adriana às 13h no horário do Vietnã, em que data e com qual duração deseja agendar? Qual agenda pretende usar?"
+    clarification = {
+        "acao": "responder", "filtros": None,
+        "resposta": {"dominio": "agenda", "intencao": "criar", "status": "esclarecer",
+                     "resposta": question, "recomendacao": "", "esclarecer": None},
+    }
+    valid = json.dumps(clarification)
+    invalid = json.dumps({**clarification, "resposta": {**clarification["resposta"], "resposta": "Preciso de dados."}})
+    model.replies["agenda"] = [invalid, valid] if needs_retry else valid
+    model.replies["orquestrador"] = "A reunião está marcada e o convite foi enviado."
+
+    class ForbiddenTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            raise AssertionError("Pedido incompleto não pode executar tools de Agenda")
+
+    for name in subgraphs.AGENDA_TOOLS:
+        monkeypatch.setitem(subgraphs.AGENDA_TOOLS, name, ForbiddenTool())
+
+    response = client.post("/chat/messages", json={
+        "message": "eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?",
+    })
+    assert response.status_code == 200
+    assert response.json()["resposta"] == question
+    called = [call[0] for call in model.calls]
+    assert called == ["guardrail_entrada"] + ["agenda"] * (2 if needs_retry else 1) + ["juiz", "guardrail_saida"]
+    if needs_retry:
+        correction = [call for call in model.calls if call[0] == "agenda"][-1][1][-1].content
+        assert "esclarecer contendo a pergunta nao vazia" in correction
+        assert "Nao invente data, duracao ou participantes" in correction
+    session = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert len(session["mensagens"]) == 2
+    assert "lock_token" not in session
+    assert session.get("acao_pendente") is None
+
+    # Os dados fornecidos no próximo turno não devem voltar a ser perguntados.
+    next_question = "Qual agenda pretende usar para a reunião com Adriana às 13h no horário do Vietnã?"
+    model.replies["agenda"] = json.dumps({
+        **clarification, "resposta": {**clarification["resposta"], "resposta": next_question},
+    })
+    model.calls.clear()
+    followup = client.post("/chat/messages", json={
+        "message": "No dia 30/09/2026, com duração de 30 minutos.",
+        "session_id": response.json()["session_id"],
+    })
+    assert followup.status_code == 200
+    assert followup.json()["resposta"] == next_question
+    agenda_messages = [call for call in model.calls if call[0] == "agenda"][-1][1]
+    assert any("horário do vietnã" in item.content for item in agenda_messages)
+    assert any("30/09/2026" in item.content for item in agenda_messages)
+    assert application.state.chat_service.repository.docs[response.json()["session_id"]].get("acao_pendente") is None
+
+
 def test_invalid_structured_reply_is_retried_once(chat_client):
     client, model, _ = chat_client
     model.replies["rh"] = [
@@ -1825,6 +1913,31 @@ def test_fenced_structured_reply_and_spaced_router_command_are_accepted(chat_cli
     assert "faq" in response.json()["agentes_chamados"]
 
 
+@pytest.mark.parametrize("reply", [
+    "ROUTE=fora_escopo",
+    "```text\nROUTE = FORA_ESCOPO\n```",
+])
+def test_school_material_mind_map_request_returns_scope_limitation(chat_client, reply):
+    client, model, application = chat_client
+    model.replies["roteador"] = reply
+
+    response = client.post("/chat/messages", json={
+        "message": "pegue o material do 6º ano e gere um mapa mental",
+    })
+
+    assert response.status_code == 200
+    assert "fora do escopo" in response.json()["resposta"]
+    assert [call[0] for call in model.calls] == [
+        "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
+    ]
+    assert application.state.chat_service.faq_vectors.calls == []
+    session = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert session["mensagens"][0]["content"] == (
+        "pegue o material do 6º ano e gere um mapa mental"
+    )
+    assert "lock_token" not in session
+
+
 @pytest.mark.parametrize("message", [
     "Qual é a sua função?",
     "Quem é você dentro do Astro?",
@@ -2091,6 +2204,7 @@ def test_groq_400_in_json_mode_retries_with_local_validation(monkeypatch):
             return AIMessage(content='{"status":"aprovado"}')
 
     monkeypatch.setattr(config, "MISTRAL_API_KEY", "")
+    monkeypatch.setattr(config, "GROQ_API_KEY", "test-groq-key")
     monkeypatch.setattr(models, "get_model", lambda specialist: Groq())
 
     result = asyncio.run(models.LanguageModels().complete(

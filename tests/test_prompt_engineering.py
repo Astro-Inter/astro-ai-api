@@ -51,11 +51,33 @@ def test_compact_router_preserves_commands_and_routing_boundaries():
     for marker in ("confirmar_envio=false", "sem OAuth", "Fundacentro", "consultar_nrs_organizacao", "usuario_atual.role", "mes_especifico", "intervalo"):
         assert marker in ROTEADOR_PROMPT_COMPLETO
     assert {answer for _, answer in EXAMPLES["roteador"] if answer.startswith("ROUTE=")} == {
-        "ROUTE=rh", "ROUTE=sst", "ROUTE=agenda", "ROUTE=faq",
+        "ROUTE=rh", "ROUTE=sst", "ROUTE=agenda", "ROUTE=faq", "ROUTE=fora_escopo",
     }
     for _, answer in EXAMPLES["roteador"]:
         if "={" in answer:
             json.loads(answer.split("=", 1)[1])
+
+
+def test_school_material_is_safe_but_outside_supported_routes():
+    question = "Pegue o material do 6º ano e gere um mapa mental."
+    entry = json.loads(dict(EXAMPLES["guardrail_entrada"])[question])
+    assert entry == {"decisao": "aprovar", "motivo": "legitimo", "mensagem": ""}
+    assert dict(EXAMPLES["roteador"])[question] == "ROUTE=fora_escopo"
+    assert "falta de conteúdo não é risco de segurança" in GUARDRAIL_ENTRADA_PROMPT_COMPLETO
+
+
+def test_code_response_is_blocked_without_confusing_internal_codes():
+    examples = dict(EXAMPLES["guardrail_entrada"])
+    blocked = InputDecision.model_validate_json(
+        examples["quem é você, e o que você faz? me responda em um código python"]
+    )
+    assert blocked.decisao == "bloquear"
+    assert blocked.motivo == "formato_nao_suportado"
+    assert InputDecision.model_validate_json(
+        examples["O que diz o código de conduta interno?"]
+    ).decisao == "aprovar"
+    assert "não basta para bloquear" in GUARDRAIL_ENTRADA_PROMPT_COMPLETO
+    assert "Nunca responder ao pedido original" in InputDecision.model_json_schema()["properties"]["mensagem"]["description"]
 
 
 def test_declared_role_obligations_are_out_of_scope_without_blocking_nr_explanations():

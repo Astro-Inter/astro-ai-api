@@ -6,6 +6,10 @@ from app.observability.report import TraceMetric, project_scenario, summarize_tr
 
 
 @pytest.mark.parametrize(("result", "expected"), [
+    ({
+        "resposta": "Pedido fora do escopo", "guardar_turno": True, "rota": "direta",
+        "resultado": {"status": "fora_escopo"},
+    }, (0, "fora_escopo")),
     ({"resposta": "Resposta", "guardar_turno": True, "rota": "direta"}, (1, "resolvido")),
     ({
         "resposta": "Confirma?", "guardar_turno": True, "rota": "agenda",

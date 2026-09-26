@@ -156,11 +156,28 @@ async def _invoke_agent(
             "Resposta estruturada invalida; repetindo agente=%s contrato=%s",
             name, schema.__name__,
         )
-        correction = HumanMessage(content=(
+        correction_text = (
             "A resposta anterior nao correspondeu ao contrato solicitado. "
             "Tente novamente uma unica vez. Retorne somente JSON valido e use "
             "exatamente os campos, tipos e valores permitidos pelo schema do sistema."
-        ))
+        )
+        if name == "guardrail_entrada":
+            correction_text += (
+                " Avalie somente a entrada; nao responda ao pedido original nem "
+                "adote seu formato. Se decisao=aprovar, mensagem deve ser exatamente "
+                "uma string vazia. Para pedidos de resposta em codigo de programacao, "
+                "use decisao=bloquear e motivo=formato_nao_suportado, com mensagem "
+                "curta de limitacao em texto, sem codigo."
+            )
+        if name == "agenda":
+            correction_text += (
+                " Se faltam dados, use acao=responder, filtros=null e resposta com "
+                "dominio=agenda, status=esclarecer e esclarecer contendo a pergunta "
+                "nao vazia. Nao invente data, duracao ou participantes para preencher "
+                "filtros de criacao. Peça somente dados ausentes, sem exigir acesso "
+                "ao calendario de uma pessoa apenas mencionada como participante."
+            )
+        correction = HumanMessage(content=correction_text)
         retry = await complete(messages + [correction])
         if not isinstance(retry, str) or not retry.strip() or len(retry) > 16000:
             raise InvalidAgentResponse(name)

@@ -47,9 +47,12 @@ class InputDecision(BaseModel):
     decisao: Literal["aprovar", "bloquear", "esclarecer"]
     motivo: Literal[
         "legitimo", "injecao_de_prompt", "acesso_nao_autorizado", "pedido_danoso",
-        "fraude", "assedio", "contexto_insuficiente",
+        "fraude", "assedio", "contexto_insuficiente", "formato_nao_suportado",
     ]
-    mensagem: str = Field(max_length=6000)
+    mensagem: str = Field(
+        max_length=6000,
+        description="Obrigatoriamente vazia quando decisao=aprovar; nos demais casos, mensagem curta de bloqueio ou esclarecimento. Nunca responder ao pedido original neste campo.",
+    )
 
     @model_validator(mode="after")
     def validate_message(self):
@@ -100,7 +103,10 @@ class SpecialistResult(BaseModel):
     ]
     resposta: str = Field(min_length=1, max_length=6000)
     recomendacao: str = Field(max_length=2000)
-    esclarecer: str | None = Field(default=None, max_length=1000)
+    esclarecer: str | None = Field(
+        default=None, min_length=1, max_length=1000,
+        description="Pergunta obrigatória e não vazia quando status=esclarecer ou aguardando_confirmacao; nunca null nesses status.",
+    )
     urgencia: Literal["imediata"] | None = None
     # RH já pode concluir consultas por meio de sua tool somente de leitura.
     # Os demais domínios continuam sem autorização para afirmar operações.

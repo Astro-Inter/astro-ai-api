@@ -18,6 +18,7 @@ from app.core import config
 logger = logging.getLogger(__name__)
 
 UNRESOLVED_STATUSES = {
+    "fora_escopo",
     "aguardando_confirmacao",
     "ambiguo",
     "bloqueado",

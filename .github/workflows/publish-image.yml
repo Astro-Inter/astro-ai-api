@@ -1,0 +1,36 @@
+name: Publicar imagem da IA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Entrar no GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io \
+            --username "$GHCR_USER" --password-stdin
+
+      - name: Construir e publicar
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          IMAGE="ghcr.io/astro-inter/astro-ai-api:sha-${COMMIT_SHA}"
+          docker build \
+            --label org.opencontainers.image.source=https://github.com/Astro-Inter/astro-ai-api \
+            --tag "$IMAGE" .
+          docker push "$IMAGE"

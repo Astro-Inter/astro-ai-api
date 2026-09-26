@@ -13,6 +13,7 @@ from app.modules.chat.errors import ChatError, InvalidAgentResponse
 
 # Escolha de modelos fica no código, conforme a configuração do projeto.
 GROQ_FAST_MODEL = "openai/gpt-oss-20b"
+TRUNCATION_RETRY_MAX_TOKENS = 4096
 MISTRAL_SPECIALIST_MODEL = "mistral-small-latest"
 logger = logging.getLogger(__name__)
 MISTRAL_COOLDOWN_SECONDS = 300
@@ -78,7 +79,19 @@ class LanguageModels:
     async def _invoke(model, agent: str, messages: list[BaseMessage], json_mode: bool) -> str:
         if json_mode:
             model = model.bind(response_format={"type": "json_object"})
-        result = await model.ainvoke(messages, config={"run_name": agent})
+        for attempt in range(2):
+            result = await model.ainvoke(messages, config={"run_name": agent})
+            if result.response_metadata.get("finish_reason") != "length":
+                break
+            # O orçamento inclui o raciocínio do modelo: ele pode se esgotar
+            # antes de qualquer texto. Nunca aceite uma resposta truncada.
+            if attempt:
+                raise InvalidAgentResponse(stage=agent)
+            logger.warning(
+                "Resposta truncada agente=%s; repetindo uma vez com max_tokens=%s",
+                agent, TRUNCATION_RETRY_MAX_TOKENS,
+            )
+            model = model.bind(max_tokens=TRUNCATION_RETRY_MAX_TOKENS)
         content = result.content
         if isinstance(content, list) and content and all(
             isinstance(block, dict) and block.get("type") == "text"
