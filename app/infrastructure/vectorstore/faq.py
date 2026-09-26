@@ -1,4 +1,4 @@
-from pathlib import PurePath
+from pathlib import PureWindowsPath
 
 from qdrant_client import AsyncQdrantClient, models
 
@@ -13,6 +13,15 @@ COLLECTION_FAQ = "faq_chunks"
 FAQ_RESULT_LIMIT = 5
 FAQ_SCORE_THRESHOLD = 0.35
 MAX_CHUNK_CHARACTERS = 2000
+
+
+def _fonte_publica(source) -> str:
+    """Remove diretórios Windows e POSIX sem depender do sistema operacional."""
+    if not isinstance(source, str):
+        return "Documento FAQ"
+    # A sintaxe Windows reconhece tanto barras quanto contrabarras, inclusive
+    # unidades e caminhos UNC. PurePath escolheria a sintaxe do host do serviço.
+    return PureWindowsPath(source.strip()).name or "Documento FAQ"
 
 
 class FaqVectors:
@@ -72,7 +81,7 @@ class FaqVectors:
                 if not isinstance(content, str) or not content.strip():
                     continue
                 # Evita divulgar caminhos locais eventualmente gravados por uma ingestao antiga.
-                source = PurePath(source).name if isinstance(source, str) else "Documento FAQ"
+                source = _fonte_publica(source)
                 page = page + 1 if type(page) is int and page >= 0 else None
                 snippets.append({
                     "conteudo": content.strip()[:MAX_CHUNK_CHARACTERS],
