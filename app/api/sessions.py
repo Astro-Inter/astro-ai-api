@@ -4,10 +4,25 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from app.api.auth import CurrentUserDependency
 from app.modules.chat.errors import ChatError
-from app.modules.chat.schemas import SessionResponse
+from app.modules.chat.schemas import SessionMessagesResponse, SessionResponse
 
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+@router.get("/{session_id}/messages", response_model=SessionMessagesResponse)
+async def get_session_messages(
+    session_id: UUID,
+    user: CurrentUserDependency,
+    request: Request,
+    response: Response,
+) -> SessionMessagesResponse:
+    """Carrega as mensagens persistidas de uma sessão pertencente ao usuário."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await request.app.state.chat_service.messages(session_id, user)
+    except ChatError as error:
+        raise HTTPException(error.status_code, error.detail) from None
 
 
 @router.post("/{session_id}/iniciar", response_model=SessionResponse)
