@@ -91,7 +91,10 @@ class SpecialistResult(BaseModel):
     ]
     resposta: str = Field(min_length=1, max_length=6000)
     recomendacao: str = Field(max_length=2000)
-    esclarecer: str | None = Field(default=None, max_length=1000)
+    esclarecer: str | None = Field(
+        default=None, min_length=1, max_length=1000,
+        description="Pergunta obrigatória e não vazia quando status=esclarecer ou aguardando_confirmacao; nunca null nesses status.",
+    )
     urgencia: Literal["imediata"] | None = None
     # RH já pode concluir consultas por meio de sua tool somente de leitura.
     # Os demais domínios continuam sem autorização para afirmar operações.

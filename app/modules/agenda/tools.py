@@ -108,6 +108,19 @@ class AgendaToolDecision(BaseModel):
             return data
         action = data.get("acao")
         filters = data.get("filtros")
+        # Recupera somente uma pergunta já presente numa resposta de Agenda.
+        # Isso não autoriza tools nem corrige decisões de criação inválidas;
+        # todos os demais campos continuam sujeitos à validação completa.
+        response = data.get("resposta")
+        if (
+            action == "responder" and filters is None and isinstance(response, dict)
+            and response.get("dominio") == "agenda"
+            and response.get("status") == "esclarecer"
+            and response.get("esclarecer") is None
+        ):
+            question = response.get("resposta")
+            if isinstance(question, str) and "?" in question and 0 < len(question.strip()) <= 1000:
+                data = {**data, "resposta": {**response, "esclarecer": question.strip()}}
         if action in {"consultar_treinamentos", "consultar_eventos"} and filters is None:
             filters = {}
         schemas = {

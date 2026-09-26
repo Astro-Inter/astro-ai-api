@@ -1384,6 +1384,64 @@ def test_python_identity_request_is_blocked_at_input_without_downstream_agents(c
     assert application.state.chat_service.faq_vectors.calls == []
 
 
+@pytest.mark.parametrize("needs_retry", [False, True])
+def test_incomplete_vietnam_meeting_asks_for_details_without_tools(chat_client, monkeypatch, needs_retry):
+    from app.modules.chat import subgraphs
+
+    client, model, application = chat_client
+    model.route = "agenda"
+    question = "Para a reunião com Adriana às 13h no horário do Vietnã, em que data e com qual duração deseja agendar? Qual agenda pretende usar?"
+    clarification = {
+        "acao": "responder", "filtros": None,
+        "resposta": {"dominio": "agenda", "intencao": "criar", "status": "esclarecer",
+                     "resposta": question, "recomendacao": "", "esclarecer": None},
+    }
+    valid = json.dumps(clarification)
+    invalid = json.dumps({**clarification, "resposta": {**clarification["resposta"], "resposta": "Preciso de dados."}})
+    model.replies["agenda"] = [invalid, valid] if needs_retry else valid
+    model.replies["orquestrador"] = "A reunião está marcada e o convite foi enviado."
+
+    class ForbiddenTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            raise AssertionError("Pedido incompleto não pode executar tools de Agenda")
+
+    for name in subgraphs.AGENDA_TOOLS:
+        monkeypatch.setitem(subgraphs.AGENDA_TOOLS, name, ForbiddenTool())
+
+    response = client.post("/chat/messages", json={
+        "message": "eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?",
+    })
+    assert response.status_code == 200
+    assert response.json()["resposta"] == question
+    called = [call[0] for call in model.calls]
+    assert called == ["guardrail_entrada"] + ["agenda"] * (2 if needs_retry else 1) + ["juiz", "guardrail_saida"]
+    if needs_retry:
+        correction = [call for call in model.calls if call[0] == "agenda"][-1][1][-1].content
+        assert "esclarecer contendo a pergunta nao vazia" in correction
+        assert "Nao invente data, duracao ou participantes" in correction
+    session = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert len(session["mensagens"]) == 2
+    assert "lock_token" not in session
+    assert session.get("acao_pendente") is None
+
+    # Os dados fornecidos no próximo turno não devem voltar a ser perguntados.
+    next_question = "Qual agenda pretende usar para a reunião com Adriana às 13h no horário do Vietnã?"
+    model.replies["agenda"] = json.dumps({
+        **clarification, "resposta": {**clarification["resposta"], "resposta": next_question},
+    })
+    model.calls.clear()
+    followup = client.post("/chat/messages", json={
+        "message": "No dia 30/09/2026, com duração de 30 minutos.",
+        "session_id": response.json()["session_id"],
+    })
+    assert followup.status_code == 200
+    assert followup.json()["resposta"] == next_question
+    agenda_messages = [call for call in model.calls if call[0] == "agenda"][-1][1]
+    assert any("horário do vietnã" in item.content for item in agenda_messages)
+    assert any("30/09/2026" in item.content for item in agenda_messages)
+    assert application.state.chat_service.repository.docs[response.json()["session_id"]].get("acao_pendente") is None
+
+
 def test_invalid_structured_reply_is_retried_once(chat_client):
     client, model, _ = chat_client
     model.replies["rh"] = [

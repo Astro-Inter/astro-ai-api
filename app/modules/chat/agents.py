@@ -169,6 +169,14 @@ async def _invoke_agent(
                 "use decisao=bloquear e motivo=formato_nao_suportado, com mensagem "
                 "curta de limitacao em texto, sem codigo."
             )
+        if name == "agenda":
+            correction_text += (
+                " Se faltam dados, use acao=responder, filtros=null e resposta com "
+                "dominio=agenda, status=esclarecer e esclarecer contendo a pergunta "
+                "nao vazia. Nao invente data, duracao ou participantes para preencher "
+                "filtros de criacao. Peça somente dados ausentes, sem exigir acesso "
+                "ao calendario de uma pessoa apenas mencionada como participante."
+            )
         correction = HumanMessage(content=correction_text)
         retry = await complete(messages + [correction])
         if not isinstance(retry, str) or not retry.strip() or len(retry) > 16000:

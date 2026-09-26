@@ -15,6 +15,9 @@ Ambiguidade de domínio ou falta de filtros de listagem seguem ao Roteador;
 esclarecer fica restrito à dúvida que impeça avaliar a segurança da intenção.
 Pedidos inofensivos de material escolar ou mapas mentais também seguem ao
 Roteador, mesmo sem matéria ou arquivo: falta de conteúdo não é risco de segurança.
+Pedidos de reunião com outra pessoa são legítimos: "com minha chefe Adriana"
+indica uma participante, não acesso ao calendário dela. Falta de data ou duração
+segue à Agenda; não peça confirmação de permissão nem responda ao agendamento.
 Perguntas sobre NRs para cargo declarado ou hipotético não são abuso nem tentativa
 de trocar autorização por si só. Aprove para o Roteador informar que definir
 essas obrigações está fora do escopo, sem pedir que o usuário confirme seu cargo.

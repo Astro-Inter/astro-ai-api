@@ -47,6 +47,15 @@ def _sem_acentos(message: str) -> str:
     )
 
 
+def _pedido_de_agendamento_reuniao(message: str) -> bool:
+    """Classifica apenas a intenção; não preenche filtros nem autoriza criação."""
+    normalized = _sem_acentos(message)
+    return bool(re.search(
+        r"\b(?:marcar|agendar|criar|organizar)\b.{0,100}\b(?:reuniao|reunioes)\b",
+        normalized, re.DOTALL,
+    ))
+
+
 def _pedido_de_historico_ia(message: str) -> str | None:
     """Reconhece memória própria, sem confundir mensagens entre pessoas."""
     normalized = _sem_acentos(message)
@@ -600,6 +609,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         if memory_request is None and (
             _filtros_treinamentos(state["mensagem"]) is not None
             or _filtros_eventos(state["mensagem"]) is not None
+            or _pedido_de_agendamento_reuniao(state["mensagem"])
         ):
             return {
                 "rota": "agenda",
@@ -933,6 +943,19 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["buscar_historico"]}
 
     async def orchestrator(state: ChatState):
+        result = state.get("resultado") or {}
+        if (
+            result.get("dominio") == "agenda" and result.get("status") == "esclarecer"
+            and isinstance(result.get("esclarecer"), str) and result["esclarecer"].strip()
+        ):
+            # Uma pergunta validada não precisa de outra geração que invente
+            # disponibilidade, convites ou permissões. Juiz e saída ainda revisam.
+            answer = result["resposta"]
+            question = result["esclarecer"]
+            return {
+                "candidato": answer if question in answer else answer + "\n\n" + question,
+                "agentes_chamados": state["agentes_chamados"] + ["orquestrador"],
+            }
         text = await invoke_agent(model, "orquestrador", ORQUESTRADOR_PROMPT_COMPLETO, state)
         return {"candidato": text, "agentes_chamados": state["agentes_chamados"] + ["orquestrador"]}
 

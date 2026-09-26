@@ -53,6 +53,52 @@ def tool_config(role="COLABORADOR"):
     return {"configurable": {"usuario_atual": {"uid": "firebase-user", "role": role}}}
 
 
+@pytest.mark.parametrize("question_field", [None, "absent"])
+def test_agenda_recovers_only_existing_clarification_question(question_field):
+    response = {
+        "dominio": "agenda", "intencao": "criar", "status": "esclarecer",
+        "resposta": "Em que data e com qual duração deseja a reunião?",
+        "recomendacao": "",
+    }
+    if question_field is None:
+        response["esclarecer"] = None
+    decision = AgendaToolDecision.model_validate({
+        "acao": "responder", "filtros": None, "resposta": response,
+    })
+    assert decision.acao == "responder"
+    assert decision.filtros is None
+    assert decision.resposta.esclarecer == response["resposta"]
+    assert response.get("esclarecer") is None  # Não altera o payload original.
+
+
+@pytest.mark.parametrize("changes", [
+    {"resposta": "Preciso de dados."},
+    {"resposta": "x" * 1001 + "?"},
+    {"dominio": "rh"},
+    {"status": "concluido"},
+    {"esclarecer": ""},
+    {"intencao": "inexistente"},
+    {"campo_extra": "não permitido"},
+])
+def test_agenda_clarification_recovery_keeps_other_validations(changes):
+    response = {
+        "dominio": "agenda", "intencao": "criar", "status": "esclarecer",
+        "resposta": "Em que data deseja a reunião?", "recomendacao": "",
+        "esclarecer": None, **changes,
+    }
+    with pytest.raises(ValidationError):
+        AgendaToolDecision.model_validate({"acao": "responder", "filtros": None, "resposta": response})
+
+
+def test_clarification_recovery_cannot_authorize_event_creation():
+    with pytest.raises(ValidationError):
+        AgendaToolDecision.model_validate({
+            "acao": "criar_evento_google_calendar", "filtros": None,
+            "resposta": {"dominio": "agenda", "intencao": "criar", "status": "esclarecer",
+                         "resposta": "Em que data?", "recomendacao": "", "esclarecer": None},
+        })
+
+
 def setup_database(monkeypatch, cursor):
     monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
     monkeypatch.setattr(

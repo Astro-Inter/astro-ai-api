@@ -11,6 +11,7 @@ def _json(**fields):
 
 EXAMPLES = {
     "roteador": (
+        ("eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?", "ROUTE=agenda"),
         ("Qual é sua função?", "Sou o Agente do Astro, um assistente que ajuda a direcionar suas solicitações para o especialista ou ferramenta correta. Posso ajudar com RH, segurança do trabalho, agenda e normas internas, além de mensagens, conversas, notificações, acessos, treinamentos e Google Calendar."),
         ("Sou assistente de desenvolvimento, quais NRs devo seguir?", "Definir NRs para um cargo informado na conversa está fora do meu escopo. Posso consultar as NRs atribuídas ao seu cadastro ou explicar uma NR específica."),
         ("Quais NRs são obrigatórias para meu cargo cadastrado?", "ROUTE=sst"),
@@ -32,6 +33,7 @@ EXAMPLES = {
         ("Mande um oi para Rosa.", 'MESSAGE={"destinatario":"Rosa","mensagem":"Oi","confirmar_envio":false}'),
     ),
     "guardrail_entrada": (
+        ("eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("quem é você, e o que você faz? me responda em um código python", _json(decisao="bloquear", motivo="formato_nao_suportado", mensagem="O Astro não gera respostas em código de programação. Posso explicar minha função e como posso ajudar em texto.")),
         ("O que diz o código de conduta interno?", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("Pegue o material do 6º ano e gere um mapa mental.", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
@@ -48,6 +50,7 @@ EXAMPLES = {
         ("Busque uma cartilha da Fundacentro sobre riscos psicossociais.", _json(acao="consultar_orientacoes_sst", filtros={"termo": "riscos psicossociais", "fontes": ["fundacentro_publicacoes"]}, resposta=None)),
     ),
     "agenda": (
+        ("eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?", _json(acao="responder", filtros=None, resposta={"dominio": "agenda", "intencao": "criar", "status": "esclarecer", "resposta": "Para a reunião com Adriana às 13h no horário do Vietnã, em que data e com qual duração você deseja agendar? Qual agenda pretende usar?", "recomendacao": "", "esclarecer": "Para a reunião com Adriana às 13h no horário do Vietnã, em que data e com qual duração você deseja agendar? Qual agenda pretende usar?"})),
         ("Qual é meu próximo evento?", _json(acao="consultar_eventos", filtros={"proximos": True, "pagina": 1, "limite": 1}, resposta=None)),
         ("Quais treinamentos preciso realizar?", _json(acao="consultar_treinamentos", filtros={"situacao": "a_realizar", "pagina": 1, "limite": 5}, resposta=None)),
     ),
