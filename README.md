@@ -1,4 +1,92 @@
-# astro-ai-api
+# Astro AI API
+
+API de inteligência artificial do Astro, construída com FastAPI, LangChain e
+LangGraph. O sistema usa uma arquitetura multiagente para atender solicitações
+de RH, segurança e saúde no trabalho, agenda, normas internas e ferramentas do
+Astro, preservando autenticação, autorização e rastreabilidade em todo o fluxo.
+
+## Arquitetura da IA
+
+![Arquitetura de alto nível da IA do Astro](docs/arquitetura/astro-ia.png)
+
+O processamento de uma mensagem segue oito etapas principais:
+
+1. O usuário autenticado envia a pergunta.
+2. O guardrail de entrada valida o pedido, bloqueia conteúdo inadequado ou pede
+   esclarecimento quando não há contexto suficiente.
+3. O roteador classifica a intenção e seleciona uma resposta direta, uma
+   ferramenta autorizada, o FAQ ou um agente especialista.
+4. Os especialistas de RH, SST e Agenda consultam somente os dados e integrações
+   permitidos para o perfil autenticado.
+5. O orquestrador consolida resultados de fluxos especializados quando necessário.
+6. O Juiz avalia relevância, coerência, evidências, privacidade e confirmação de
+   operações antes que a resposta avance.
+7. O guardrail de saída revisa, corrige ou bloqueia a resposta candidata.
+8. O usuário recebe a resposta final revisada.
+
+A memória de conversas complementa o roteamento com o histórico e os resumos do
+próprio usuário. Ela não concede novas permissões nem substitui consultas atuais
+às fontes oficiais ou aos bancos do Astro.
+
+## Principais capacidades
+
+| Área | Capacidades |
+| --- | --- |
+| RH | Consulta autorizada de usuários, dados próprios e conformidade de funcionários |
+| SST | Consulta de NRs internas e pesquisa de orientações oficiais |
+| Agenda | Treinamentos, eventos internos e Google Calendar quando conectado |
+| FAQ | RAG com documentos internos e fontes públicas oficiais |
+| Ferramentas do Astro | Mensagens, conversas, notificações e acessos |
+| Memória | Histórico persistente no MongoDB e busca semântica no Qdrant |
+| Segurança | Firebase, autorização no PostgreSQL, guardrails e agente Juiz |
+| Integrações | MCP Fetch, MCP Google Calendar, A2A e geração de PDFs no R2 |
+| Observabilidade | Traces no LangSmith, logs OpenTelemetry e métricas SRE |
+
+## Tecnologias
+
+- Python 3.12 e FastAPI para a API.
+- LangChain para criação dos agentes e LangGraph para a orquestração.
+- Groq e Mistral como provedores de modelos e embeddings.
+- PostgreSQL, MongoDB e Qdrant para dados relacionais, histórico e busca vetorial.
+- Firebase Authentication para identidade dos usuários.
+- LangSmith e OpenTelemetry para observabilidade.
+- Docker, Render e Kubernetes para execução e deploy.
+
+## Início rápido
+
+Crie um ambiente virtual, instale o projeto com as dependências de desenvolvimento
+e copie as variáveis de exemplo:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+Copy-Item .env.example .env
+```
+
+Preencha no `.env` as credenciais dos serviços que serão utilizados e inicie a
+API:
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+- Documentação interativa: `http://127.0.0.1:8000/docs`
+- Verificação pública de saúde: `http://127.0.0.1:8000/health`
+- Testes: `.venv\Scripts\python.exe -m pytest -q`
+
+As variáveis disponíveis e seus formatos estão em [`.env.example`](.env.example).
+Nunca versione `.env`, tokens, chaves de API ou credenciais de banco.
+
+## Navegação da documentação
+
+- [Deploy](#deploy)
+- [Login de desenvolvimento](#login-de-desenvolvimento)
+- [Chat, agentes e grafos](#chat-e-grafos-scrum-186)
+- [Observabilidade e métricas SRE](#observabilidade-e-métricas-sre)
+- [Pesquisa pública por A2A](#pesquisa-pública-por-a2a)
+- [Google Calendar por MCP](#google-calendar-por-mcp)
+- [Histórico persistente e sessões](#histórico-persistente-e-sessões-scrum-187)
+- [Testes](#testes)
 
 ## Integração contínua
 
