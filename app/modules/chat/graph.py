@@ -12,6 +12,10 @@ from app.modules.agenda.tools import AgendaToolDecision, CriarEventoGoogleArgs
 from app.modules.chat.agents import invoke_agent
 from app.modules.chat.errors import InvalidAgentResponse
 from app.modules.chat.router_reply import ROUTER_CLARIFICATION
+from app.modules.chat.privacy import (
+    INTERNAL_INSTRUCTIONS_BOUNDARY, exposes_internal_instructions,
+    requests_internal_instructions,
+)
 from app.modules.chat.prompts.juiz import JUIZ_PROMPT_COMPLETO
 from app.modules.chat.prompts.orquestrador import ORQUESTRADOR_PROMPT_COMPLETO
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
@@ -461,6 +465,12 @@ def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
 
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def input_guard(state: ChatState):
+        if requests_internal_instructions(state["mensagem"]):
+            return {
+                "rota": "fim", "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY,
+                "guardar_turno": False, "pdf_solicitado": False,
+                "agentes_chamados": ["guardrail_entrada"],
+            }
         if (_campo_dado_proprio(state["mensagem"]) is not None
                 or _pergunta_identidade_astro(state["mensagem"])
                 or _continuacao_segura_notificacoes(state)):
@@ -494,6 +504,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             model, "guardrail_entrada", GUARDRAIL_ENTRADA_PROMPT_COMPLETO, state, InputDecision,
         )
         approved = decision.decisao == "aprovar"
+        if exposes_internal_instructions(decision.mensagem):
+            return {
+                "rota": "fim", "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY,
+                "guardar_turno": False, "pdf_solicitado": False,
+                "agentes_chamados": ["guardrail_entrada"],
+            }
         return {
             "rota": "roteador" if approved else "fim",
             "resposta": "" if approved else decision.mensagem,
@@ -993,6 +1009,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     async def output_guard(state: ChatState):
+        if exposes_internal_instructions(state.get("candidato", "")):
+            return {
+                "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY, "guardar_turno": False,
+                "acao_pendente": None,
+                "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
+            }
         evidence = state.get("resultado", {}).get("evidencia_tool", {})
         if (
             state["avaliacao_juiz"]["status"] == "aprovado"
@@ -1047,6 +1069,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             if judge_status == "aprovado" and decision.status == "aprovado"
             else decision.resposta
         )
+        if exposes_internal_instructions(response):
+            return {
+                "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY, "guardar_turno": False,
+                "acao_pendente": None,
+                "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
+            }
         result = {
             "resposta": response,
             "guardar_turno": decision.status != "bloqueado",
