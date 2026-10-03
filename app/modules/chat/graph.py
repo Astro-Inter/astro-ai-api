@@ -144,6 +144,35 @@ def _duvida_conexao_google_calendar(message: str) -> bool:
     )
 
 
+def _consulta_organizacional_segura(message: str) -> bool:
+    """Somente uma pergunta completa de leitura; não aceita instruções adicionais."""
+    normalized = _sem_acentos(message).strip().rstrip(".?!").strip()
+    return bool(re.fullmatch(
+        r"(?:quais|quantas|liste|mostre)(?: as)? (?:nrs|normas regulamentadoras)"
+        r"(?: estao)?(?: vinculadas)?(?: a| da| de| na)? "
+        r"(?:minha empresa(?: inteira)?|minha unidade(?: atual)?|meu workspace)",
+        normalized,
+    )) and _filtros_nrs_organizacao(message) is not None
+
+
+def _duvida_google_eventos_internos(message: str) -> bool:
+    return bool(re.fullmatch(
+        r"(?:eu )?preciso conectar (?:o )?google calendar para consultar "
+        r"(?:meus|os meus|os) eventos internos",
+        _sem_acentos(message).strip().rstrip(".?!").strip(),
+    ))
+
+
+def _pedido_politica_interna(message: str) -> bool:
+    """Política é uma consulta documental: ausência de dados exige buscar o FAQ."""
+    return bool(re.fullmatch(
+        r"(?:qual (?:e|eh) (?:a|o)|(?:explique|mostre|consulte)(?: a| o)?) "
+        r"(?:politica interna|norma interna|procedimento interno) "
+        r"(?:sobre|de|para) [a-z]+(?: [a-z]+){0,12}",
+        _sem_acentos(message).strip().rstrip(".?!").strip(),
+    ))
+
+
 def _pedido_pdf(message: str) -> bool:
     """Distingue pedido de arquivo de uma pergunta genérica sobre PDFs."""
     normalized = _sem_acentos(message)
@@ -473,9 +502,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
         if (_campo_dado_proprio(state["mensagem"]) is not None
                 or _pergunta_identidade_astro(state["mensagem"])
+                or _consulta_organizacional_segura(state["mensagem"])
+                or _duvida_google_eventos_internos(state["mensagem"])
                 or _continuacao_segura_notificacoes(state)):
             # Intenção read-only estritamente reconhecida. Identidade e acesso
-            # continuam verificados pela autenticação e pela tool de dados próprios.
+            # continuam verificados pela autenticação e pelas tools autorizadas.
             return {
                 "rota": "roteador", "resposta": "", "guardar_turno": True,
                 "pdf_solicitado": False, "agentes_chamados": ["guardrail_entrada"],
@@ -533,6 +564,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             return {"rota": "rh", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if _continuacao_de_agenda(state):
             return {"rota": "agenda", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if _pedido_politica_interna(state["mensagem"]):
+            return {"rota": "faq", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         memory_request = _pedido_de_historico_ia(state["mensagem"])
         if memory_request is not None and not state.get("memoria_consultada") and search_memory is not None:
             return {
