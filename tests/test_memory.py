@@ -291,11 +291,11 @@ def test_router_rejects_untrusted_memory_arguments(reply):
     async def scenario():
         service, repo, vectors, model = service_parts()
         model.replies["roteador"] = reply
-        with pytest.raises(ChatError) as error:
-            await service.chat(ChatRequest(message="Lembre RH"), CurrentUser(
-                uid="owner", role="COLABORADOR",
-            ))
-        assert error.value.status_code == 502
+        response = await service.chat(ChatRequest(message="Lembre RH"), CurrentUser(
+            uid="owner", role="COLABORADOR",
+        ))
+        assert "Pode reformular" in response.resposta
+        assert response.agentes_chamados == ["guardrail_entrada", "roteador"]
         assert not vectors.calls
     asyncio.run(scenario())
 

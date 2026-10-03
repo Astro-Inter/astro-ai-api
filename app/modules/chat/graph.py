@@ -11,6 +11,11 @@ from app.infrastructure.llm.models import AgentModel
 from app.modules.agenda.tools import AgendaToolDecision, CriarEventoGoogleArgs
 from app.modules.chat.agents import invoke_agent
 from app.modules.chat.errors import InvalidAgentResponse
+from app.modules.chat.router_reply import ROUTER_CLARIFICATION
+from app.modules.chat.privacy import (
+    INTERNAL_INSTRUCTIONS_BOUNDARY, exposes_internal_instructions,
+    requests_internal_instructions,
+)
 from app.modules.chat.prompts.juiz import JUIZ_PROMPT_COMPLETO
 from app.modules.chat.prompts.orquestrador import ORQUESTRADOR_PROMPT_COMPLETO
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
@@ -53,6 +58,21 @@ def _pedido_de_agendamento_reuniao(message: str) -> bool:
     return bool(re.search(
         r"\b(?:marcar|agendar|criar|organizar)\b.{0,100}\b(?:reuniao|reunioes)\b",
         normalized, re.DOTALL,
+    ))
+
+
+def _continuacao_de_agenda(state: ChatState) -> bool:
+    """Reconhece dados de uma pergunta anterior, sem completar datas ou criar eventos."""
+    if state["contexto"].get("ultima_rota") != "agenda":
+        return False
+    history = state.get("historico", [])
+    last = next((item["content"] for item in reversed(history) if item["role"] == "assistant"), "")
+    if "?" not in last or not re.search(r"\b(?:data|dia|horario|hora|duracao|agenda)\b", _sem_acentos(last)):
+        return False
+    return bool(re.fullmatch(
+        r"(?:\d{1,2}/\d{1,2}(?:/\d{4})?|\d{1,2} de [a-z]+(?: de \d{4})?|"
+        r"\d{1,2}(?:h|:\d{2})(?:\d{2})?|\d{1,3} minutos)",
+        _sem_acentos(state["mensagem"]).strip(" ."),
     ))
 
 
@@ -122,6 +142,35 @@ def _duvida_conexao_google_calendar(message: str) -> bool:
         and re.search(r"\b(?:como|preciso|quero|ainda nao|desconectad\w*)\b", normalized)
         and (not action or (asks_how and re.search(r"\bainda nao conect\w*\b", normalized)))
     )
+
+
+def _consulta_organizacional_segura(message: str) -> bool:
+    """Somente uma pergunta completa de leitura; não aceita instruções adicionais."""
+    normalized = _sem_acentos(message).strip().rstrip(".?!").strip()
+    return bool(re.fullmatch(
+        r"(?:quais|quantas|liste|mostre)(?: as)? (?:nrs|normas regulamentadoras)"
+        r"(?: estao)?(?: vinculadas)?(?: a| da| de| na)? "
+        r"(?:minha empresa(?: inteira)?|minha unidade(?: atual)?|meu workspace)",
+        normalized,
+    )) and _filtros_nrs_organizacao(message) is not None
+
+
+def _duvida_google_eventos_internos(message: str) -> bool:
+    return bool(re.fullmatch(
+        r"(?:eu )?preciso conectar (?:o )?google calendar para consultar "
+        r"(?:meus|os meus|os) eventos internos",
+        _sem_acentos(message).strip().rstrip(".?!").strip(),
+    ))
+
+
+def _pedido_politica_interna(message: str) -> bool:
+    """Política é uma consulta documental: ausência de dados exige buscar o FAQ."""
+    return bool(re.fullmatch(
+        r"(?:qual (?:e|eh) (?:a|o)|(?:explique|mostre|consulte)(?: a| o)?) "
+        r"(?:politica interna|norma interna|procedimento interno) "
+        r"(?:sobre|de|para) [a-z]+(?: [a-z]+){0,12}",
+        _sem_acentos(message).strip().rstrip(".?!").strip(),
+    ))
 
 
 def _pedido_pdf(message: str) -> bool:
@@ -445,11 +494,19 @@ def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
 
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def input_guard(state: ChatState):
+        if requests_internal_instructions(state["mensagem"]):
+            return {
+                "rota": "fim", "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY,
+                "guardar_turno": False, "pdf_solicitado": False,
+                "agentes_chamados": ["guardrail_entrada"],
+            }
         if (_campo_dado_proprio(state["mensagem"]) is not None
                 or _pergunta_identidade_astro(state["mensagem"])
+                or _consulta_organizacional_segura(state["mensagem"])
+                or _duvida_google_eventos_internos(state["mensagem"])
                 or _continuacao_segura_notificacoes(state)):
             # Intenção read-only estritamente reconhecida. Identidade e acesso
-            # continuam verificados pela autenticação e pela tool de dados próprios.
+            # continuam verificados pela autenticação e pelas tools autorizadas.
             return {
                 "rota": "roteador", "resposta": "", "guardar_turno": True,
                 "pdf_solicitado": False, "agentes_chamados": ["guardrail_entrada"],
@@ -478,6 +535,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             model, "guardrail_entrada", GUARDRAIL_ENTRADA_PROMPT_COMPLETO, state, InputDecision,
         )
         approved = decision.decisao == "aprovar"
+        if exposes_internal_instructions(decision.mensagem):
+            return {
+                "rota": "fim", "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY,
+                "guardar_turno": False, "pdf_solicitado": False,
+                "agentes_chamados": ["guardrail_entrada"],
+            }
         return {
             "rota": "roteador" if approved else "fim",
             "resposta": "" if approved else decision.mensagem,
@@ -499,6 +562,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
         if _campo_dado_proprio(state["mensagem"]) is not None:
             return {"rota": "rh", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if _continuacao_de_agenda(state):
+            return {"rota": "agenda", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if _pedido_politica_interna(state["mensagem"]):
+            return {"rota": "faq", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         memory_request = _pedido_de_historico_ia(state["mensagem"])
         if memory_request is not None and not state.get("memoria_consultada") and search_memory is not None:
             return {
@@ -625,6 +692,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
 
         text = await invoke_agent(model, "roteador", ROTEADOR_PROMPT_COMPLETO, state)
+        if text == ROUTER_CLARIFICATION:
+            return {
+                "rota": "fim", "resposta": text, "guardar_turno": True,
+                "resultado": {"status": "esclarecer"},
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         command = text.strip()
         code_block = re.fullmatch(
             r"```(?:json|text)?\s*(.*?)\s*```", command,
@@ -945,7 +1018,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def orchestrator(state: ChatState):
         result = state.get("resultado") or {}
         if (
-            result.get("dominio") == "agenda" and result.get("status") == "esclarecer"
+            result.get("dominio") in {"rh", "sst", "agenda"} and result.get("status") == "esclarecer"
             and isinstance(result.get("esclarecer"), str) and result["esclarecer"].strip()
         ):
             # Uma pergunta validada não precisa de outra geração que invente
@@ -969,6 +1042,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     async def output_guard(state: ChatState):
+        if exposes_internal_instructions(state.get("candidato", "")):
+            return {
+                "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY, "guardar_turno": False,
+                "acao_pendente": None,
+                "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
+            }
         evidence = state.get("resultado", {}).get("evidencia_tool", {})
         if (
             state["avaliacao_juiz"]["status"] == "aprovado"
@@ -1023,6 +1102,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             if judge_status == "aprovado" and decision.status == "aprovado"
             else decision.resposta
         )
+        if exposes_internal_instructions(response):
+            return {
+                "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY, "guardar_turno": False,
+                "acao_pendente": None,
+                "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
+            }
         result = {
             "resposta": response,
             "guardar_turno": decision.status != "bloqueado",
@@ -1112,6 +1197,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         "conversa": "consultar_conversas",
         "notificacoes": "consultar_notificacoes",
         "acessos": "consultar_acessos",
+        "fim": END,
     })
     graph.add_edge("enviar_mensagem", "juiz")
     graph.add_edge("consultar_conversas", "juiz")

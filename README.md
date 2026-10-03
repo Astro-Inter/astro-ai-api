@@ -321,7 +321,8 @@ Os nomes de modelos ficam em `app/infrastructure/llm/models.py`, não no `.env`:
   Em HTTP 429, tenta a próxima chave disponível na ordem; mantém a chave que
   funcionar e pausa temporariamente a limitada conforme `retry-after` (60s
   quando ausente). Cada chamada percorre a lista no máximo uma vez. Se todas
-  estiverem limitadas, retorna 503 sem expor credenciais. A alternância vale
+  estiverem limitadas, tenta Mistral quando configurada e disponível; sem
+  recuperação, retorna 503 sem expor credenciais. A alternância vale
   também para os especialistas sem Mistral e para o fallback Mistral → Groq.
   Outros erros não provocam troca de chave. O cooldown é local ao processo,
   não compartilhado entre réplicas. Chaves da mesma organização compartilham
@@ -330,6 +331,26 @@ Os nomes de modelos ficam em `app/infrastructure/llm/models.py`, não no `.env`:
   `mistral-small-latest` como primeira opção. Sem ela, ou quando a chamada à
   Mistral falhar, os especialistas usam `openai/gpt-oss-20b` no Groq. A falha
   somente é devolvida pela API se os dois provedores falharem.
+  Guardrails, Roteador, Juiz e Orquestrador também podem usar Mistral como
+  alternativa se a chamada ao Groq falhar. O fallback mantém instruções e
+  validações e pode gerar custos no provedor alternativo.
+
+### Recuperação de respostas dos agentes
+
+Uma rota válida seguida de comentário é normalizada; duas decisões ou argumentos
+indevidos de ferramenta continuam rejeitados. O Roteador tenta corrigir uma
+decisão inválida uma vez e, se falhar, pede esclarecimento sem executar tools.
+Datas curtas após uma pergunta de Agenda mantêm o contexto, sem presumir ano.
+Decisões malformadas de RH, SST e Agenda também podem virar esclarecimentos após
+uma tentativa de correção. Contratos de segurança dos guardrails e do Juiz
+continuam obrigatórios; respostas inválidas não são usadas para confirmar ações.
+
+Chamadas nativas de ferramenta rejeitadas pelo Groq são repetidas uma vez com
+uma instrução de saída somente textual: as tools são executadas pelo grafo,
+após validação e autorização. Falhas de cota são diferenciadas de outras falhas
+do provedor. Pedidos explícitos de instruções internas são interrompidos antes
+dos revisores; marcadores internos conhecidos também são verificados na saída.
+Essas barreiras complementam os prompts, não substituem controles de acesso.
 
 Cada mensagem pode gerar de uma a sete chamadas de modelo, além de um embedding
 quando houver busca semântica de histórico ou FAQ, com custos e latência

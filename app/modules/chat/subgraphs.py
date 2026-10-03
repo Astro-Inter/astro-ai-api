@@ -552,9 +552,17 @@ def _formatar_situacao_nrs(result: dict) -> str:
         ]
         if nr.get("data_validade"):
             details.append(f"validade: {nr['data_validade']}")
+        else:
+            details.append("validade não registrada; vigência não comprovada")
         if nr.get("data_inicio_pendencia"):
             details.append(f"atividade prevista: {nr['data_inicio_pendencia']}")
         lines.append(f"- NR-{nr['numero']} — {nr['titulo']} | " + " | ".join(details))
+    if any(not nr.get("data_validade") for nr in nrs):
+        lines.append(
+            "Ausência de data de validade não comprova que uma NR esteja vigente "
+            "ou que não haja vencimento. A situação acima é a registrada no Astro, "
+            "não uma certificação de conformidade legal."
+        )
     return "\n".join([header, *lines])
 
 

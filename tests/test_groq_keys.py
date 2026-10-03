@@ -260,3 +260,100 @@ def test_real_groq_sdk_switches_authorization_after_http_429(monkeypatch):
         assert requests[0].content == requests[1].content
     finally:
         models.get_model.cache_clear()
+
+
+@pytest.mark.parametrize("agent", ["guardrail_entrada", "roteador", "juiz", "guardrail_saida"])
+def test_groq_quota_uses_mistral_for_non_specialists(groq_setup, monkeypatch, agent):
+    calls, _, outcomes = groq_setup
+    outcomes.update({key: ProviderError(429) for key in models.groq_api_keys()})
+    monkeypatch.setattr(config, "MISTRAL_API_KEY", "fake-mistral")
+    cached_get_model = models.get_model
+    sent = []
+
+    class Mistral:
+        def bind(self, **kwargs):
+            return self
+
+        async def ainvoke(self, messages, **kwargs):
+            sent.append(messages)
+            return AIMessage(content='{"ok":true}')
+
+    monkeypatch.setattr(models, "get_model", lambda specialist: Mistral() if specialist else cached_get_model(False))
+    messages = [HumanMessage(content="Pergunta")]
+    backend = models.LanguageModels()
+    assert asyncio.run(backend.complete(agent, messages, json_mode=True)) == '{"ok":true}'
+    assert len(calls) == 3
+    assert sent == [messages]
+
+
+def test_empty_mistral_response_can_fall_back_instead_of_bypassing_fallback(groq_setup, monkeypatch):
+    calls, _, _ = groq_setup
+    monkeypatch.setattr(config, "MISTRAL_API_KEY", "fake-mistral")
+
+    class EmptyMistral:
+        async def ainvoke(self, *args, **kwargs):
+            return AIMessage(content="")
+
+    monkeypatch.setattr(models, "get_model", lambda specialist: EmptyMistral())
+    assert asyncio.run(models.LanguageModels().complete("agenda", [])) == '{"ok":true}'
+    assert [key for key, _ in calls] == ["secret-a"]
+
+
+def test_both_providers_fail_once_and_hide_credentials(groq_setup, monkeypatch):
+    calls, _, outcomes = groq_setup
+    outcomes.update({key: ProviderError(429) for key in models.groq_api_keys()})
+    monkeypatch.setattr(config, "MISTRAL_API_KEY", "fake-mistral")
+    cached_get_model = models.get_model
+    attempts = []
+
+    class Mistral:
+        async def ainvoke(self, *args, **kwargs):
+            attempts.append(1)
+            raise ProviderError(500)
+
+    monkeypatch.setattr(models, "get_model", lambda specialist: Mistral() if specialist else cached_get_model(False))
+    backend = models.LanguageModels()
+    with pytest.raises(ChatError) as error:
+        asyncio.run(backend.complete("roteador", []))
+    assert len(calls) == 3
+    assert attempts == [1]
+    assert error.value.reason == "provider_failure"
+    assert "secret" not in str(error.value)
+    # O cooldown do Mistral e das chaves Groq evita um novo ciclo de tentativas.
+    with pytest.raises(ChatError):
+        asyncio.run(backend.complete("roteador", []))
+    assert attempts == [1]
+    assert len(calls) == 3
+
+
+def test_native_tool_failure_is_retried_without_executing_failed_generation(monkeypatch):
+    monkeypatch.setattr(config, "GROQ_API_KEY", "fake-key")
+    monkeypatch.setattr(config, "MISTRAL_API_KEY", "")
+    requests = []
+
+    async def send(client, request, **kwargs):
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return httpx.Response(400, request=request, json={"error": {
+                "code": "tool_use_failed", "message": "Tool choice is none",
+                "failed_generation": "secret-rejected-tool-payload",
+            }})
+        return httpx.Response(200, request=request, json={
+            "id": "mock", "object": "chat.completion", "created": 1,
+            "model": models.GROQ_FAST_MODEL,
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {
+                "role": "assistant", "content": "ROUTE=agenda",
+            }}],
+        })
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+    models.get_model.cache_clear()
+    try:
+        assert asyncio.run(models.LanguageModels().complete("roteador", [HumanMessage(content="2/10")])) == "ROUTE=agenda"
+        assert len(requests) == 2
+        assert requests[1]["messages"][:-1] == requests[0]["messages"]
+        assert requests[1]["messages"][-1]["role"] == "system"
+        assert "secret-rejected" not in json.dumps(requests)
+        assert not requests[1].get("tools")
+    finally:
+        models.get_model.cache_clear()

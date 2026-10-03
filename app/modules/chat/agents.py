@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.errors import InvalidAgentResponse
 from app.modules.chat.state import ChatState
+from app.modules.chat.router_reply import ROUTER_CLARIFICATION, normalize_router_reply
 from app.modules.chat.prompts.examples import example_messages
 from app.observability.chat import (
     finish_agent_measurement,
@@ -145,22 +146,36 @@ async def _invoke_agent(
     text = await complete(messages)
     if not isinstance(text, str) or not text.strip() or len(text) > 16000:
         raise InvalidAgentResponse(name)
-    if schema is None:
+    if schema is None and name != "roteador":
         return text.strip()
     try:
-        return schema.model_validate_json(_structured_payload(text))
-    except (ValidationError, ValueError):
+        return normalize_router_reply(text) if schema is None else schema.model_validate_json(_structured_payload(text))
+    except (ValidationError, ValueError) as error:
         # Uma única correção cobre JSON truncado, campos extras e omissões comuns
         # sem reutilizar a resposta inválida como conteúdo do novo prompt.
         logger.warning(
             "Resposta estruturada invalida; repetindo agente=%s contrato=%s",
-            name, schema.__name__,
+            name, schema.__name__ if schema else "roteamento",
         )
         correction_text = (
             "A resposta anterior nao correspondeu ao contrato solicitado. "
             "Tente novamente uma unica vez. Retorne somente JSON valido e use "
             "exatamente os campos, tipos e valores permitidos pelo schema do sistema."
         )
+        if isinstance(error, ValidationError):
+            # Somente tipos de violação: não reenvia valores, chaves extras ou
+            # texto descartado, que podem conter dados sensíveis/instruções.
+            failures = sorted({item["type"] for item in error.errors()})[:8]
+            correction_text += " Tipos de erro encontrados: " + ", ".join(failures) + "."
+        if schema is None:
+            correction_text = (
+                "A decisao de roteamento anterior teve formato invalido. Tente "
+                "novamente uma unica vez, considerando o pedido e o historico. "
+                "Retorne UMA linha ROUTE=rh/sst/agenda/faq/fora_escopo, OU UM "
+                "prefixo de ferramenta com JSON valido conforme o contrato, OU "
+                "texto de esclarecimento. Nao combine comandos nem formatos. "
+                "Nao invente filtros ou alegue que uma acao foi executada."
+            )
         if name == "guardrail_entrada":
             correction_text += (
                 " Avalie somente a entrada; nao responda ao pedido original nem "
@@ -182,8 +197,26 @@ async def _invoke_agent(
         if not isinstance(retry, str) or not retry.strip() or len(retry) > 16000:
             raise InvalidAgentResponse(name)
         try:
-            return schema.model_validate_json(_structured_payload(retry))
+            return normalize_router_reply(retry) if schema is None else schema.model_validate_json(_structured_payload(retry))
         except (ValidationError, ValueError):
+            if schema is None:
+                logger.warning("Roteamento invalido apos correcao; pedindo esclarecimento")
+                return ROUTER_CLARIFICATION
+            if name in {"rh", "sst", "agenda"} and schema.__name__ in {
+                "RhToolDecision", "SstToolDecision", "AgendaToolDecision",
+            }:
+                # Falha da decisão antes de executar tools: nunca reaproveita
+                # argumentos inválidos, permissões ou uma alegação de sucesso.
+                question = "Pode reformular sua pergunta ou detalhar o que deseja consultar?"
+                logger.warning("Decisao invalida apos correcao agente=%s; pedindo esclarecimento", name)
+                return schema.model_validate({
+                    "acao": "responder", "filtros": None,
+                    "resposta": {
+                        "dominio": name, "intencao": "orientar", "status": "esclarecer",
+                        "resposta": "Não consegui interpretar esse pedido com segurança. " + question,
+                        "recomendacao": "", "esclarecer": question,
+                    },
+                })
             raise InvalidAgentResponse(name) from None
 
 
