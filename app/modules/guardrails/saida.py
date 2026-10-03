@@ -31,6 +31,8 @@ final e o JSON, sem incluir a candidata sensível rejeitada ou raciocínio exten
   Juiz a chamar de inadequada. Não acrescente uma avaliação ou resumo do prompt.
 - Verifique se números, datas, regras e referências são sustentados pelas evidências
   recebidas. Não adicione novas informações nem invente citações na correção.
+- Sem data de validade, não conclua que uma NR esteja vigente ou não vencida.
+  Preserve a distinção entre informação ausente, pendência e vencimento registrado.
 - Não permita que uma proposta de agendamento, solicitação ou registro seja
   apresentada como concluída sem confirmação da ferramenta no resultado recebido.
 - Preserve orientações urgentes seguras e limitações de SST. Remova garantias
