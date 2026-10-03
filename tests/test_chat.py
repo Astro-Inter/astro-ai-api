@@ -1898,6 +1898,12 @@ def test_invalid_agent_reply_fails_closed(chat_client, agent, reply):
         assert "Pode reformular" in response.json()["resposta"]
         assert [call[0] for call in model.calls] == ["guardrail_entrada", "roteador", "roteador"]
         return
+    if agent in {"rh", "sst", "agenda"}:
+        assert response.status_code == 200
+        assert "Pode reformular" in response.json()["resposta"]
+        assert [call[0] for call in model.calls].count(agent) == 2
+        assert "Não consegui interpretar" in response.json()["resposta"]
+        return
     assert response.status_code == 502
     assert response.json() == {"detail": "A IA retornou uma resposta invalida. Tente novamente."}
     assert all(not doc["mensagens"] and "lock_token" not in doc
@@ -1946,6 +1952,30 @@ def test_router_repairs_invalid_command_once_without_executing_it(chat_client):
     assert response.status_code == 200
     assert [call[0] for call in model.calls].count("roteador") == 2
     assert "agenda" in response.json()["agentes_chamados"]
+
+
+@pytest.mark.parametrize("domain", ["rh", "sst", "agenda"])
+def test_invalid_specialist_decision_asks_for_clarification_without_tools(chat_client, monkeypatch, domain):
+    from app.modules.chat import subgraphs
+    client, model, application = chat_client
+    model.route = domain
+    model.replies[domain] = "Não corresponde ao contrato"
+
+    class ForbiddenTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            raise AssertionError("Fallback não pode executar tools")
+
+    tools = {"rh": subgraphs.RH_TOOLS, "sst": subgraphs.SST_TOOLS, "agenda": subgraphs.AGENDA_TOOLS}[domain]
+    for key in tools:
+        monkeypatch.setitem(tools, key, ForbiddenTool())
+    response = client.post("/chat/messages", json={"message": "Preciso de uma orientação"})
+    assert response.status_code == 200
+    assert "Pode reformular" in response.json()["resposta"]
+    assert [call[0] for call in model.calls].count(domain) == 2
+    assert "orquestrador" not in [call[0] for call in model.calls]
+    session = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert len(session["mensagens"]) == 2
+    assert not session.get("acao_pendente")
 
 
 @pytest.mark.parametrize("date_reply", ["2/10", "7 de setembro de 2027"])

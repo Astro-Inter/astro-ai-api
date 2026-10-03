@@ -4,7 +4,7 @@ import time
 from functools import lru_cache
 from typing import Protocol
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_groq import ChatGroq
 
 from app.core import config
@@ -23,6 +23,14 @@ GROQ_COOLDOWN_SECONDS = 60
 def _http_status(error: Exception):
     response = getattr(error, "response", None)
     return getattr(error, "status_code", None) or getattr(response, "status_code", None)
+
+
+def _provider_error_code(error: Exception) -> str:
+    body = getattr(error, "body", None)
+    if not isinstance(body, dict):
+        return ""
+    details = body.get("error", body)
+    return str(details.get("code", "")) if isinstance(details, dict) else ""
 
 
 def groq_api_keys() -> tuple[str, ...]:
@@ -110,6 +118,19 @@ class LanguageModels:
         try:
             return await self._invoke(model, agent, messages, json_mode)
         except Exception as error:
+            if _http_status(error) == 400 and _provider_error_code(error) == "tool_use_failed":
+                # O grafo executa as tools: uma chamada nativa espontânea não
+                # deve virar indisponibilidade. Reitere o contrato uma vez, sem
+                # executar nem reaproveitar a chamada rejeitada pelo provedor.
+                logger.warning("Chamada nativa recusada agente=%s; repetindo somente texto", agent)
+                reminder = SystemMessage(content=(
+                    "Nenhuma ferramenta nativa esta disponivel nesta chamada. "
+                    "Nao emita tool_calls nem tags de funcao. Responda somente "
+                    "texto no formato definido pelas instrucoes de sistema: "
+                    "JSON quando solicitado, ou decisao textual do roteador. "
+                    "As ferramentas serao executadas exclusivamente pela aplicacao."
+                ))
+                return await self._invoke(model, agent, messages + [reminder], json_mode)
             if not json_mode or _http_status(error) != 400:
                 raise
             # O Groq pode rejeitar no servidor uma geração em response_format
@@ -157,7 +178,8 @@ class LanguageModels:
         # Não espera nem percorre a lista indefinidamente; novas requisições
         # podem reutilizar as chaves depois do cooldown informado pelo provedor.
         raise ChatError(
-            503, "Servico de IA indisponivel. Tente novamente.", reason="rate_limited",
+            503, "O serviço de IA atingiu o limite temporário de uso. Aguarde um pouco e tente novamente.",
+            reason="rate_limited",
         )
 
     async def complete(
@@ -165,42 +187,55 @@ class LanguageModels:
     ) -> str:
         specialist = agent in {"rh", "sst", "agenda"}
         mistral_available = (
-            specialist
-            and bool(config.MISTRAL_API_KEY)
+            bool(config.MISTRAL_API_KEY)
             and time.monotonic() >= self._mistral_retry_after
         )
+        primary_mistral = specialist and mistral_available
+        primary_error = None
         try:
-            if specialist and not mistral_available:
+            if not primary_mistral:
                 return await self._complete_groq(agent, messages, json_mode)
-            if not specialist:
-                return await self._complete_groq(agent, messages, json_mode)
-            primary_model = get_model(specialist)
+            primary_model = get_model(True)
             return await self._invoke(primary_model, agent, messages, json_mode)
-        except ChatError:
-            raise
-        except Exception as primary_error:
-            # Se o especialista primário usa Mistral, repete a mesma chamada no
-            # Groq. A chave Mistral continua configurada para os embeddings.
-            if mistral_available and groq_api_keys():
-                self._mistral_retry_after = time.monotonic() + MISTRAL_COOLDOWN_SECONDS
-                logger.warning(
-                    "Falha no provedor do agente=%s provedor=mistral status=%s; "
-                    "acionando fallback=groq",
-                    agent, _http_status(primary_error),
-                )
-                try:
+        except Exception as error:
+            primary_error = error
+            if isinstance(error, ChatError) and not (
+                isinstance(error, InvalidAgentResponse) or error.reason == "rate_limited"
+            ):
+                raise
+            logger.warning(
+                "Falha no provedor agente=%s provedor=%s status=%s tipo=%s",
+                agent, "mistral" if primary_mistral else "groq",
+                _http_status(error), type(error).__name__,
+            )
+        # No máximo um provedor alternativo; preserva mensagem, contexto e schema.
+        # JSON inválido/vazio não é autorização para usar a resposta descartada.
+        if primary_mistral:
+            self._mistral_retry_after = time.monotonic() + MISTRAL_COOLDOWN_SECONDS
+        fallback = "groq" if primary_mistral and groq_api_keys() else (
+            "mistral" if not primary_mistral and mistral_available else None
+        )
+        final_error = primary_error
+        if fallback:
+            logger.warning("Acionando fallback agente=%s provedor=%s", agent, fallback)
+            try:
+                if fallback == "groq":
                     return await self._complete_groq(agent, messages, json_mode)
-                except Exception as fallback_error:
-                    logger.warning(
-                        "Falha no provedor do agente=%s provedor=groq status=%s",
-                        agent, _http_status(fallback_error),
-                    )
-            else:
+                return await self._invoke(get_model(True), agent, messages, json_mode)
+            except Exception as error:
+                final_error = error
+                if fallback == "mistral":
+                    self._mistral_retry_after = time.monotonic() + MISTRAL_COOLDOWN_SECONDS
                 logger.warning(
-                    "Falha no provedor do agente=%s provedor=%s status=%s",
-                    agent,
-                    "groq" if not mistral_available else "mistral",
-                    _http_status(primary_error),
+                    "Falha no fallback agente=%s provedor=%s status=%s tipo=%s",
+                    agent, fallback, _http_status(error), type(error).__name__,
                 )
-            # Não propagar payloads/credenciais dos SDKs para respostas ou logs.
-            raise ChatError(503, "Servico de IA indisponivel. Tente novamente.") from None
+        if isinstance(final_error, InvalidAgentResponse):
+            raise InvalidAgentResponse(agent) from None
+        if isinstance(final_error, ChatError):
+            raise final_error from None
+        # Nunca encaminha payloads, prompts ou credenciais do SDK ao usuário.
+        raise ChatError(
+            503, "Não consegui consultar o serviço de IA agora. Tente novamente em instantes.",
+            reason="provider_failure",
+        ) from None

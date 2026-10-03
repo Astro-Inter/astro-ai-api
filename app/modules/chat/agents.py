@@ -150,7 +150,7 @@ async def _invoke_agent(
         return text.strip()
     try:
         return normalize_router_reply(text) if schema is None else schema.model_validate_json(_structured_payload(text))
-    except (ValidationError, ValueError):
+    except (ValidationError, ValueError) as error:
         # Uma única correção cobre JSON truncado, campos extras e omissões comuns
         # sem reutilizar a resposta inválida como conteúdo do novo prompt.
         logger.warning(
@@ -162,6 +162,11 @@ async def _invoke_agent(
             "Tente novamente uma unica vez. Retorne somente JSON valido e use "
             "exatamente os campos, tipos e valores permitidos pelo schema do sistema."
         )
+        if isinstance(error, ValidationError):
+            # Somente tipos de violação: não reenvia valores, chaves extras ou
+            # texto descartado, que podem conter dados sensíveis/instruções.
+            failures = sorted({item["type"] for item in error.errors()})[:8]
+            correction_text += " Tipos de erro encontrados: " + ", ".join(failures) + "."
         if schema is None:
             correction_text = (
                 "A decisao de roteamento anterior teve formato invalido. Tente "
@@ -197,6 +202,21 @@ async def _invoke_agent(
             if schema is None:
                 logger.warning("Roteamento invalido apos correcao; pedindo esclarecimento")
                 return ROUTER_CLARIFICATION
+            if name in {"rh", "sst", "agenda"} and schema.__name__ in {
+                "RhToolDecision", "SstToolDecision", "AgendaToolDecision",
+            }:
+                # Falha da decisão antes de executar tools: nunca reaproveita
+                # argumentos inválidos, permissões ou uma alegação de sucesso.
+                question = "Pode reformular sua pergunta ou detalhar o que deseja consultar?"
+                logger.warning("Decisao invalida apos correcao agente=%s; pedindo esclarecimento", name)
+                return schema.model_validate({
+                    "acao": "responder", "filtros": None,
+                    "resposta": {
+                        "dominio": name, "intencao": "orientar", "status": "esclarecer",
+                        "resposta": "Não consegui interpretar esse pedido com segurança. " + question,
+                        "recomendacao": "", "esclarecer": question,
+                    },
+                })
             raise InvalidAgentResponse(name) from None
 
 

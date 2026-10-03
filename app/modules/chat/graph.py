@@ -985,7 +985,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     async def orchestrator(state: ChatState):
         result = state.get("resultado") or {}
         if (
-            result.get("dominio") == "agenda" and result.get("status") == "esclarecer"
+            result.get("dominio") in {"rh", "sst", "agenda"} and result.get("status") == "esclarecer"
             and isinstance(result.get("esclarecer"), str) and result["esclarecer"].strip()
         ):
             # Uma pergunta validada não precisa de outra geração que invente
