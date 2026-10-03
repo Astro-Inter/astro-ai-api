@@ -93,3 +93,47 @@ def test_database_errors_hide_connection_details(monkeypatch):
         assert "secret" not in str(error.value)
 
     asyncio.run(scenario())
+
+
+def test_authorization_retries_transient_connection_once(monkeypatch, caplog):
+    async def scenario():
+        calls = []
+
+        def connect(*args, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise psycopg.OperationalError("private-host secret firebase-uid")
+            return FakeConnection(("GESTOR",))
+
+        monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+        assert await PostgresAccessRoles(connect).get_role("firebase-uid") == "GESTOR"
+        assert len(calls) == 2
+        assert all("default_transaction_read_only=on" in call["options"] for call in calls)
+        assert "secret" not in caplog.text
+        assert "firebase-uid" not in caplog.text
+        assert "private-host" not in caplog.text
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("error,attempts", [
+    (psycopg.OperationalError("secret"), 2),
+    (psycopg.errors.InvalidPassword("secret"), 1),
+    (psycopg.errors.UndefinedFunction("secret"), 1),
+    (psycopg.errors.QueryCanceled("secret"), 1),
+])
+def test_authorization_retry_is_bounded_and_never_grants_access(monkeypatch, caplog, error, attempts):
+    async def scenario():
+        calls = []
+
+        def connect(*args, **kwargs):
+            calls.append(kwargs)
+            raise error
+
+        monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+        with pytest.raises(AccessLookupError):
+            await PostgresAccessRoles(connect).get_role("firebase-uid")
+        assert len(calls) == attempts
+        assert "secret" not in caplog.text
+
+    asyncio.run(scenario())
