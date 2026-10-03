@@ -11,6 +11,7 @@ from app.infrastructure.llm.models import AgentModel
 from app.modules.agenda.tools import AgendaToolDecision, CriarEventoGoogleArgs
 from app.modules.chat.agents import invoke_agent
 from app.modules.chat.errors import InvalidAgentResponse
+from app.modules.chat.router_reply import ROUTER_CLARIFICATION
 from app.modules.chat.prompts.juiz import JUIZ_PROMPT_COMPLETO
 from app.modules.chat.prompts.orquestrador import ORQUESTRADOR_PROMPT_COMPLETO
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
@@ -53,6 +54,21 @@ def _pedido_de_agendamento_reuniao(message: str) -> bool:
     return bool(re.search(
         r"\b(?:marcar|agendar|criar|organizar)\b.{0,100}\b(?:reuniao|reunioes)\b",
         normalized, re.DOTALL,
+    ))
+
+
+def _continuacao_de_agenda(state: ChatState) -> bool:
+    """Reconhece dados de uma pergunta anterior, sem completar datas ou criar eventos."""
+    if state["contexto"].get("ultima_rota") != "agenda":
+        return False
+    history = state.get("historico", [])
+    last = next((item["content"] for item in reversed(history) if item["role"] == "assistant"), "")
+    if "?" not in last or not re.search(r"\b(?:data|dia|horario|hora|duracao|agenda)\b", _sem_acentos(last)):
+        return False
+    return bool(re.fullmatch(
+        r"(?:\d{1,2}/\d{1,2}(?:/\d{4})?|\d{1,2} de [a-z]+(?: de \d{4})?|"
+        r"\d{1,2}(?:h|:\d{2})(?:\d{2})?|\d{1,3} minutos)",
+        _sem_acentos(state["mensagem"]).strip(" ."),
     ))
 
 
@@ -499,6 +515,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
         if _campo_dado_proprio(state["mensagem"]) is not None:
             return {"rota": "rh", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if _continuacao_de_agenda(state):
+            return {"rota": "agenda", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         memory_request = _pedido_de_historico_ia(state["mensagem"])
         if memory_request is not None and not state.get("memoria_consultada") and search_memory is not None:
             return {
@@ -625,6 +643,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
 
         text = await invoke_agent(model, "roteador", ROTEADOR_PROMPT_COMPLETO, state)
+        if text == ROUTER_CLARIFICATION:
+            return {
+                "rota": "fim", "resposta": text, "guardar_turno": True,
+                "resultado": {"status": "esclarecer"},
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         command = text.strip()
         code_block = re.fullmatch(
             r"```(?:json|text)?\s*(.*?)\s*```", command,
@@ -1112,6 +1136,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         "conversa": "consultar_conversas",
         "notificacoes": "consultar_notificacoes",
         "acessos": "consultar_acessos",
+        "fim": END,
     })
     graph.add_edge("enviar_mensagem", "juiz")
     graph.add_edge("consultar_conversas", "juiz")

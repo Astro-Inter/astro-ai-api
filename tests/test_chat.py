@@ -1893,10 +1893,47 @@ def test_invalid_agent_reply_fails_closed(chat_client, agent, reply):
             "problemas": ["Resposta não confirmada."],
         })
     response = client.post("/chat/messages", json={"message": "Pedido"})
+    if agent == "roteador":
+        assert response.status_code == 200
+        assert "Pode reformular" in response.json()["resposta"]
+        assert [call[0] for call in model.calls] == ["guardrail_entrada", "roteador", "roteador"]
+        return
     assert response.status_code == 502
     assert response.json() == {"detail": "A IA retornou uma resposta invalida. Tente novamente."}
     assert all(not doc["mensagens"] and "lock_token" not in doc
                for doc in application.state.chat_service.repository.docs.values())
+    assert application.state.chat_service.active_requests == 0
+
+
+def test_router_repairs_invalid_command_once_without_executing_it(chat_client):
+    client, model, _ = chat_client
+    model.replies["roteador"] = ["ROUTE=desconhecido", "ROUTE=agenda\nQual título?"]
+    response = client.post("/chat/messages", json={"message": "Pedido"})
+    assert response.status_code == 200
+    assert [call[0] for call in model.calls].count("roteador") == 2
+    assert "agenda" in response.json()["agentes_chamados"]
+
+
+@pytest.mark.parametrize("date_reply", ["2/10", "7 de setembro de 2027"])
+def test_short_date_continues_agenda_with_history(chat_client, date_reply):
+    client, model, application = chat_client
+    model.route = "agenda"
+    question = "Qual é a data da reunião?"
+    model.replies["agenda"] = json.dumps({
+        "acao": "responder", "filtros": None,
+        "resposta": {"dominio": "agenda", "intencao": "consultar", "status": "esclarecer",
+                     "resposta": question, "recomendacao": "", "esclarecer": question},
+    })
+    first = client.post("/chat/messages", json={"message": "Queria saber o horário da reunião com minha chefe"})
+    assert first.status_code == 200
+    model.calls.clear()
+    model.replies["roteador"] = "ROUTE=desconhecido"
+    second = client.post("/chat/messages", json={"message": date_reply, "session_id": first.json()["session_id"]})
+    assert second.status_code == 200
+    assert "agenda" in second.json()["agentes_chamados"]
+    assert "roteador" not in [call[0] for call in model.calls]
+    agenda_messages = next(call[1] for call in model.calls if call[0] == "agenda")
+    assert any("reunião com minha chefe" in message.content for message in agenda_messages)
     assert application.state.chat_service.active_requests == 0
 
 
