@@ -810,6 +810,29 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             command, re.IGNORECASE,
         ):
             raise InvalidAgentResponse("roteador")
+        if not route and state.get("pdf_solicitado"):
+            # Uma promessa textual não é conteúdo nem execução de gerar_pdf.
+            # Sobre o Astro, consulte o FAQ e só depois exporte a resposta revisada.
+            normalized = _sem_acentos(state["mensagem"])
+            explains_astro = re.search(
+                r"\b(?:o que e |(?:objetivo|finalidade|funcionamento|proposito) (?:do )?|"
+                r"(?:sobre|explicando|explique|explicar|apresente) )"
+                r"(?:o )?(?:(?:projeto|sistema) )?astro\b", normalized,
+            )
+            if explains_astro:
+                return {
+                    "rota": "faq", "candidato": "",
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+                }
+            return {
+                "rota": "fim", "pdf_solicitado": False, "guardar_turno": True,
+                "resposta": (
+                    "Não consegui identificar qual consulta deve fornecer o conteúdo do PDF. "
+                    "Reformule o pedido indicando o assunto e os dados que deseja incluir. "
+                    "Nenhum arquivo foi gerado."
+                ),
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         return {
             "rota": route.group(1).lower() if route else "direta",
             "candidato": "" if route else command,
@@ -1166,9 +1189,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             )
         except Exception:
             result = {"status": "indisponivel"}
-        if result.get("status") == "ok":
+        url = result.get("url")
+        if result.get("status") == "ok" and isinstance(url, str) and url.strip():
             return {
-                "pdf_url": result["url"],
+                "pdf_url": url,
                 "agentes_chamados": state["agentes_chamados"] + ["gerar_pdf"],
             }
         return {

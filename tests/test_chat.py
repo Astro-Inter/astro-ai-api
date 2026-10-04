@@ -1779,6 +1779,94 @@ def test_pdf_request_uses_approved_faq_answer_and_returns_temporary_link(chat_cl
     assert "PDF gerado" in stored["mensagens"][-1]["content"]
 
 
+@pytest.mark.parametrize("message", [
+    "Consegue fazer um PDF para mim explicando o que é o Astro?",
+    "Crie um PDF sobre o Astro.",
+    "Gere um PDF explicando o projeto Astro.",
+])
+def test_pdf_promise_is_routed_to_content_and_waits_for_download(chat_client, monkeypatch, message):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, application = chat_client
+    promise = "Claro! Gerarei um PDF explicando o que é o Astro. Em breve você receberá o arquivo."
+    model.replies["roteador"] = promise
+    completed = []
+
+    class PdfTool:
+        async def ainvoke(self, args, config):
+            assert "O Astro centraliza orientações internas." in args["resposta"]
+            assert "Gerarei" not in args["resposta"]
+            await asyncio.sleep(0.05)
+            completed.append(True)
+            return {"status": "ok", "url": "https://r2.example/arquivo.pdf?assinatura=teste"}
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post("/chat/messages", json={"message": message})
+    assert response.status_code == 200
+    assert completed == [True]
+    answer = response.json()["resposta"]
+    assert "[Baixar PDF](https://r2.example/arquivo.pdf?assinatura=teste)" in answer
+    assert "O Astro centraliza orientações internas." in answer
+    assert "Gerarei" not in answer and "Em breve" not in answer
+    assert "consultar_normas" in response.json()["agentes_chamados"]
+    assert response.json()["agentes_chamados"][-1] == "gerar_pdf"
+    stored = application.state.chat_service.repository.docs[response.json()["session_id"]]
+    assert "Em breve" not in stored["mensagens"][-1]["content"]
+
+
+@pytest.mark.parametrize("has_documents", [False, True])
+def test_rerouted_pdf_promise_reports_missing_data_or_upload_failure(chat_client, monkeypatch, has_documents):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, application = chat_client
+    model.replies["roteador"] = "Claro! Gerarei o PDF e enviarei em breve."
+    if not has_documents:
+        application.state.chat_service.faq_vectors.results = []
+
+    class PdfTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            assert has_documents, "Não deve gerar um arquivo sem conteúdo confirmado"
+            return {"status": "indisponivel"}
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post("/chat/messages", json={
+        "message": "Consegue fazer um PDF para mim explicando o que é o Astro?",
+    })
+    assert response.status_code == 200
+    answer = response.json()["resposta"]
+    assert "Não consegui gerar o PDF agora." in answer if has_documents else "Não gerei o PDF" in answer
+    assert "Gerarei" not in answer and "em breve" not in answer
+    assert "Baixar PDF" not in answer
+
+
+def test_unroutable_pdf_promise_does_not_claim_future_delivery(chat_client):
+    client, model, _ = chat_client
+    model.replies["roteador"] = "Claro! Gerarei o PDF e enviarei em breve."
+    response = client.post("/chat/messages", json={"message": "Consegue fazer um PDF para mim?"})
+    assert response.status_code == 200
+    assert "Nenhum arquivo foi gerado." in response.json()["resposta"]
+    assert "Gerarei" not in response.json()["resposta"]
+    assert "gerar_pdf" not in response.json()["agentes_chamados"]
+
+
+@pytest.mark.parametrize("url", [None, "", "   "])
+def test_pdf_success_without_download_url_reports_failure(chat_client, monkeypatch, url):
+    from app.modules.chat import graph as chat_graph
+
+    client, model, _ = chat_client
+    model.route = "faq"
+
+    class PdfTool:
+        async def ainvoke(self, *_args, **_kwargs):
+            return {"status": "ok", "url": url}
+
+    monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
+    response = client.post("/chat/messages", json={"message": "Gere um PDF com o objetivo do Astro."})
+    assert response.status_code == 200
+    assert "Não consegui gerar o PDF agora." in response.json()["resposta"]
+    assert "Baixar PDF" not in response.json()["resposta"]
+
+
 def test_pdf_link_is_plain_text_when_markdown_is_disabled(chat_client, monkeypatch):
     from app.modules.chat import graph as chat_graph
 
