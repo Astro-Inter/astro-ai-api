@@ -199,6 +199,21 @@ inválido ou role desconhecida retorna `503`, sem expor detalhes da conexão.
 Configure `DATABASE_URL` e conceda ao usuário do banco somente as permissões
 necessárias para conectar e executar essa função.
 
+No Render, `DATABASE_URL` deve ser a URI PostgreSQL do provedor (não a URI
+MongoDB), com TLS conforme o provedor. `POSTGRES_AUTH_MAX_CONCURRENCY=2` limita
+as consultas simultâneas de autorização por processo; as conexões são fechadas
+após cada leitura, inclusive quando a consulta falha. Não há cache de permissões
+nem liberação de acesso quando o banco está indisponível.
+
+Se o log mostrar `motivo=limite_conexoes`, confira as conexões de todos os
+serviços que compartilham o banco e reduza seus pools. A mensagem PostgreSQL
+`remaining connection slots` indica capacidade esgotada, não uma configuração
+CORS ou MongoDB. Na Aiven, PgBouncer usa uma URI/porta própria e requer plano
+Startup ou superior: veja a [configuração de pooling](https://aiven.io/docs/products/postgresql/howto/manage-pool).
+Não encerre sessões de outros serviços sem avaliar o impacto. Se não houver
+pooling disponível, reduza a concorrência dos clientes ou ajuste a capacidade.
+O limite desta API não controla conexões abertas por outros sistemas.
+
 Com `ENABLE_DEV_LOGIN=false` ou fora de development/test, o login não é registrado
 e retorna 404, inclusive não aparecendo no OpenAPI. Reinicie a API após editar `.env`.
 Use HTTPS fora do localhost e não registre corpos de login nem headers de autorização.
