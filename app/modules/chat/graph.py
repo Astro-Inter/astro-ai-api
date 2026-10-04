@@ -43,6 +43,13 @@ from app.modules.shared.tools import gerar_pdf
 
 ROTEADOR_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_ROTEADOR}
 logger = logging.getLogger(__name__)
+GOOGLE_CONNECTION_GUIDANCE = (
+    "A conexão do Google Calendar é opcional. Quando quiser usá-lo, "
+    "acesse a rota autenticada GET /integracoes/google-calendar/conectar "
+    "e abra o authorization_url retornado para autorizar sua conta. "
+    "Depois, volte ao chat e faça o pedido novamente. "
+    "Seus eventos e treinamentos internos do Astro continuam disponíveis sem essa conexão."
+)
 
 
 def _sem_acentos(message: str) -> str:
@@ -127,6 +134,18 @@ def _pergunta_identidade_astro(message: str) -> bool:
         "quem e voce dentro do astro", "quem e voce",
         "voce e o roteador do astro ou o agente do astro",
     }
+
+
+def _pedido_simples_conexao_google(message: str) -> bool:
+    """Só orientação sobre conexão própria; não executa OAuth nem aceita comandos extras."""
+    normalized = re.sub(r"\s+", " ", _sem_acentos(message)).strip().rstrip(".?!").strip()
+    return bool(re.fullmatch(
+        r"(?:eu )?(?:(?:quero|preciso|gostaria de) (?:me )?conectar|"
+        r"como (?:eu )?(?:me conecto|conecto|conectar|faco para (?:me )?conectar))"
+        r"(?: (?:a )?minha conta)?(?: (?:com|ao|a|no|na))? "
+        r"(?:o |a )?google (?:agenda|calendar)",
+        normalized,
+    ))
 
 
 def _duvida_conexao_google_calendar(message: str) -> bool:
@@ -503,6 +522,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         if (_campo_dado_proprio(state["mensagem"]) is not None
                 or _pergunta_identidade_astro(state["mensagem"])
                 or _consulta_organizacional_segura(state["mensagem"])
+                or _pedido_simples_conexao_google(state["mensagem"])
                 or _duvida_google_eventos_internos(state["mensagem"])
                 or _continuacao_segura_notificacoes(state)):
             # Intenção read-only estritamente reconhecida. Identidade e acesso
@@ -550,6 +570,14 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     async def router(state: ChatState):
+        if _pedido_simples_conexao_google(state["mensagem"]):
+            # Texto fixo do backend, sem dados externos ou ação executada. Não
+            # depende de Juiz/saída por LLM nem transforma a orientação em OAuth.
+            return {
+                "rota": "fim", "resposta": GOOGLE_CONNECTION_GUIDANCE,
+                "guardar_turno": True, "pdf_solicitado": False,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         if _pergunta_identidade_astro(state["mensagem"]):
             return {
                 "rota": "direta",
@@ -575,13 +603,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         if _duvida_conexao_google_calendar(state["mensagem"]):
             return {
                 "rota": "direta",
-                "candidato": (
-                    "A conexão do Google Calendar é opcional. Quando quiser usá-lo, "
-                    "acesse a rota autenticada GET /integracoes/google-calendar/conectar "
-                    "e abra o authorization_url retornado para autorizar sua conta. "
-                    "Depois, volte ao chat e faça o pedido novamente. "
-                    "Seus eventos e treinamentos internos do Astro continuam disponíveis sem essa conexão."
-                ),
+                "candidato": GOOGLE_CONNECTION_GUIDANCE,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
         pending = state.get("acao_pendente")
