@@ -51,6 +51,9 @@ ENABLE_DEV_LOGIN = os.getenv("ENABLE_DEV_LOGIN", "false").lower() == "true"
 CORS_ALLOWED_ORIGINS = _cors_origins_env("CORS_ALLOWED_ORIGINS")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+POSTGRES_AUTH_MAX_CONCURRENCY = _bounded_int_env(
+    "POSTGRES_AUTH_MAX_CONCURRENCY", 2, 1, 16,
+)
 
 MONGODB_URI = os.getenv("MONGODB_URI")
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE")

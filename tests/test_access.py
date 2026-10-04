@@ -1,4 +1,7 @@
 import asyncio
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
 import pytest
@@ -67,6 +70,70 @@ def test_access_role_uses_parameterized_database_function(monkeypatch, database_
         )]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("message,reason", [
+    ("remaining connection slots are reserved private-host secret firebase-uid", "limite_conexoes"),
+    ("too many connections private-host secret firebase-uid", "limite_conexoes"),
+    ("password authentication failed private-host secret firebase-uid", "autenticacao_banco"),
+])
+def test_connection_configuration_failures_are_not_retried_or_exposed(monkeypatch, caplog, message, reason):
+    calls = []
+
+    def connect(*args, **kwargs):
+        calls.append(True)
+        raise psycopg.OperationalError(message)
+
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
+    with pytest.raises(AccessLookupError):
+        asyncio.run(PostgresAccessRoles(connect).get_role("firebase-uid"))
+    assert len(calls) == 1
+    assert f"motivo={reason}" in caplog.text
+    for secret in ("private-host", "secret", "firebase-uid"):
+        assert secret not in caplog.text
+
+
+def test_authorization_bounds_concurrent_connections_and_releases_slots(monkeypatch):
+    monkeypatch.setattr(config, "POSTGRES_AUTH_MAX_CONCURRENCY", 2)
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    class Connection(FakeConnection):
+        def __enter__(self):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.03)
+            return self
+
+        def __exit__(self, *args):
+            nonlocal active
+            with lock:
+                active -= 1
+
+    roles = PostgresAccessRoles(lambda *args, **kwargs: Connection(("GESTOR",)))
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        rows = list(executor.map(roles._query_role, ["fake-uid"] * 8))
+    assert rows == [("GESTOR",)] * 8
+    assert peak == 2 and active == 0
+
+
+def test_failed_connection_does_not_leak_authorization_slot(monkeypatch):
+    monkeypatch.setattr(config, "POSTGRES_AUTH_MAX_CONCURRENCY", 1)
+    calls = []
+
+    def connect(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            raise psycopg.OperationalError("too many connections")
+        return FakeConnection(("GESTOR",))
+
+    roles = PostgresAccessRoles(connect)
+    with pytest.raises(psycopg.OperationalError):
+        roles._query_role("fake-uid")
+    assert roles._query_role("fake-uid") == ("GESTOR",)
 
 
 @pytest.mark.parametrize("row", [None, (None,), ("DESCONHECIDO",)])
