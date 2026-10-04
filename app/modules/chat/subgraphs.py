@@ -11,6 +11,7 @@ from app.modules.chat.prompts.faq import FAQ_PROMPT_COMPLETO
 from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO
 from app.modules.chat.prompts.sst import SST_DECISAO_PROMPT_COMPLETO
 from app.modules.chat.state import ChatState
+from app.modules.chat.ui_actions import GOOGLE_CALENDAR_CONNECT_ACTION
 from app.modules.agenda.tools import (
     AgendaToolDecision, ConsultarEventosArgs, ConsultarTreinamentosArgs, TOOLS_AGENDA,
 )
@@ -656,8 +657,9 @@ def _formatar_eventos(result: dict) -> str:
 def _formatar_eventos_google(result: dict) -> str:
     if result.get("status") == "conexao_necessaria":
         return (
-            "Para consultar sua agenda, conecte sua conta Google pelo endpoint "
-            f"`{result['rota_conexao']}`. O restante do Astro continua disponível sem essa conexão."
+            "Para consultar sua agenda Google, conecte sua conta pela opção abaixo.\n\n"
+            f"{GOOGLE_CALENDAR_CONNECT_ACTION}\n\n"
+            "O restante do Astro continua disponível sem essa conexão."
         )
     if result.get("status") == "sem_dados":
         return "Não encontrei eventos no seu Google Calendar nesse período."
@@ -681,8 +683,9 @@ def _formatar_criacao_evento_google(result: dict) -> str:
     if status == "conexao_necessaria":
         return (
             preview
-            + " Para continuar, conecte sua conta Google pelo endpoint "
-            + f"`{result['rota_conexao']}`. Depois volte a esta conversa e confirme a criação."
+            + " Para continuar, conecte sua conta Google pela opção abaixo.\n\n"
+            + GOOGLE_CALENDAR_CONNECT_ACTION
+            + "\n\nDepois volte a esta conversa e confirme a criação."
         )
     if status == "aguardando_confirmacao":
         return preview + " Confirma a criação no seu Google Calendar?"

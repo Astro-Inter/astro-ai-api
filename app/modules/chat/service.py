@@ -13,6 +13,7 @@ from app.modules.chat.errors import ChatError
 from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import build_chat_graph
 from app.modules.chat.schemas import ChatRequest, ChatResponse, SessionResponse
+from app.modules.chat.ui_actions import normalizar_acoes_interface
 from app.modules.memory.service import ConversationMemory
 from app.modules.shared.tools import PDF_LINK_TTL_HOURS
 from app.observability.chat import ChatObservation, observe_chat
@@ -175,11 +176,9 @@ class ChatService:
                 }, config={"recursion_limit": 20})
                 observation.mark_result(result)
                 pdf_url = result.get("pdf_url")
-                public_answer = (
-                    result["resposta"]
-                    if markdown
-                    else markdown_para_texto_simples(result["resposta"])
-                )
+                public_answer = normalizar_acoes_interface(result["resposta"])
+                if not markdown:
+                    public_answer = markdown_para_texto_simples(public_answer)
                 stored_answer = public_answer
                 if pdf_url:
                     if markdown:

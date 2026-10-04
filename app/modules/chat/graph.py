@@ -21,6 +21,7 @@ from app.modules.chat.prompts.orquestrador import ORQUESTRADOR_PROMPT_COMPLETO
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
 from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch, OutputDecision
 from app.modules.chat.state import ChatState
+from app.modules.chat.ui_actions import GOOGLE_CALENDAR_CONNECT_ACTION
 from app.modules.chat.subgraphs import (
     _filtros_treinamentos,
     _filtros_eventos,
@@ -44,10 +45,9 @@ from app.modules.shared.tools import gerar_pdf
 ROTEADOR_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_ROTEADOR}
 logger = logging.getLogger(__name__)
 GOOGLE_CONNECTION_GUIDANCE = (
-    "A conexão do Google Calendar é opcional. Quando quiser usá-lo, "
-    "acesse a rota autenticada GET /integracoes/google-calendar/conectar "
-    "e abra o authorization_url retornado para autorizar sua conta. "
-    "Depois, volte ao chat e faça o pedido novamente. "
+    "Para conectar sua conta Google, use a opção abaixo e autorize o acesso à sua agenda.\n\n"
+    f"{GOOGLE_CALENDAR_CONNECT_ACTION}\n\n"
+    "Depois, volte ao chat e faça o pedido novamente. A conexão é opcional: "
     "Seus eventos e treinamentos internos do Astro continuam disponíveis sem essa conexão."
 )
 

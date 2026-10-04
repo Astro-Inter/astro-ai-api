@@ -397,7 +397,8 @@ def test_google_calendar_is_connected_on_demand_and_event_stays_pending(
 
     assert preview_response.status_code == 200
     preview_body = preview_response.json()
-    assert "/integracoes/google-calendar/conectar" in preview_body["resposta"]
+    assert "[google-calendar-conectar](Conectar minha conta Google)" in preview_body["resposta"]
+    assert "/integracoes/google-calendar/" not in preview_body["resposta"]
     session_id = preview_body["session_id"]
     pending = application.state.chat_service.repository.docs[session_id]["acao_pendente"]
     assert pending["tipo"] == "criar_evento_google_calendar"
@@ -1007,7 +1008,8 @@ def test_short_notification_followup_skips_invalid_guardrail_reply(chat_client, 
     "Como faço para me conectar ao Google Calendar?",
     "  QUERO   ME CONECTAR COM O GOOGLE AGENDA  ",
 ])
-def test_simple_google_connection_guidance_does_not_need_model(chat_client, monkeypatch, message):
+@pytest.mark.parametrize("markdown", [True, False])
+def test_simple_google_connection_guidance_does_not_need_model(chat_client, monkeypatch, message, markdown):
     client, model, application = chat_client
 
     async def unavailable(agent, messages, *, json_mode=False):
@@ -1019,16 +1021,32 @@ def test_simple_google_connection_guidance_does_not_need_model(chat_client, monk
 
     monkeypatch.setattr(model, "complete", unavailable)
     monkeypatch.setattr(application.state.google_calendar_oauth, "connection_url", unexpected_oauth)
-    response = client.post("/chat/messages", json={"message": message})
+    response = client.post(f"/chat/messages?markdown={str(markdown).lower()}", json={"message": message})
     assert response.status_code == 200
     body = response.json()
-    assert "/integracoes/google-calendar/conectar" in body["resposta"]
-    assert "authorization_url" in body["resposta"]
-    assert "autorizar sua conta" in body["resposta"]
+    assert "[google-calendar-conectar](Conectar minha conta Google)" in body["resposta"]
+    assert "/integracoes/google-calendar/" not in body["resposta"]
+    assert "authorization_url" not in body["resposta"]
+    assert "autorize o acesso" in body["resposta"]
     assert body["agentes_chamados"] == ["guardrail_entrada", "roteador"]
     assert model.calls == []
     history = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"]
     assert history[-1] == {"role": "assistant", "content": body["resposta"]}
+
+
+@pytest.mark.parametrize("markdown", [True, False])
+def test_model_connection_endpoint_is_normalized_before_delivery_and_storage(chat_client, markdown):
+    client, model, application = chat_client
+    model.replies["roteador"] = "Para conectar, use [Conectar](/integracoes/google-calendar/status)."
+    response = client.post(f"/chat/messages?markdown={str(markdown).lower()}", json={
+        "message": "Onde encontro a integração da agenda?",
+    })
+    assert response.status_code == 200
+    answer = response.json()["resposta"]
+    assert "[google-calendar-conectar](Conectar minha conta Google)" in answer
+    assert "/integracoes/google-calendar/" not in answer
+    history = application.state.chat_service.repository.docs[response.json()["session_id"]]["mensagens"]
+    assert history[-1]["content"] == answer
 
 
 def test_simple_google_connection_still_requires_authentication(chat_client):
@@ -1070,9 +1088,9 @@ def test_google_connection_guidance_uses_real_endpoint(chat_client):
     })
 
     assert response.status_code == 200
-    assert "/integracoes/google-calendar/conectar" in response.json()["resposta"]
-    assert "authorization_url" in response.json()["resposta"]
-    assert "botão" not in response.json()["resposta"]
+    assert "[google-calendar-conectar](Conectar minha conta Google)" in response.json()["resposta"]
+    assert "/integracoes/google-calendar/" not in response.json()["resposta"]
+    assert "authorization_url" not in response.json()["resposta"]
     assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz", "guardrail_saida"]
 
 
