@@ -24,6 +24,18 @@ class SessionResponse(BaseModel):
     resumo_indexado: bool = False
 
 
+class SessionMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class SessionMessagesResponse(BaseModel):
+    session_id: UUID
+    status: Literal["ativa", "encerrando", "encerrada"]
+    total: int = Field(ge=0)
+    mensagens: list[SessionMessage]
+
+
 class MemorySearch(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     busca: str = Field(max_length=1000)

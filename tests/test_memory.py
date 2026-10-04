@@ -369,6 +369,59 @@ def test_session_routes_authentication_and_ownership():
         assert "timezone" not in schema["components"]["schemas"]["ChatRequest"]["properties"]
 
 
+def test_load_session_messages_for_authenticated_owner():
+    service, repo, _, _ = service_parts()
+    app = create_app()
+    app.state.chat_service = service
+    sid = str(uuid4())
+
+    with TestClient(app) as client:
+        app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
+            uid="owner", role="COLABORADOR",
+        )
+        assert client.post(f"/sessions/{sid}/iniciar").status_code == 200
+        sent = client.post("/chat/messages", json={"message": "Oi", "session_id": sid})
+        assert sent.status_code == 200
+
+        response = client.get(f"/sessions/{sid}/messages")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "session_id": sid,
+        "status": "ativa",
+        "total": 2,
+        "mensagens": [
+            {"role": "user", "content": "Oi"},
+            {"role": "assistant", "content": sent.json()["resposta"]},
+        ],
+    }
+
+
+def test_load_session_messages_rejects_foreign_unknown_and_invalid_session():
+    service, repo, _, _ = service_parts()
+    app = create_app()
+    app.state.chat_service = service
+    sid = str(uuid4())
+
+    with TestClient(app) as client:
+        assert client.get(f"/sessions/{sid}/messages").status_code == 401
+        app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
+            uid="owner", role="COLABORADOR",
+        )
+        assert client.post(f"/sessions/{sid}/iniciar").status_code == 200
+        empty = client.get(f"/sessions/{sid}/messages")
+        assert empty.status_code == 200
+        assert empty.json()["mensagens"] == [] and empty.json()["total"] == 0
+
+        app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
+            uid="other", role="COLABORADOR",
+        )
+        assert client.get(f"/sessions/{sid}/messages").status_code == 404
+        assert client.get(f"/sessions/{uuid4()}/messages").status_code == 404
+        assert client.get("/sessions/not-a-uuid/messages").status_code == 422
+
+
 def test_mongo_filters_and_atomic_updates():
     async def scenario():
         repo = MongoSessions()
