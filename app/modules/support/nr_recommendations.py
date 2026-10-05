@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Literal
 
 import psycopg
+from app.infrastructure.database.connections import read_only_connection
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -140,12 +141,7 @@ class PositionRepository:
         if not config.DATABASE_URL:
             raise ChatError(503, "Consulta de cargos indisponivel.")
         try:
-            with self._connect(
-                config.DATABASE_URL,
-                autocommit=True,
-                connect_timeout=5,
-                options="-c statement_timeout=5000 -c default_transaction_read_only=on",
-            ) as connection:
+            with read_only_connection(config.DATABASE_URL, connect=self._connect) as connection:
                 with connection.cursor() as cursor:
                     if user.role == "ADMIN":
                         query = """

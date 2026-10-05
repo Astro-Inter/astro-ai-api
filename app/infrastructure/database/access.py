@@ -8,6 +8,7 @@ import psycopg
 
 from app.core import config
 from app.core.security import AccessRole
+from app.infrastructure.database.connections import read_only_connection
 
 
 NO_ACCESS = "SEM_ACESSO"
@@ -20,6 +21,8 @@ def _connection_failure_reason(error: BaseException) -> str:
     # localmente, mas nunca devolva o texto, que pode conter credenciais e hosts.
     code = getattr(error, "sqlstate", None)
     message = str(error).lower()
+    if "limite local de conexoes postgresql atingido" in message:
+        return "limite_local"
     if code == "53300" or any(fragment in message for fragment in (
         "remaining connection slots", "too many connections", "too many clients",
     )):
@@ -36,7 +39,7 @@ def _connection_failure_reason(error: BaseException) -> str:
 
 
 def _transient_connection_error(error: BaseException) -> bool:
-    if _connection_failure_reason(error) in {"limite_conexoes", "autenticacao_banco"}:
+    if _connection_failure_reason(error) in {"limite_conexoes", "limite_local", "autenticacao_banco"}:
         # Uma repetição imediata agrava a saturação ou repete uma senha inválida.
         return False
     code = getattr(error, "sqlstate", None)
@@ -68,12 +71,7 @@ class PostgresAccessRoles:
             self._slots.release()
 
     def _query_role_with_connection(self, firebase_uid: str):
-        with self._connect(
-            config.DATABASE_URL,
-            autocommit=True,
-            connect_timeout=5,
-            options="-c statement_timeout=5000 -c default_transaction_read_only=on",
-        ) as connection:
+        with read_only_connection(config.DATABASE_URL, connect=self._connect) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT fn_retornar_nivel_acesso(%s)",

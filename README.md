@@ -214,6 +214,14 @@ Não encerre sessões de outros serviços sem avaliar o impacto. Se não houver
 pooling disponível, reduza a concorrência dos clientes ou ajuste a capacidade.
 O limite desta API não controla conexões abertas por outros sistemas.
 
+`POSTGRES_MAX_CONCURRENCY=2` é o limite compartilhado por autorização, tools de
+RH/SST/Agenda/roteador e endpoints de suporte, por processo. Todas as conexões
+usam `application_name=astro-ai-api`. O limite específico de autorização é
+aplicado dentro desse orçamento total. `motivo=limite_local` indica espera
+esgotada por uma vaga local; `motivo=limite_conexoes` indica recusa do servidor.
+Veja o [roteiro de diagnóstico](docs/operacao/postgresql-conexoes.md) para
+identificar os consumidores sem encerrar sessões ou expor dados pessoais.
+
 Com `ENABLE_DEV_LOGIN=false` ou fora de development/test, o login não é registrado
 e retorna 404, inclusive não aparecendo no OpenAPI. Reinicie a API após editar `.env`.
 Use HTTPS fora do localhost e não registre corpos de login nem headers de autorização.
