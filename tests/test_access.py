@@ -63,6 +63,7 @@ def test_access_role_uses_parameterized_database_function(monkeypatch, database_
         assert result == expected
         assert calls == [(('postgresql://test:test@localhost/astro',), {
             "autocommit": True, "connect_timeout": 5,
+            "application_name": "astro-ai-api",
             "options": "-c statement_timeout=5000 -c default_transaction_read_only=on",
         })]
         assert connection.db_cursor.calls == [(

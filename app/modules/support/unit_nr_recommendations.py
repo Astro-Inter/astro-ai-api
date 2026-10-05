@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Callable
 
 import psycopg
+from app.infrastructure.database.connections import read_only_connection
 from pydantic import BaseModel, Field
 
 from app.core import config
@@ -59,12 +60,7 @@ class UnitRepository:
         if not config.DATABASE_URL:
             raise ChatError(503, "Consulta de unidades indisponivel.")
         try:
-            with self._connect(
-                config.DATABASE_URL,
-                autocommit=True,
-                connect_timeout=5,
-                options="-c statement_timeout=5000 -c default_transaction_read_only=on",
-            ) as connection:
+            with read_only_connection(config.DATABASE_URL, connect=self._connect) as connection:
                 with connection.cursor() as cursor:
                     unit = self._get_unit(cursor, unit_id, user)
                     if unit is None:

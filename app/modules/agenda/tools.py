@@ -3,6 +3,7 @@ from typing import Literal
 from uuid import uuid4
 
 import psycopg
+from app.infrastructure.database.connections import read_only_connection
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -158,12 +159,7 @@ class AgendaToolDecision(BaseModel):
 
 def get_postgres_connection():
     """Abre uma conexão curta e somente leitura com o PostgreSQL."""
-    return psycopg.connect(
-        app_config.DATABASE_URL,
-        autocommit=True,
-        connect_timeout=5,
-        options="-c statement_timeout=5000 -c default_transaction_read_only=on",
-    )
+    return read_only_connection(app_config.DATABASE_URL)
 
 
 def _usuario_do_contexto(runtime_config: RunnableConfig) -> CurrentUser | None:
