@@ -46,7 +46,7 @@ def _new_groq(index: int = 0):
         raise ChatError(503, "Provedor de IA nao configurado.")
     return ChatGroq(
         model=GROQ_FAST_MODEL, api_key=keys[index], temperature=0,
-        timeout=30, max_retries=0 if len(keys) > 1 else 3, max_tokens=1600,
+        timeout=30, max_retries=0, max_tokens=1600,
     )
 
 
@@ -180,6 +180,7 @@ class LanguageModels:
         raise ChatError(
             503, "O serviço de IA atingiu o limite temporário de uso. Aguarde um pouco e tente novamente.",
             reason="rate_limited",
+            retry_after=max(1, math.ceil(min(self._groq_retry_after.values()) - time.monotonic())),
         )
 
     async def complete(
@@ -234,6 +235,11 @@ class LanguageModels:
             raise InvalidAgentResponse(agent) from None
         if isinstance(final_error, ChatError):
             raise final_error from None
+        if _http_status(final_error) == 429:
+            raise ChatError(
+                503, "O serviço de IA atingiu o limite temporário de uso. Aguarde um pouco e tente novamente.",
+                reason="rate_limited", retry_after=math.ceil(_groq_cooldown(final_error)),
+            ) from None
         # Nunca encaminha payloads, prompts ou credenciais do SDK ao usuário.
         raise ChatError(
             503, "Não consegui consultar o serviço de IA agora. Tente novamente em instantes.",

@@ -107,7 +107,7 @@ def groq_setup(monkeypatch):
         def __init__(self, **kwargs):
             self.key = kwargs["api_key"]
             assert "|" not in self.key
-            assert kwargs["max_retries"] == (0 if len(models.groq_api_keys()) > 1 else 3)
+            assert kwargs["max_retries"] == 0
 
         def bind(self, **kwargs):
             bindings.append((self.key, kwargs))
