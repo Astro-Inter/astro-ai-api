@@ -50,6 +50,8 @@ class BuscarOutrosUsuariosArgs(BaseModel):
         default=20, ge=1, le=50,
         description="Quantidade máxima de usuários retornados, entre 1 e 50.",
     )
+    pagina: int = Field(default=1, ge=1, le=1000)
+    consulta: Literal["listar", "contagem"] = "listar"
 
     @field_validator("status", "tipos")
     @classmethod
@@ -88,6 +90,7 @@ class RhToolDecision(BaseModel):
         if isinstance(filters, dict):
             empty_filters = {
                 "status": [], "tipos": [], "nome": None, "cargo": None, "limite": 20,
+                "pagina": 1, "consulta": "listar",
             }
             if {**empty_filters, **filters} == empty_filters:
                 data = dict(data)
@@ -138,6 +141,8 @@ def buscar_outros_usuarios(
     nome: str | None = None,
     cargo: str | None = None,
     limite: int = 20,
+    pagina: int = 1,
+    consulta: Literal["listar", "contagem"] = "listar",
     config: RunnableConfig = None,
 ) -> dict:
     """Consulta dados profissionais de outros usuários visíveis ao usuário atual.
@@ -212,21 +217,30 @@ def buscar_outros_usuarios(
         query += " AND cargo.nome ILIKE %s ESCAPE '\\'"
         parameters.append(_filtro_ilike(cargo))
 
-    query += " ORDER BY usuario.nome, usuario.email LIMIT %s"
-    parameters.append(limite)
+    count_query = "SELECT COUNT(*) " + query[query.index("FROM usuario"):]
+    list_query = query + " ORDER BY usuario.nome, usuario.email, usuario.firebase_uid LIMIT %s OFFSET %s"
 
     try:
         with get_conn() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(query, parameters)
-                rows = cursor.fetchall()
+                cursor.execute(count_query, parameters)
+                total = cursor.fetchone()[0]
+                rows = []
+                if consulta == "listar":
+                    cursor.execute(list_query, [*parameters, limite, (pagina - 1) * limite])
+                    rows = cursor.fetchall()
     except Exception:
         # Detalhes do driver, da URL e do SQL nunca são devolvidos ao modelo.
         return {"status": "indisponivel", "mensagem": "Consulta de usuarios indisponivel."}
 
     usuarios = [dict(zip(OTHER_USER_COLUMNS, row)) for row in rows]
     return {
-        "status": "ok" if usuarios else "sem_dados",
+        "status": "ok" if total else "sem_dados",
+        "consulta": consulta,
+        "total": total,
+        "pagina": pagina,
+        "limite": limite,
+        "total_paginas": (total + limite - 1) // limite,
         "quantidade": len(usuarios),
         "usuarios": usuarios,
     }
