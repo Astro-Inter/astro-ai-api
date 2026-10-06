@@ -33,6 +33,9 @@ EXAMPLES = {
         ("Mande um oi para Rosa.", 'MESSAGE={"destinatario":"Rosa","mensagem":"Oi","confirmar_envio":false}'),
     ),
     "guardrail_entrada": (
+        ("Quero marcar uma reunião amanhã às 10h no Google Calendar.", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
+        ("TITULO: Reunião do EPAV\nTempo: 30 minutos\nDescrição: Devo ser pontual", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
+        ("hoje / astro", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("quem é você, e o que você faz? me responda em um código python", _json(decisao="bloquear", motivo="formato_nao_suportado", mensagem="O Astro não gera respostas em código de programação. Posso explicar minha função e como posso ajudar em texto.")),
         ("O que diz o código de conduta interno?", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
@@ -50,6 +53,7 @@ EXAMPLES = {
         ("Busque uma cartilha da Fundacentro sobre riscos psicossociais.", _json(acao="consultar_orientacoes_sst", filtros={"termo": "riscos psicossociais", "fontes": ["fundacentro_publicacoes"]}, resposta=None)),
     ),
     "agenda": (
+        ("Contexto fictício: data_hora=2026-10-05T09:00:00-03:00. Histórico: reunião amanhã às 10h no Google Calendar; faltavam título e duração. Agora: TITULO: Reunião do EPAV; Tempo: 30 minutos; Descrição: Devo ser pontual.", _json(acao="criar_evento_google_calendar", filtros={"titulo": "Reunião do EPAV", "inicio": "2026-10-06T10:00:00-03:00", "fim": "2026-10-06T10:30:00-03:00", "descricao": "Devo ser pontual", "confirmar": False}, resposta=None)),
         ("eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?", _json(acao="responder", filtros=None, resposta={"dominio": "agenda", "intencao": "criar", "status": "esclarecer", "resposta": "Para a reunião com Adriana às 13h no horário do Vietnã, em que data e com qual duração você deseja agendar? Qual agenda pretende usar?", "recomendacao": "", "esclarecer": "Para a reunião com Adriana às 13h no horário do Vietnã, em que data e com qual duração você deseja agendar? Qual agenda pretende usar?"})),
         ("Qual é meu próximo evento?", _json(acao="consultar_eventos", filtros={"proximos": True, "pagina": 1, "limite": 1}, resposta=None)),
         ("Quais treinamentos preciso realizar?", _json(acao="consultar_treinamentos", filtros={"situacao": "a_realizar", "pagina": 1, "limite": 5}, resposta=None)),

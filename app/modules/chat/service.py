@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -11,7 +11,8 @@ from app.infrastructure.vectorstore.faq import FaqVectors
 from app.infrastructure.vectorstore.memory import SummaryVectors
 from app.modules.chat.errors import ChatError
 from app.modules.chat.formatting import markdown_para_texto_simples
-from app.modules.chat.graph import build_chat_graph
+from app.modules.chat.graph import build_chat_graph, _pedido_pdf
+from app.modules.chat.pdf_delivery import asks_for_pdf_link
 from app.modules.chat.schemas import (
     ChatRequest,
     ChatResponse,
@@ -130,6 +131,12 @@ class ChatService:
                 if doc.get("status", "ativa") != "ativa":
                     raise ChatError(409, "Conversa encerrada ou em encerramento. Use um novo session_id.")
                 messages = doc.get("mensagens", [])
+                previous_pdf = doc.get("ultimo_pdf")
+                if previous_pdf is None and asks_for_pdf_link(request.message):
+                    last_question = next((m["content"] for m in reversed(messages) if m["role"] == "human"), "")
+                    if _pedido_pdf(last_question):
+                        # Sessions from earlier deployments have no delivery metadata.
+                        previous_pdf = {"sem_metadados": True}
                 if (len(messages) >= MAX_MESSAGES or sum(len(m["content"]) for m in messages)
                         + len(request.message) + 6000 > MAX_SESSION_CHARACTERS):
                     raise ChatError(409, "Limite da conversa atingido. Encerre e inicie outra sessao.")
@@ -201,6 +208,9 @@ class ChatService:
                     "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
                     "pdf_solicitado": False, "pdf_url": None,
+                    "resposta_deterministica": False,
+                    "consulta_rh": doc.get("consulta_rh"),
+                    "ultimo_pdf": previous_pdf,
                 }, config={"recursion_limit": 20})
                 observation.mark_result(result)
                 pdf_url = result.get("pdf_url")
@@ -209,24 +219,37 @@ class ChatService:
                     public_answer = markdown_para_texto_simples(public_answer)
                 stored_answer = public_answer
                 if pdf_url:
+                    validity = (
+                        f"link válido por {PDF_LINK_TTL_HOURS} horas"
+                        if result.get("pdf_solicitado")
+                        else "link temporário; o prazo original não é renovado"
+                    )
                     if markdown:
                         public_answer += (
                             f"\n\n[Baixar PDF]({pdf_url}) "
-                            f"(link válido por {PDF_LINK_TTL_HOURS} horas)."
+                            f"({validity})."
                         )
                     else:
                         public_answer += (
                             f"\n\nBaixar PDF: {pdf_url}\n"
-                            f"Link válido por {PDF_LINK_TTL_HOURS} horas."
+                            f"{validity.capitalize()}."
                         )
                     stored_answer += "\n\nPDF gerado e link temporário entregue."
                 response = ChatResponse(session_id=session_id, resposta=public_answer,
                                         agentes_chamados=result["agentes_chamados"])
                 if result["guardar_turno"]:
+                    delivery_fields = {}
+                    if result.get("pdf_solicitado"):
+                        delivery_fields["ultimo_pdf"] = {
+                            "url": pdf_url,
+                            "expira_em": utc_now() + timedelta(hours=PDF_LINK_TTL_HOURS) if pdf_url else None,
+                        }
                     await self.repository.update(session_id, user.uid, token,
                         {
+                            **delivery_fields,
                             "ultima_rota": result["rota"],
                             "acao_pendente": result.get("acao_pendente"),
+                            "consulta_rh": result.get("consulta_rh"),
                         }, messages=[
                             {"role": "human", "content": request.message},
                             {"role": "assistant", "content": stored_answer},

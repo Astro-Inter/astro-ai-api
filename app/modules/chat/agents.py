@@ -12,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.errors import InvalidAgentResponse
+from app.modules.chat.schemas import InputDecision, JudgeDecision, OutputDecision
 from app.modules.chat.state import ChatState
 from app.modules.chat.router_reply import ROUTER_CLARIFICATION, normalize_router_reply
 from app.modules.chat.prompts.examples import example_messages
@@ -68,7 +69,7 @@ def _history_for_agent(name: str, history: list[dict[str, str]]):
         "roteador": (6, 6000),
         "rh": (10, 12000),
         "sst": (10, 12000),
-        "agenda": (10, 12000),
+        "agenda": (20, 12000),
     }
     if name not in limits:
         return []
@@ -228,6 +229,30 @@ async def invoke_agent(
     try:
         return await _invoke_agent(model, name, prompt, state, schema)
     except InvalidAgentResponse as error:
+        # Do not accept malformed text as a successful decision. A validation
+        # failure becomes a bounded clarification, never authorization or facts.
+        logger.warning("Contrato de agente invalido apos tentativas agente=%s", name)
+        question = "Não consegui interpretar ou verificar esse pedido com segurança. Pode reformular sua pergunta?"
+        if schema is InputDecision:
+            return InputDecision(decisao="esclarecer", motivo="contexto_insuficiente", mensagem=question)
+        if schema is JudgeDecision:
+            if state.get("resposta_deterministica"):
+                return JudgeDecision(status="aprovado", motivo="Resposta da ferramenta formatada pela aplicação.", problemas=[])
+            return JudgeDecision(status="rejeitado", motivo="Não foi possível validar a resposta.", problemas=["Falha no contrato do revisor."])
+        if schema is OutputDecision:
+            return OutputDecision(status="bloqueado", motivo="Não foi possível validar a resposta.", resposta=question)
+        if schema is None and name in {"roteador", "faq", "orquestrador"}:
+            return ROUTER_CLARIFICATION
+        if schema is not None and name in {"rh", "sst", "agenda"} and schema.__name__ in {
+            "RhToolDecision", "SstToolDecision", "AgendaToolDecision",
+        }:
+            return schema.model_validate({
+                "acao": "responder", "filtros": None,
+                "resposta": {
+                    "dominio": name, "intencao": "orientar", "status": "esclarecer",
+                    "resposta": question, "recomendacao": "", "esclarecer": question,
+                },
+            })
         if error.stage == "desconhecido":
             raise InvalidAgentResponse(name) from None
         raise

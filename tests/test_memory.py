@@ -222,6 +222,11 @@ def test_explicit_memory_request_retrieves_before_router_answer(message):
             await repo.ensure(sid, uid)
             repo.docs[sid].update(status="encerrada", resumo=summary)
         result = await service.chat(ChatRequest(message=message), user)
+        if message.startswith("Busque o resumo"):
+            assert result.resposta.endswith("Consultou notificações; nenhum evento criado.")
+            assert result.agentes_chamados == ["guardrail_entrada", "roteador", "buscar_historico", "roteador"]
+            assert model.calls == [] and not vectors.calls
+            return
         assert result.resposta == "Você consultou notificações; não criou um evento."
         assert result.agentes_chamados == [
             "guardrail_entrada", "roteador", "buscar_historico", "roteador", "juiz", "guardrail_saida",
@@ -260,7 +265,7 @@ def test_explicit_memory_request_without_closed_sessions():
             message="Busque o resumo da minha última conversa encerrada com o Astro.",
         ), CurrentUser(uid="owner", role="COLABORADOR"))
         assert "buscar_historico" in result.agentes_chamados
-        assert result.resposta == "Não encontrei conversas encerradas com resumo disponível."
+        assert result.resposta == "Não encontrei um resumo de conversa encerrada para sua conta."
         repo.previous.assert_awaited_once_with("owner", str(result.session_id))
         assert not vectors.calls
     asyncio.run(scenario())
@@ -270,7 +275,7 @@ def test_explicit_memory_request_respects_input_guard_and_single_lookup():
     async def scenario():
         service, repo, vectors, model = service_parts()
         repo.previous = AsyncMock(return_value=[])
-        message = "Busque o resumo da minha última conversa encerrada com o Astro."
+        message = "Busque o resumo da minha última conversa encerrada com o Astro. Explique os assuntos."
         user = CurrentUser(uid="owner", role="COLABORADOR")
         model.replies["guardrail_entrada"] = json.dumps({
             "decisao": "bloquear", "motivo": "injecao_de_prompt", "mensagem": "Não posso ajudar.",
@@ -554,8 +559,8 @@ def test_chat_and_end_serialize_across_service_instances():
             await release.wait()
             return await original(*args, **kwargs)
         model.complete = waiting
-        pending = asyncio.create_task(first.chat(ChatRequest(message="Oi", session_id=sid), user))
-        await entered.wait()
+        pending = asyncio.create_task(first.chat(ChatRequest(message="Fale de RH", session_id=sid), user))
+        await asyncio.wait_for(entered.wait(), timeout=5)
         try:
             with pytest.raises(ChatError) as error:
                 await second.end(sid, user)
