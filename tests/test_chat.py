@@ -1294,6 +1294,8 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
                 "Ana", "ana@example.com", "COLABORADOR", "Analista",
                 "Matriz", "HIBRIDO", "ATIVO",
             )]
+        def fetchone(self):
+            return (1,)
 
     class Connection:
         def __init__(self):
@@ -1324,7 +1326,7 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "rh", "juiz",
     ]
-    assert connection.db_cursor.parameters == ["user-a", ["GESTOR", "COLABORADOR"], "user-a", ["ATIVO"], 20]
+    assert connection.db_cursor.parameters == ["user-a", ["GESTOR", "COLABORADOR"], "user-a", ["ATIVO"], 20, 0]
     assert [call[0] for call in model.calls].count("rh") == 1
     judge_call = next(call for call in model.calls if call[0] == "juiz")
     tool_result = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
@@ -1554,9 +1556,10 @@ def test_direct_and_faq_flows(chat_client):
     model.route = "direta"
     direct = client.post("/chat/messages", json={"message": "Oi"}).json()
     assert direct["agentes_chamados"] == [
-        "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
+        "guardrail_entrada", "roteador",
     ]
-    assert direct["resposta"] == "Olá! Como posso ajudar?"
+    assert direct["resposta"] == "Olá! Sou o Agente do Astro. Como posso ajudar hoje?"
+    assert model.calls == []
     model.calls.clear()
     model.route = "faq"
     faq = client.post("/chat/messages", json={"message": "Qual a norma interna?"}).json()
@@ -1593,7 +1596,7 @@ def test_chat_roles_are_created_with_langchain_agents(chat_client, monkeypatch):
 
     monkeypatch.setattr(chat_agents, "create_agent", tracked_create_agent)
 
-    response = client.post("/chat/messages", json={"message": "Oi"})
+    response = client.post("/chat/messages", json={"message": "Uma orientação, por favor"})
 
     assert response.status_code == 200
     assert [item["name"] for item in created] == [
@@ -1734,7 +1737,7 @@ def test_chat_response_format_query_parameter(
     model.route = "direta"
     model.replies["roteador"] = "# Resumo\n\n**Astro**\n- Item"
 
-    response = client.post(f"/chat/messages{query}", json={"message": "Oi"})
+    response = client.post(f"/chat/messages{query}", json={"message": "Uma orientação, por favor"})
 
     assert response.status_code == 200
     assert response.json()["resposta"] == expected
@@ -2131,10 +2134,19 @@ def test_invalid_agent_reply_fails_closed(chat_client, agent, reply):
         assert [call[0] for call in model.calls].count(agent) == 2
         assert "Não consegui interpretar" in response.json()["resposta"]
         return
-    assert response.status_code == 502
-    assert response.json() == {"detail": "A IA retornou uma resposta invalida. Tente novamente."}
-    assert all(not doc["mensagens"] and "lock_token" not in doc
-               for doc in application.state.chat_service.repository.docs.values())
+    if agent in {"guardrail_entrada", "juiz", "guardrail_saida"}:
+        assert response.status_code == 200
+        assert "não consegui" in response.json()["resposta"].lower()
+        assert "enviada" not in response.json()["resposta"]
+        assert "marcada" not in response.json()["resposta"]
+        if agent == "guardrail_entrada":
+            assert {call[0] for call in model.calls} == {"guardrail_entrada"}
+        assert application.state.chat_service.active_requests == 0
+        return
+    assert agent == "orquestrador"
+    assert response.status_code == 200
+    assert "Pode reformular" in response.json()["resposta"]
+    assert all("lock_token" not in doc for doc in application.state.chat_service.repository.docs.values())
     assert application.state.chat_service.active_requests == 0
 
 
@@ -2280,7 +2292,7 @@ def test_identity_answers_do_not_depend_on_guardrail_or_router_model(chat_client
 
     assert response.status_code == 200
     assert "Sou o Agente do Astro" in response.json()["resposta"]
-    assert [call[0] for call in model.calls] == ["juiz", "guardrail_saida"]
+    assert model.calls == []
 
 
 def test_session_history_and_ownership(chat_client):
@@ -2317,7 +2329,7 @@ def test_each_turn_resets_intermediate_results(chat_client):
     first = client.post("/chat/messages", json={"message": "RH"}).json()
     model.route = "direta"
     model.calls.clear()
-    second = client.post("/chat/messages", json={"message": "Oi", "session_id": first["session_id"]})
+    second = client.post("/chat/messages", json={"message": "Uma orientação, por favor", "session_id": first["session_id"]})
     assert second.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
     ]
@@ -2395,7 +2407,7 @@ def test_chat_requires_verified_firebase_token(chat_client, monkeypatch):
     }).status_code == 401
     assert not model.calls
     monkeypatch.setattr(auth, "verify_firebase_id_token", lambda token: {"uid": "firebase-user"})
-    assert client.post("/chat/messages", json={"message": "Oi"}, headers={
+    assert client.post("/chat/messages", json={"message": "Uma orientação, por favor"}, headers={
         "Authorization": "Bearer fake-valid-token",
     }).status_code == 200
     assert '"uid": "firebase-user"' in model.calls[0][1][0].content

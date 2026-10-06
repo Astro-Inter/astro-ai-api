@@ -59,6 +59,9 @@ da saída, compare resultado e status: não transforme proposta em evento criado
 - `criar_evento_google_calendar` aceita título, início, fim e descrição opcional.
   Use `confirmar:false` no pedido inicial: a aplicação cria uma prévia e controla
   a confirmação em uma mensagem posterior.
+  Se título, início e fim/duração já estão definidos no pedido e no histórico,
+  escolha essa tool imediatamente. Não use responder para pedir confirmação
+  sem criar a prévia, nem peça novamente dados já fornecidos.
 - Para colocar um treinamento na agenda, copie somente título, início, término e
   descrição que já tenham sido retornados por `consultar_treinamentos`. Se o
   treinamento estiver ambíguo ou não tiver horário suficiente, peça esclarecimento.

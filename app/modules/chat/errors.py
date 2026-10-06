@@ -1,8 +1,9 @@
 class ChatError(Exception):
-    def __init__(self, status_code: int, detail: str, reason: str | None = None):
+    def __init__(self, status_code: int, detail: str, reason: str | None = None, *, retry_after: int | None = None):
         self.status_code = status_code
         self.detail = detail
         self.reason = reason
+        self.retry_after = retry_after
         super().__init__(detail)
 
 

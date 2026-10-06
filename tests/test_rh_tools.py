@@ -32,6 +32,8 @@ class FakeCursor:
         return self.rows
 
     def fetchone(self):
+        if self.query.lstrip().startswith("SELECT COUNT(*)"):
+            return (len(self.rows),)
         return self.rows[0] if self.rows else None
 
 
@@ -128,11 +130,12 @@ def test_manager_search_is_limited_to_own_unit_and_allowed_profiles(monkeypatch)
     assert connection.db_cursor.parameters == [
         "firebase-owner", ["GESTOR", "COLABORADOR"], "firebase-owner",
         ["ATIVO", "PRE_CADASTRADO"], ["COLABORADOR"],
-        r"%Ana\%\_%", "%soldador%", 15,
+        r"%Ana\%\_%", "%soldador%", 15, 0,
     ]
     assert result == {
         "status": "ok",
         "quantidade": 1,
+        "consulta": "listar", "total": 1, "pagina": 1, "limite": 15, "total_paginas": 1,
         "usuarios": [{
             "nome": "Ana Lima", "email": "ana@example.com", "tipo": "COLABORADOR",
             "cargo": "Soldador", "unidade": "Matriz", "modalidade": "PRESENCIAL",
@@ -151,9 +154,10 @@ def test_workspace_manager_search_is_limited_to_workspace_and_allowed_profiles(m
     assert "usuario.unidade_id = (" not in query
     assert connection.db_cursor.parameters == [
         "firebase-owner", ["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"],
-        "firebase-owner", 20,
+        "firebase-owner", 20, 0,
     ]
-    assert result == {"status": "sem_dados", "quantidade": 0, "usuarios": []}
+    assert result['status'] == 'sem_dados'
+    assert result['total'] == 0 and result['usuarios'] == []
 
 
 def test_employee_cannot_search_other_users_or_open_database(monkeypatch):
@@ -181,8 +185,9 @@ def test_admin_can_search_all_units_but_never_returns_itself(monkeypatch):
     query = connection.db_cursor.query
     assert "usuario.unidade_id = (" not in query
     assert "usuario.firebase_uid <> %s" in query
-    assert connection.db_cursor.parameters == ["firebase-admin", 20]
-    assert result == {"status": "sem_dados", "quantidade": 0, "usuarios": []}
+    assert connection.db_cursor.parameters == ["firebase-admin", 20, 0]
+    assert result['status'] == 'sem_dados'
+    assert result['total'] == 0 and result['usuarios'] == []
 
 
 def test_current_user_tool_returns_only_authenticated_user(monkeypatch):

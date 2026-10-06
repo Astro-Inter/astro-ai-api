@@ -26,4 +26,5 @@ async def chat_message(
     except ChatError as error:
         if isinstance(error, InvalidAgentResponse):
             logger.warning("Resposta invalida no estagio do chat: %s", error.stage)
-        raise HTTPException(error.status_code, detail=error.detail) from None
+        headers = {"Retry-After": str(error.retry_after)} if error.retry_after else None
+        raise HTTPException(error.status_code, detail=error.detail, headers=headers) from None

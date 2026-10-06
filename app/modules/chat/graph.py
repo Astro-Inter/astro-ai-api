@@ -10,7 +10,9 @@ from langgraph.graph import END, START, StateGraph
 from app.infrastructure.llm.models import AgentModel
 from app.modules.agenda.tools import AgendaToolDecision, CriarEventoGoogleArgs
 from app.modules.chat.agents import invoke_agent
-from app.modules.chat.errors import InvalidAgentResponse
+from app.modules.chat.errors import ChatError, InvalidAgentResponse
+from app.modules.chat.public_replies import public_reply
+from app.modules.chat.pdf_delivery import asks_for_pdf_link, previous_pdf_reply, remove_delivery_promises
 from app.modules.chat.router_reply import ROUTER_CLARIFICATION
 from app.modules.chat.privacy import (
     INTERNAL_INSTRUCTIONS_BOUNDARY, exposes_internal_instructions,
@@ -40,6 +42,7 @@ from app.modules.roteador.tools import (
     EnviarMensagemArgs, TOOLS_ROTEADOR,
 )
 from app.modules.shared.tools import gerar_pdf
+from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision
 
 
 ROTEADOR_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_ROTEADOR}
@@ -78,8 +81,20 @@ def _continuacao_de_agenda(state: ChatState) -> bool:
         return False
     return bool(re.fullmatch(
         r"(?:\d{1,2}/\d{1,2}(?:/\d{4})?|\d{1,2} de [a-z]+(?: de \d{4})?|"
-        r"\d{1,2}(?:h|:\d{2})(?:\d{2})?|\d{1,3} minutos)",
+        r"\d{1,2}(?:h|:\d{2})(?:\d{2})?|\d{1,3} minutos|"
+        r"(?:hoje|amanha)(?:\s*/\s*(?:astro|google calendar|google agenda))?)",
         _sem_acentos(state["mensagem"]).strip(" ."),
+    ))
+
+
+def _campos_agendamento_contextual(state: ChatState) -> bool:
+    """Only route a business-field continuation AFTER input safety evaluation."""
+    if state["contexto"].get("ultima_rota") != "agenda":
+        return False
+    return bool(re.fullmatch(
+        r"titulo:[^\n]{1,140}\n(?:tempo|duracao):[^\n]{1,80}"
+        r"(?:\n(?:descricao|local):[^\n]{1,600})?",
+        _sem_acentos(state["mensagem"]).strip(),
     ))
 
 
@@ -107,6 +122,50 @@ def _pedido_de_historico_ia(message: str) -> str | None:
     if re.search(r"\b(?:ultima|anterior|acabei de|encerrad[ao]|finalizad[ao])\b", normalized):
         return ""
     return message[:1000] if re.search(r"\b(?:sobre|assunto)\b", normalized) else ""
+
+
+def _consulta_propria_recente(message: str) -> bool:
+    return bool(re.fullmatch(
+        r"(?:busque|mostre|consulte|quero ver)(?: o)? resumo da minha "
+        r"(?:ultima|anterior) conversa (?:encerrada|finalizada) com (?:o )?astro",
+        _sem_acentos(message).strip().rstrip('.!? ').strip(),
+    ))
+
+
+def _continuacao_rh(state: ChatState) -> BuscarOutrosUsuariosArgs | None:
+    if state["contexto"].get("ultima_rota") != "rh" or not isinstance(state.get("consulta_rh"), dict):
+        return None
+    normalized = _sem_acentos(state["mensagem"]).strip().rstrip('.!? ').strip()
+    next_page = re.fullmatch(
+        r"(?:nao tem mais|isso|(?:exatamente, )?(?:agora )?(?:gostaria de ver |mostre |quero ver )?"
+        r"(?:a )?proxima pagina(?: de funcionarios)?(?:, por favor)?|e os proximos (\d{1,2}))",
+        normalized,
+    )
+    if not next_page:
+        return None
+    try:
+        previous = BuscarOutrosUsuariosArgs.model_validate(state["consulta_rh"])
+        if next_page.group(1) and int(next_page.group(1)) != previous.limite:
+            return None  # Do not change page size and silently skip employees.
+        page = 1 if previous.consulta == "contagem" else previous.pagina + 1
+        return BuscarOutrosUsuariosArgs(**{**previous.model_dump(), "pagina": page, "consulta": "listar"})
+    except ValidationError:
+        return None
+
+
+def _contagem_funcionarios(message: str) -> bool:
+    return bool(re.fullmatch(
+        r"quantos funcionarios(?: no total)? (?:eu )?tenho",
+        _sem_acentos(message).strip().rstrip('.!? ').strip(),
+    ))
+
+
+def _consulta_nrs_cargo_proprio(message: str) -> bool:
+    return bool(re.fullmatch(
+        r"quais (?:sao (?:as )?)?nrs (?:que )?(?:preciso cumprir|devo cumprir|"
+        r"sao obrigatorias para (?:o )?meu cargo cadastrado)",
+        _sem_acentos(message).strip().rstrip('.!? ').strip(),
+    ))
 
 
 def _pedido_de_publicacao_sst(message: str) -> bool:
@@ -140,7 +199,7 @@ def _pedido_simples_conexao_google(message: str) -> bool:
     """Só orientação sobre conexão própria; não executa OAuth nem aceita comandos extras."""
     normalized = re.sub(r"\s+", " ", _sem_acentos(message)).strip().rstrip(".?!").strip()
     return bool(re.fullmatch(
-        r"(?:eu )?(?:(?:quero|preciso|gostaria de) (?:me )?conectar|"
+        r"(?:eu )?(?:(?:quero|preciso|gostaria de) (?:(?:me|em) )?conectar|"
         r"como (?:eu )?(?:me conecto|conecto|conectar|faco para (?:me )?conectar))"
         r"(?: (?:a )?minha conta)?(?: (?:com|ao|a|no|na))? "
         r"(?:o |a )?google (?:agenda|calendar)",
@@ -399,9 +458,18 @@ _MESES = {
 }
 
 
+def _explicacao_simples_de_acessos(message: str) -> bool:
+    return bool(re.fullmatch(
+        r"(?:essa|a) contagem representa (?:cada login|logins individuais) ou dias de acesso",
+        _sem_acentos(message).strip().rstrip(".?!").strip(),
+    ))
+
+
 def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
     """Reconhece perguntas inequívocas sobre os próprios dias de acesso."""
     normalized = _sem_acentos(message)
+    if _explicacao_simples_de_acessos(message):
+        return ConsultarAcessosArgs(consulta="explicacao")
     if not re.search(r"\b(?:acess\w*|logins?|entrei)\b", normalized):
         return None
     if re.search(
@@ -519,11 +587,31 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "guardar_turno": False, "pdf_solicitado": False,
                 "agentes_chamados": ["guardrail_entrada"],
             }
+        if asks_for_pdf_link(state["mensagem"]) and isinstance(state.get("ultimo_pdf"), dict):
+            answer, url = previous_pdf_reply(state["ultimo_pdf"])
+            return {
+                "rota": "fim", "resposta": answer, "pdf_url": url,
+                "guardar_turno": True, "pdf_solicitado": False,
+                "agentes_chamados": ["guardrail_entrada", "roteador"],
+            }
+        public_answer = public_reply(state["mensagem"])
+        if public_answer is not None:
+            return {
+                "rota": "fim", "resposta": public_answer, "guardar_turno": True,
+                "pdf_solicitado": False,
+                "agentes_chamados": ["guardrail_entrada", "roteador"],
+            }
         if (_campo_dado_proprio(state["mensagem"]) is not None
                 or _pergunta_identidade_astro(state["mensagem"])
                 or _consulta_organizacional_segura(state["mensagem"])
                 or _pedido_simples_conexao_google(state["mensagem"])
                 or _duvida_google_eventos_internos(state["mensagem"])
+                or _explicacao_simples_de_acessos(state["mensagem"])
+                or _consulta_propria_recente(state["mensagem"])
+                or _contagem_funcionarios(state["mensagem"])
+                or _consulta_nrs_cargo_proprio(state["mensagem"])
+                or _continuacao_rh(state) is not None
+                or _continuacao_de_agenda(state)
                 or _continuacao_segura_notificacoes(state)):
             # Intenção read-only estritamente reconhecida. Identidade e acesso
             # continuam verificados pela autenticação e pelas tools autorizadas.
@@ -570,6 +658,29 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     async def router(state: ChatState):
+        if _consulta_propria_recente(state["mensagem"]) and state.get("memoria_consultada"):
+            conversations = state.get("memoria", {}).get("conversas", [])
+            summary = conversations[0].get("resumo", "") if conversations else ""
+            answer = (
+                "Resumo da sua última conversa encerrada com o Astro:\n\n" + summary
+                if summary else "Não encontrei um resumo de conversa encerrada para sua conta."
+            )
+            if exposes_internal_instructions(answer):
+                answer = INTERNAL_INSTRUCTIONS_BOUNDARY
+            return {
+                "rota": "fim", "resposta": answer, "guardar_turno": False,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
+        employee_filters = _continuacao_rh(state)
+        if employee_filters is not None or _contagem_funcionarios(state["mensagem"]):
+            return {
+                "rota": "rh",
+                "rh_decision": RhToolDecision(
+                    acao="buscar_outros_usuarios",
+                    filtros=employee_filters or BuscarOutrosUsuariosArgs(tipos=["COLABORADOR"], consulta="contagem"),
+                ),
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
         if _pedido_simples_conexao_google(state["mensagem"]):
             # Texto fixo do backend, sem dados externos ou ação executada. Não
             # depende de Juiz/saída por LLM nem transforma a orientação em OAuth.
@@ -590,14 +701,28 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
         if _campo_dado_proprio(state["mensagem"]) is not None:
             return {"rota": "rh", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        if _continuacao_de_agenda(state):
+        if _continuacao_de_agenda(state) or _campos_agendamento_contextual(state):
             return {"rota": "agenda", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        if _pedido_politica_interna(state["mensagem"]):
+        if _pedido_politica_interna(state["mensagem"]) or re.fullmatch(
+            r"(?:qual (?:e|eh) (?:o )?e-mail de contato (?:do|o) astro|o que e o astro)",
+            _sem_acentos(state["mensagem"]).strip().rstrip(".?!").strip(),
+        ):
             return {"rota": "faq", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         memory_request = _pedido_de_historico_ia(state["mensagem"])
         if memory_request is not None and not state.get("memoria_consultada") and search_memory is not None:
             return {
                 "rota": "memoria", "busca_memoria": memory_request,
+                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
+            }
+        if _duvida_google_eventos_internos(state["mensagem"]):
+            return {
+                "rota": "fim",
+                "resposta": (
+                    "Não. Os eventos internos do Astro continuam disponíveis sem essa conexão, "
+                    "conforme suas permissões. A conexão Google é opcional e só é necessária "
+                    "para consultar ou criar eventos no seu Google Calendar."
+                ),
+                "guardar_turno": True, "pdf_solicitado": False,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
         if _duvida_conexao_google_calendar(state["mensagem"]):
@@ -706,6 +831,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
 
         if memory_request is None and (_pedido_conformidade_terceiro(state["mensagem"])
+                or _consulta_nrs_cargo_proprio(state["mensagem"])
                 or _pedido_de_publicacao_sst(state["mensagem"])
                 or _filtros_nrs_organizacao(state["mensagem"]) is not None):
             return {
@@ -881,6 +1007,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
         return {
             "resultado_tool": public_result,
+            "resposta_deterministica": True,
             "resultado": {
                 "dominio": "roteador",
                 "intencao": "enviar_mensagem",
@@ -929,6 +1056,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             candidate = result.get("mensagem", "Não foi possível consultar as conversas.")
         return {
             "resultado_tool": result,
+            "resposta_deterministica": True,
             "resultado": {
                 "dominio": "roteador",
                 "intencao": "consultar_conversas",
@@ -966,6 +1094,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             candidate = result.get("mensagem", "Não foi possível consultar as notificações.")
         return {
             "resultado_tool": result,
+            "resposta_deterministica": True,
             "resultado": {
                 "dominio": "roteador",
                 "intencao": "consultar_notificacoes",
@@ -1043,6 +1172,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             candidate = result.get("mensagem", "Não foi possível consultar os acessos.")
         return {
             "resultado_tool": result,
+            "resposta_deterministica": True,
             "resultado": {
                 "dominio": "roteador",
                 "intencao": "consultar_acessos",
@@ -1075,12 +1205,26 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["orquestrador"],
             }
         text = await invoke_agent(model, "orquestrador", ORQUESTRADOR_PROMPT_COMPLETO, state)
+        if text == ROUTER_CLARIFICATION:
+            return {
+                "candidato": text, "resposta_deterministica": True,
+                "resultado": {**result, "status": "esclarecer"},
+                "agentes_chamados": state["agentes_chamados"] + ["orquestrador"],
+            }
         return {"candidato": text, "agentes_chamados": state["agentes_chamados"] + ["orquestrador"]}
 
     async def judge(state: ChatState):
-        decision = await invoke_agent(
-            model, "juiz", JUIZ_PROMPT_COMPLETO, state, JudgeDecision,
-        )
+        try:
+            decision = await invoke_agent(
+                model, "juiz", JUIZ_PROMPT_COMPLETO, state, JudgeDecision,
+            )
+        except ChatError as error:
+            if not state.get("resposta_deterministica"):
+                raise
+            # The application has formatted the actual, authorized tool return.
+            # A failed optional reviewer must not hide a receipt or a real query.
+            logger.warning("Revisor indisponivel; preservando resposta da tool tipo=%s", type(error).__name__)
+            decision = JudgeDecision(status="aprovado", motivo="Resultado formatado pela aplicação a partir da ferramenta autorizada.", problemas=[])
         return {
             "avaliacao_juiz": decision.model_dump(),
             "agentes_chamados": state["agentes_chamados"] + ["juiz"],
@@ -1091,6 +1235,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             return {
                 "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY, "guardar_turno": False,
                 "acao_pendente": None,
+                "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
+            }
+        if state.get("resposta_deterministica"):
+            # No LLM rewrite can add policies, enrollment, invitations or facts
+            # to a response assembled by the application's tool formatters.
+            return {
+                "resposta": state["candidato"], "guardar_turno": True,
                 "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
             }
         evidence = state.get("resultado", {}).get("evidencia_tool", {})
@@ -1176,12 +1327,18 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 ),
                 "agentes_chamados": state["agentes_chamados"],
             }
+        content = remove_delivery_promises(state["resposta"])
+        if not content:
+            return {
+                "resposta": "Não encontrei conteúdo confirmado para gerar o PDF. Nenhum arquivo foi gerado.",
+                "agentes_chamados": state["agentes_chamados"],
+            }
         try:
             result = await gerar_pdf.ainvoke(
                 {
                     "titulo": f"Consulta Astro: {state['mensagem'][:110]}",
                     "pergunta": state["mensagem"],
-                    "resposta": state["resposta"],
+                    "resposta": content,
                 },
                 config={"configurable": {
                     "usuario_atual": state["usuario_atual"].model_dump(),
@@ -1193,10 +1350,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         if result.get("status") == "ok" and isinstance(url, str) and url.strip():
             return {
                 "pdf_url": url,
+                "resposta": content,
                 "agentes_chamados": state["agentes_chamados"] + ["gerar_pdf"],
             }
         return {
-            "resposta": state["resposta"] + "\n\nNão consegui gerar o PDF agora.",
+            "resposta": content + "\n\nNão consegui gerar o PDF agora.",
             "agentes_chamados": state["agentes_chamados"] + ["gerar_pdf"],
         }
 
@@ -1257,7 +1415,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         lambda state: "gerar_pdf" if (
             state.get("pdf_solicitado")
             and state.get("guardar_turno")
-            and state.get("avaliacao_juiz", {}).get("status") == "aprovado"
+            # A corrected output is also reviewed content. guardar_turno is
+            # false when review fails; retaining the original judge status
+            # here wrongly suppressed PDFs after a successful correction.
             and state.get("rota") in {
                 "rh", "sst", "agenda", "eventos", "faq", "conversa",
                 "notificacoes", "acessos",

@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.agents import invoke_agent
+from app.modules.chat.router_reply import ROUTER_CLARIFICATION
 from app.modules.chat.prompts.agenda import AGENDA_PROMPT_COMPLETO
 from app.modules.chat.prompts.faq import FAQ_PROMPT_COMPLETO
 from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO
@@ -37,6 +38,8 @@ def _campo_dado_proprio(message: str) -> str | None:
     normalized = "".join(c for c in unicodedata.normalize("NFKD", message.casefold()) if not unicodedata.combining(c)).strip().rstrip(".!?").strip()
     if re.fullmatch(r"(?:como (?:eu )?me chamo|voce sabe (?:qual e )?meu nome)", normalized):
         return "nome"
+    if normalized in {"qual unidade eu faco parte", "de qual unidade eu faco parte"}:
+        return "unidade"
     match = re.fullmatch(
         r"(?:qual (?:e |eh )?(?:o |a )?|(?:me diga|me fale|mostre|informe) (?:qual e )?(?:o |a )?)"
         r"(?:meu|minha) (nome|e-?mail|cargo|unidade)(?: (?:cadastrad[oa]|no cadastro|no astro))?",
@@ -292,6 +295,8 @@ def _filtros_treinamentos(message: str) -> ConsultarTreinamentosArgs | None:
 
 
 def _formatar_usuarios(result: dict) -> str:
+    if result.get("consulta") == "contagem" and result.get("status") in {"ok", "sem_dados"}:
+        return f"Encontrei {result['total']} usuário(s) no seu escopo autorizado, com os filtros informados. Essa contagem não inclui você."
     if result.get("status") == "sem_dados":
         return "Não encontrei usuários com os filtros informados."
     if result.get("status") != "ok":
@@ -306,6 +311,12 @@ def _formatar_usuarios(result: dict) -> str:
             user["tipo"], user["status"], user["email"],
         ]
         lines.append(f"- {user['nome']}: " + " | ".join(str(item) for item in details if item))
+    if "pagina" in result:
+        lines.append(f"Página {result['pagina']} de {result['total_paginas']}. Total: {result['total']} usuário(s).")
+        if not users:
+            lines.append("Nenhum usuário nesta página. Peça uma página anterior.")
+        elif result['pagina'] < result['total_paginas']:
+            lines.append("Para ver mais, peça a próxima página de funcionários.")
     return "\n".join([title, *lines])
 
 
@@ -735,6 +746,9 @@ def _evidencia_situacao_nrs(result: dict) -> dict:
 
 def build_rh_graph(model: AgentModel):
     async def decide(state: ChatState):
+        prepared = state.get("rh_decision")
+        if isinstance(prepared, RhToolDecision):
+            return {"rh_route": "tool", "agentes_chamados": state["agentes_chamados"] + ["rh"]}
         if _pedido_dos_proprios_dados(state["mensagem"]):
             return {
                 "rh_route": "tool",
@@ -824,6 +838,12 @@ def build_rh_graph(model: AgentModel):
         return {
             "resultado_tool": result,
             "resultado": specialist_result,
+            "resposta_deterministica": True,
+            "consulta_rh": (
+                decision.filtros.model_dump()
+                if tool_name == "buscar_outros_usuarios" and result.get("status") in {"ok", "sem_dados"}
+                else None
+            ),
             "candidato": (
                 _formatar_meus_dados(result)
                 if tool_name == "buscar_meus_dados"
@@ -976,6 +996,7 @@ def build_sst_graph(model: AgentModel):
         return {
             "resultado_tool": result,
             "resultado": specialist_result,
+            "resposta_deterministica": True,
             "candidato": (
                 _formatar_orientacoes_sst(result)
                 if tool_name == "consultar_orientacoes_sst"
@@ -1074,6 +1095,7 @@ def build_agenda_graph(model: AgentModel):
             pending = state.get("acao_pendente")
         return {
             "resultado_tool": result,
+            "resposta_deterministica": True,
             "resultado": {
                 "dominio": "agenda",
                 "intencao": intention,
@@ -1156,6 +1178,12 @@ def build_faq_graph(model: AgentModel, search_faq=None):
             response = "Não encontrei essa informação nas normas disponibilizadas ao Astro."
         else:
             response = await invoke_agent(model, "faq", FAQ_PROMPT_COMPLETO, state)
+        if response == ROUTER_CLARIFICATION:
+            return {
+                "candidato": response, "resposta_deterministica": True,
+                "resultado": {**state["resultado"], "status": "esclarecer"},
+                "agentes_chamados": state["agentes_chamados"] + ["faq"],
+            }
         return {
             "candidato": response,
             "agentes_chamados": state["agentes_chamados"] + ["faq"],

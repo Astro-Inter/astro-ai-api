@@ -5,7 +5,10 @@ from langsmith import tracing_context
 
 
 @pytest.fixture(autouse=True)
-def sem_tracing_remoto():
+def sem_tracing_remoto(monkeypatch):
     # Nenhum prompt ou dado de fixture deve sair para o LangSmith durante testes.
+    # Also avoid exporting local test logs to the user's production OTLP sink.
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "")
     with tracing_context(enabled=False):
         yield
