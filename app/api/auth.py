@@ -13,7 +13,10 @@ from app.infrastructure.firebase import (
 )
 
 
-firebase_bearer = HTTPBearer(auto_error=False)
+firebase_bearer = HTTPBearer(
+    auto_error=False, bearerFormat="Firebase ID token",
+    description="Authorization: Bearer <Firebase ID token> do usuário autenticado no Astro.",
+)
 
 
 def _authentication_error() -> HTTPException:

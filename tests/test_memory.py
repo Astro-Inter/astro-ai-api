@@ -60,10 +60,12 @@ def test_session_end_summary_persistence_and_idempotence():
         assert (await service.end(sid, user)) == result
         assert len(model.calls) == count
         assert len(vectors.calls) == 1
-        for operation in (service.start(sid, user), service.chat(ChatRequest(message="Oi", session_id=sid), user)):
-            with pytest.raises(ChatError) as error:
-                await operation
-            assert error.value.status_code == 409
+        with pytest.raises(ChatError) as error:
+            await service.chat(ChatRequest(message="Oi", session_id=sid), user)
+        assert error.value.status_code == 409
+        assert (await service.start(sid, user)).status == "ativa"
+        assert repo.docs[str(sid)]["mensagens"] == doc["mensagens"]
+        assert repo.docs[str(sid)]["iniciada_em"] == first_date
     asyncio.run(scenario())
 
 

@@ -19,6 +19,12 @@ from app.modules.chat.schemas import (
     SessionMessage,
     SessionMessagesResponse,
     SessionResponse,
+    SessionListResponse,
+    SessionSummary,
+)
+from app.modules.chat.session_listing import (
+    compact_session_text, decode_session_cursor, encode_session_cursor,
+    session_preview, session_title,
 )
 from app.modules.chat.ui_actions import normalizar_acoes_interface
 from app.modules.memory.service import ConversationMemory
@@ -80,10 +86,35 @@ class ChatService:
 
     async def start(self, session_id: UUID, user: CurrentUser):
         async with self.operation():
-            doc = await self.repository.ensure(str(session_id), user.uid)
-            if doc.get("status", "ativa") != "ativa":
-                raise ChatError(409, "Conversa encerrada ou em encerramento. Use um novo session_id.")
+            sid = str(session_id)
+            await self.repository.ensure(sid, user.uid)
+            async with self.session_lock(sid, user.uid) as (doc, token):
+                if doc.get("status") == "encerrando":
+                    raise ChatError(409, "Conversa em encerramento. Repita /encerrar antes de retomar.")
+                if doc.get("status") == "encerrada":
+                    # Mantém UUID/histórico; o próximo encerramento precisa de novo resumo.
+                    await self.repository.update(sid, user.uid, token, {
+                        "status": "ativa", "encerrada_em": None, "resumo": "",
+                        "resumo_indexado": False, "resumo_parcial": "", "resumo_ate": 0,
+                        "acao_pendente": None,
+                    })
             return SessionResponse(session_id=session_id, status="ativa", resumo=None)
+
+    async def list_sessions(self, user: CurrentUser, *, limit: int = 20, cursor: str | None = None):
+        before = decode_session_cursor(cursor, user.uid)
+        async with self.operation():
+            docs = await self.repository.list_sessions(user.uid, limit, before)
+            sessions = [SessionSummary(
+                session_id=doc["_id"], title=session_title(doc),
+                last_message_preview=session_preview(doc),
+                created_at=doc["iniciada_em"], updated_at=doc["atualizada_em"],
+                status=doc.get("status", "ativa"),
+            ) for doc in docs[:limit]]
+            next_cursor = None
+            if len(docs) > limit:
+                last = sessions[-1]
+                next_cursor = encode_session_cursor(last.updated_at, last.session_id, user.uid)
+            return SessionListResponse(sessions=sessions, next_cursor=next_cursor)
 
     async def messages(self, session_id: UUID, user: CurrentUser) -> SessionMessagesResponse:
         async with self.operation():
@@ -129,7 +160,9 @@ class ChatService:
             await self.repository.ensure(session_id, user.uid)
             async with self.session_lock(session_id, user.uid) as (doc, token):
                 if doc.get("status", "ativa") != "ativa":
-                    raise ChatError(409, "Conversa encerrada ou em encerramento. Use um novo session_id.")
+                    raise ChatError(409, "Conversa encerrada ou em encerramento. "
+                                    "Use /iniciar para retomar uma conversa encerrada; "
+                                    "repita /encerrar se o encerramento estiver pendente.")
                 messages = doc.get("mensagens", [])
                 previous_pdf = doc.get("ultimo_pdf")
                 if previous_pdf is None and asks_for_pdf_link(request.message):
@@ -247,6 +280,8 @@ class ChatService:
                     await self.repository.update(session_id, user.uid, token,
                         {
                             **delivery_fields,
+                            "titulo": session_title(doc, request.message),
+                            "ultima_mensagem_previa": compact_session_text(stored_answer, 200),
                             "ultima_rota": result["rota"],
                             "acao_pendente": result.get("acao_pendente"),
                             "consulta_rh": result.get("consulta_rh"),

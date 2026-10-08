@@ -55,6 +55,10 @@ class MongoSessions:
                     [("id_user", 1), ("status", 1), ("atualizada_em", -1)],
                     name="historico_usuario",
                 )
+                await self.collection.create_index(
+                    [("id_user", 1), ("atualizada_em", -1), ("_id", -1)],
+                    name="sessoes_usuario_atualizacao",
+                )
                 self.ready = True
         return self.collection
 
@@ -81,6 +85,43 @@ class MongoSessions:
         if doc is None:
             raise ChatError(404, "Conversa nao encontrada.")
         return doc
+
+    @mongo_errors
+    async def list_sessions(self, uid: str, limit: int, before: tuple[datetime, str] | None = None):
+        collection = await self.connect()
+        query = {"id_user": uid}
+        if before is not None:
+            updated_at, session_id = before
+            query["$or"] = [
+                {"atualizada_em": {"$lt": updated_at}},
+                {"atualizada_em": updated_at, "_id": {"$lt": session_id}},
+            ]
+        valid_messages = {"$filter": {
+            "input": {"$ifNull": ["$mensagens", []]}, "as": "message",
+            "cond": {"$and": [
+                {"$in": ["$$message.role", ["human", "assistant"]]},
+                {"$eq": [{"$type": "$$message.content"}, "string"]},
+            ]},
+        }}
+        # O índice atende filtro/ordem; a projeção evita carregar o histórico inteiro.
+        cursor = await collection.aggregate([
+            {"$match": query},
+            {"$sort": {"atualizada_em": -1, "_id": -1}},
+            {"$limit": limit + 1},
+            {"$project": {
+                "iniciada_em": 1, "atualizada_em": 1, "status": 1,
+                "titulo": 1, "ultima_mensagem_previa": 1,
+                "primeira_pergunta": {"$arrayElemAt": [{"$filter": {
+                    "input": {"$ifNull": ["$mensagens", []]}, "as": "message",
+                    "cond": {"$and": [
+                        {"$eq": ["$$message.role", "human"]},
+                        {"$eq": [{"$type": "$$message.content"}, "string"]},
+                    ]},
+                }}, 0]},
+                "ultima_mensagem": {"$arrayElemAt": [valid_messages, -1]},
+            }},
+        ])
+        return [doc async for doc in cursor]
 
     @mongo_errors
     async def acquire(self, session_id: str, uid: str):

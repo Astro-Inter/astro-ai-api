@@ -814,6 +814,8 @@ Um documento por sessão, seguindo a modelagem fornecida. Exemplo ilustrativo:
   id_user: "uid-do-firebase",                // string; nunca um ID recebido no corpo
   iniciada_em: ISODate("2026-09-07T12:00:00Z"),
   atualizada_em: ISODate("2026-09-07T12:01:00Z"),
+  titulo: "Olá!",                          // primeira pergunta, até 80 caracteres
+  ultima_mensagem_previa: "Como posso ajudar?", // texto simples, até 200 caracteres
   resumo: "",
   mensagens: [
     { role: "human", content: "Olá!" },
@@ -830,12 +832,54 @@ operação reserva a sessão. Datas são BSON datetime em UTC. Um documento do f
 `status`, é tratado como ativo; `_id` deve ser UUID em string e `id_user` deve ser
 o UID Firebase. Não existe fallback para um usuário de teste.
 
+### Listagem e histórico de sessões para web e mobile (SCRUM-453)
+
+Web e mobile usam o mesmo contrato de sessões. As conversas são vinculadas ao
+UID Firebase do usuário e ficam disponíveis nas duas plataformas: uma conversa
+criada no mobile pode ser consultada e retomada no web, e vice-versa, usando a
+mesma conta.
+
+`GET /sessions?limit=20&cursor=<cursor-opcional>` lista as sessões do UID
+autenticado pelo mesmo Firebase ID token usado no chat. Não exige login adicional
+nem aceita identificador de usuário pela query. O `limit` aceita inteiros de 1 a
+100, com padrão 20. A resposta contém `sessions` e `next_cursor`; sem conversas,
+retorna `{"sessions": [], "next_cursor": null}`.
+
+Cada sessão informa `session_id`, `title`, `last_message_preview`, `created_at`,
+`updated_at` e `status` (`ativa`, `encerrando` ou `encerrada`). Datas são ISO 8601
+em UTC. A ordem é `updated_at` decrescente e UUID decrescente para desempate.
+Passe o `next_cursor` sem modificá-lo e com o mesmo usuário para a próxima página.
+Sessões encerradas permanecem na lista. A consulta não muda o status ou as datas.
+
+O título deriva da primeira pergunta persistida; sem perguntas, é `Nova conversa`.
+A prévia vem da última mensagem persistida, em texto simples, com espaços
+normalizados e sem Markdown. Título e prévia têm até 80 e 200 caracteres,
+respectivamente, com `…` no corte. Sessões antigas usam esses mesmos critérios a
+partir do histórico existente. Cada novo turno completo grava título, prévia e
+data de atualização junto com as mensagens no mesmo update MongoDB.
+
+`GET /sessions/{session_id}/messages` carrega o histórico do próprio usuário,
+inclusive de uma sessão encerrada, sem reabri-la. Mantém o contrato existente
+com `session_id`, `status`, `total` e `mensagens` (`role` e `content`).
+
+O índice composto `sessoes_usuario_atualizacao` cobre UID, atualização e UUID.
+A paginação usa posição por chave, sem offset e sem carregar todo o histórico
+na lista. Ela não representa um snapshot: uma conversa atualizada entre páginas
+pode se mover para o início; atualize a primeira página depois de enviar,
+retomar ou encerrar. O cursor não substitui a autenticação e uma troca de usuário
+exige reiniciar a listagem.
+
+O contrato e os exemplos aparecem em `/openapi.json` e `/docs`.
+O [guia de integração de sessões do chatbot](docs/integracao/sessoes-chatbot.md) descreve
+as chamadas para listar, abrir, retomar e criar conversas, incluindo os erros.
+
 ### Iniciar e encerrar
 
 As duas rotas usam o mesmo Bearer do chat, sem corpo JSON:
 
 - `POST /sessions/{session_id}/iniciar`: cria uma sessão vazia ou retorna a sessão
-  ativa existente do próprio usuário. O cliente fornece um UUID. Esta chamada é
+  ativa existente do próprio usuário; também retoma uma sessão encerrada com o
+  mesmo UUID e histórico preservado. O cliente fornece um UUID. Esta chamada é
   opcional: `POST /chat/messages` também cria a sessão quando necessário.
 - `POST /sessions/{session_id}/encerrar`: congela a conversa, gera o resumo com
   Groq, salva-o no Mongo, cria o embedding com Mistral e faz upsert no Qdrant.
@@ -855,8 +899,14 @@ Exemplo de resposta de encerramento:
 
 Uma sessão vazia encerra sem chamar LLM/Qdrant, com `resumo: null` e
 `resumo_indexado: false`. Repetir o encerramento concluído retorna o mesmo
-resultado, sem novas chamadas de IA. Uma sessão encerrada não pode ser reaberta
-ou receber mensagens: use outro UUID.
+resultado, sem novas chamadas de IA. Para voltar a enviar mensagens a uma sessão
+encerrada, chame `/iniciar` primeiro; sem essa chamada, o chat retorna `409`.
+A retomada mantém todas as mensagens, título, prévia e data de criação. Invalida
+o resumo anterior e a confirmação pendente para que o próximo encerramento
+gere um resumo atualizado de todo o histórico e substitua o mesmo ponto no
+Qdrant. O resumo vetorial antigo é desconsiderado na busca enquanto a sessão
+estiver ativa, pois o Mongo revalida seu status. Retomar não reinicia os limites
+de mensagens ou tamanho da sessão.
 
 Se houver falha, o estado fica `encerrando`: **repita a mesma rota de encerramento**.
 O resumo já gerado e o progresso por trechos são preservados, e o upsert com ID
@@ -902,10 +952,12 @@ dos servidores devem estar sincronizados. Limite de 20 operações simultâneas 
 processo; configure rate limiting e política de retenção antes de produção.
 
 - `401`: Bearer ausente ou inválido.
+- `400`: cursor malformado ou pertencente a outro usuário na listagem.
 - `403`: UID autenticado sem um dos quatro níveis de acesso reconhecidos.
-- `404`: sessão de outro usuário, ou sessão inexistente ao encerrar.
+- `404`: sessão de outro usuário, ou sessão inexistente ao consultar/encerrar.
 - `409`: operação simultânea, sessão encerrada/em encerramento ou limite atingido.
-- `422`: corpo ou UUID inválido; `timezone` continua fora do contrato.
+- `422`: corpo, UUID, `limit` ou tamanho do cursor inválido; parâmetros de query
+  desconhecidos na listagem são rejeitados. `timezone` continua fora do contrato.
 - `502`: resposta/embedding inválido; `503`: banco ou provedor indisponível.
 - `504`: timeout; no encerramento, repita a chamada para continuar.
 
