@@ -1,14 +1,17 @@
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    message: str = Field(min_length=1, max_length=4000)
-    session_id: UUID | None = None
+    message: str = Field(min_length=1, max_length=4000, examples=["NRs para minha unidade"])
+    session_id: UUID | None = Field(
+        default=None, description="Omita para criar uma conversa; envie o UUID para continuar uma sessão ativa.",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -22,6 +25,12 @@ class SessionResponse(BaseModel):
     status: Literal["ativa", "encerrada"]
     resumo: str | None = None
     resumo_indexado: bool = False
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"session_id": "94229143-d20b-4766-80a4-05341435c236", "status": "ativa",
+         "resumo": None, "resumo_indexado": False},
+        {"session_id": "94229143-d20b-4766-80a4-05341435c236", "status": "encerrada",
+         "resumo": "O usuário consultou as NRs da unidade.", "resumo_indexado": True},
+    ]})
 
 
 class SessionMessage(BaseModel):
@@ -34,6 +43,62 @@ class SessionMessagesResponse(BaseModel):
     status: Literal["ativa", "encerrando", "encerrada"]
     total: int = Field(ge=0)
     mensagens: list[SessionMessage]
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "session_id": "94229143-d20b-4766-80a4-05341435c236", "status": "encerrada", "total": 2,
+        "mensagens": [{"role": "user", "content": "NRs para minha unidade"},
+                      {"role": "assistant", "content": "Vamos conferir as atividades da unidade."}],
+    }]})
+
+
+SESSION_LIST_MAX_LIMIT = 100
+
+
+class SessionListQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(
+        default=20, ge=1, le=SESSION_LIST_MAX_LIMIT,
+        description="Quantidade de sessões por página (padrão 20, máximo 100).",
+    )
+    cursor: str | None = Field(
+        default=None, min_length=1, max_length=1024,
+        description="Cursor opaco retornado em next_cursor; válido somente para o mesmo usuário.",
+    )
+
+
+class SessionSummary(BaseModel):
+    session_id: UUID = Field(description="UUID usado para consultar o histórico e retomar a conversa.")
+    title: str = Field(max_length=80, description="Título derivado da primeira pergunta, em texto simples.")
+    last_message_preview: str = Field(max_length=200, description="Prévia da última mensagem persistida, sem Markdown.")
+    created_at: datetime = Field(description="Data de criação em ISO 8601 UTC.")
+    updated_at: datetime = Field(description="Data da última atualização em ISO 8601 UTC.")
+    status: Literal["ativa", "encerrando", "encerrada"]
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def dates_in_utc(cls, value: datetime) -> datetime:
+        # BSON legado sem tzinfo representa UTC, assim como o cliente Mongo atual.
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionSummary]
+    next_cursor: str | None = Field(description="Cursor da próxima página; null quando a listagem terminou.")
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "sessions": [{
+            "session_id": "94229143-d20b-4766-80a4-05341435c236",
+            "title": "NRs para minha unidade",
+            "last_message_preview": "Vamos conferir as atividades da unidade…",
+            "created_at": "2026-10-08T12:00:00Z",
+            "updated_at": "2026-10-08T12:05:00Z",
+            "status": "ativa",
+        }],
+        "next_cursor": None,
+    }]})
+
+
+class SessionErrorResponse(BaseModel):
+    detail: str
 
 
 class MemorySearch(BaseModel):

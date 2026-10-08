@@ -23,6 +23,12 @@ class FakeSessions:
             raise ChatError(404, "Conversa nao encontrada.")
         return deepcopy(doc)
 
+    async def list_sessions(self, uid, limit, before=None):
+        docs = [deepcopy(doc) for doc in self.docs.values() if doc["id_user"] == uid]
+        if before is not None:
+            docs = [doc for doc in docs if (doc["atualizada_em"], doc["_id"]) < before]
+        return sorted(docs, key=lambda doc: (doc["atualizada_em"], doc["_id"]), reverse=True)[:limit + 1]
+
     async def acquire(self, sid, uid):
         await self.get(sid, uid)
         doc = self.docs[sid]
