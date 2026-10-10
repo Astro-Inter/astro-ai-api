@@ -43,6 +43,7 @@ from app.modules.roteador.tools import (
 )
 from app.modules.shared.tools import gerar_pdf
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision
+from app.modules.guardrails.llama_guard import moderate, BLOCKED_REPLY
 
 
 ROTEADOR_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_ROTEADOR}
@@ -580,6 +581,25 @@ def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
 
 
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
+    async def safety_input(state: ChatState):
+        if await moderate(state["mensagem"]):
+            return {"moderacao_bloqueada": False}
+        return {
+            "moderacao_bloqueada": True, "rota": "fim", "resposta": BLOCKED_REPLY,
+            "guardar_turno": False, "pdf_solicitado": False, "pdf_url": None,
+            "acao_pendente": None, "agentes_chamados": ["llama_guard_entrada"],
+        }
+
+    async def safety_output(state: ChatState):
+        if await moderate(state["mensagem"], state.get("resposta", "")):
+            return {}
+        return {
+            "resposta": BLOCKED_REPLY, "guardar_turno": False,
+            "pdf_solicitado": False, "pdf_url": None, "acao_pendente": None,
+            "consulta_rh": None,
+            "agentes_chamados": state["agentes_chamados"] + ["llama_guard_saida"],
+        }
+
     async def input_guard(state: ChatState):
         if requests_internal_instructions(state["mensagem"]):
             return {
@@ -1359,6 +1379,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         }
 
     graph = StateGraph(ChatState)
+    graph.add_node("llama_guard_entrada", safety_input)
+    graph.add_node("llama_guard_saida", safety_output)
     graph.add_node("guardrail_entrada", input_guard)
     graph.add_node("roteador", router)
     graph.add_node("buscar_historico", memory_lookup)
@@ -1390,9 +1412,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_node("juiz", judge)
     graph.add_node("guardrail_saida", output_guard)
     graph.add_node("gerar_pdf", generate_pdf)
-    graph.add_edge(START, "guardrail_entrada")
+    graph.add_edge(START, "llama_guard_entrada")
+    graph.add_conditional_edges("llama_guard_entrada", lambda state: state["moderacao_bloqueada"], {
+        True: END, False: "guardrail_entrada",
+    })
     graph.add_conditional_edges("guardrail_entrada", lambda state: state["rota"], {
-        "roteador": "roteador", "fim": END,
+        "roteador": "roteador", "fim": "llama_guard_saida",
     })
     graph.add_conditional_edges("roteador", lambda state: state["rota"], {
         "rh": "rh", "sst": "sst", "agenda": "agenda",
@@ -1401,7 +1426,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         "conversa": "consultar_conversas",
         "notificacoes": "consultar_notificacoes",
         "acessos": "consultar_acessos",
-        "fim": END,
+        "fim": "llama_guard_saida",
     })
     graph.add_edge("enviar_mensagem", "juiz")
     graph.add_edge("consultar_conversas", "juiz")
@@ -1410,8 +1435,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_edge("faq", "juiz")
     graph.add_edge("orquestrador", "juiz")
     graph.add_edge("juiz", "guardrail_saida")
+    graph.add_edge("guardrail_saida", "llama_guard_saida")
     graph.add_conditional_edges(
-        "guardrail_saida",
+        "llama_guard_saida",
         lambda state: "gerar_pdf" if (
             state.get("pdf_solicitado")
             and state.get("guardar_turno")

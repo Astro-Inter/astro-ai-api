@@ -68,6 +68,10 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY", "")
+# off: sem chamadas; observe: mede sem bloquear; enforce: exige classificação segura.
+LLAMA_GUARD_MODE = os.getenv("LLAMA_GUARD_MODE", "off").strip().lower()
+LLAMA_GUARD_TIMEOUT_SECONDS = _bounded_int_env("LLAMA_GUARD_TIMEOUT_SECONDS", 10, 2, 30)
 
 R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
@@ -123,6 +127,11 @@ def validar_config() -> list[str]:
         for nome, valor in OBRIGATORIAS.items()
         if not valor
     ]
+
+    if LLAMA_GUARD_MODE not in {"off", "observe", "enforce"}:
+        problemas.append("LLAMA_GUARD_MODE deve ser off, observe ou enforce.")
+    if LLAMA_GUARD_MODE != "off" and not DEEPINFRA_API_KEY.strip():
+        problemas.append("Variavel ausente no .env: DEEPINFRA_API_KEY")
 
     if A2A_PUBLIC_RESEARCH_URL and len(A2A_SHARED_TOKEN) < 32:
         problemas.append("A2A_SHARED_TOKEN deve conter pelo menos 32 caracteres.")

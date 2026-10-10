@@ -35,3 +35,4 @@ class ChatState(TypedDict, total=False):
     resposta_deterministica: bool
     consulta_rh: dict | None
     ultimo_pdf: dict | None
+    moderacao_bloqueada: bool

@@ -83,6 +83,12 @@ services:
         sync: false
       - key: MISTRAL_API_KEY
         sync: false
+      - key: DEEPINFRA_API_KEY
+        sync: false
+      - key: LLAMA_GUARD_MODE
+        value: "off"
+      - key: LLAMA_GUARD_TIMEOUT_SECONDS
+        value: "10"
       - key: R2_ACCESS_KEY_ID
         sync: false
       - key: R2_SECRET_ACCESS_KEY

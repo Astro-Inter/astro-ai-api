@@ -42,6 +42,52 @@ próprio usuário. Ela não concede novas permissões nem substitui consultas at
 | Integrações | MCP Fetch, MCP Google Calendar, A2A e geração de PDFs no R2 |
 | Observabilidade | Traces no LangSmith, logs OpenTelemetry e métricas SRE |
 
+## Moderação com Llama Guard na DeepInfra
+
+O chat integra `meta-llama/Llama-Guard-4-12B` pela API da DeepInfra. Essa camada
+classifica conteúdo como seguro/inseguro; não substitui o Juiz, os guardrails
+do Astro, a autenticação, o controle de acesso ou a confirmação de ações.
+
+Para configurar:
+
+1. Crie sua conta em https://deepinfra.com e gere uma chave de API no painel.
+   Verifique saldo/faturamento e as condições de tratamento de dados do provedor.
+2. No serviço **astro-ai-api** do Render, em **Environment**, cadastre
+   `DEEPINFRA_API_KEY` como segredo. Não coloque essa chave no frontend ou no Git.
+3. Defina `LLAMA_GUARD_MODE=enforce` e `LLAMA_GUARD_TIMEOUT_SECONDS=10`.
+4. Publique o código e reinicie/reimplante o serviço para carregar as variáveis.
+
+Modos: `off` (padrão, nenhuma chamada), `observe` (classifica e registra, sem
+bloquear pela DeepInfra) e `enforce` (bloqueia classificações inseguras).
+O Blueprint começa em `off` para não quebrar instalações sem a nova chave;
+adicionar somente a chave não ativa a moderação. Para validar falsos positivos,
+use `observe` antes de `enforce`, especialmente em denúncias, acidentes e SST.
+
+Quando ativado, o modelo recebe apenas a pergunta atual e, na saída, a pergunta
+com a resposta final. Não recebe prompts de sistema, UID, histórico completo,
+credenciais ou resultados brutos das ferramentas. O texto público pode conter
+dados pessoais: avalie esse novo compartilhamento com o provedor. Links assinados
+de PDF são anexados pelo backend após a moderação e não são enviados ao modelo.
+
+A entrada é moderada antes do roteamento e das ferramentas. Todas as respostas
+do grafo, inclusive as diretas e as formatadas pelo backend, passam pela moderação
+de saída antes de gerar um novo PDF. O modelo não reescreve a resposta: conteúdo
+inseguro é substituído por orientação segura. A classificação não comprova que
+uma informação seja verdadeira nem desfaz ações já executadas por ferramentas;
+as prévias, confirmações e permissões continuam sendo responsabilidade do backend.
+
+Em `enforce`, timeout, erro HTTP, saída truncada ou contrato inválido produzem
+HTTP 503, sem liberar conteúdo não verificado. Não há fallback para outro modelo
+nem repetição automática. Em `observe`, falhas são registradas e os controles
+anteriores continuam funcionando. Os logs registram etapa, modo, classificação,
+categorias e latência, sem mensagem, resposta ou chave. Cada turno normalmente
+acrescenta duas chamadas pagas; acompanhe consumo e latência no provedor.
+Falhas também registram o status HTTP sem corpo de erro. Se houver HTTP 402,
+verifique saldo/faturamento na DeepInfra antes de ativar `enforce`; HTTP 401
+indica que a autenticação da chave precisa ser conferida.
+
+Referência: https://deepinfra.com/meta-llama/Llama-Guard-4-12B/api
+
 ## Tecnologias
 
 - Python 3.12 e FastAPI para a API.
