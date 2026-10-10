@@ -31,6 +31,12 @@ class ConversationMemory:
             else:
                 docs = await self.repository.previous(uid, session_id, ids)
                 origin = "busca_semantica"
+                if not docs:
+                    # Resumos novos continuam acessíveis antes da indexação ou
+                    # quando todos os resultados vetoriais estiverem obsoletos.
+                    docs = await self.repository.previous(uid, session_id, automatic_unindexed=True)
+                    if docs:
+                        origin = "busca_semantica_sem_resultados_resumos_nao_indexados_mongodb"
         else:
             docs = await self.repository.previous(uid, session_id)
         memories = []

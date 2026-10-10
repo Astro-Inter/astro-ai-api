@@ -873,7 +873,37 @@ O contrato e os exemplos aparecem em `/openapi.json` e `/docs`.
 O [guia de integração de sessões do chatbot](docs/integracao/sessoes-chatbot.md) descreve
 as chamadas para listar, abrir, retomar e criar conversas, incluindo os erros.
 
-### Iniciar e encerrar
+### Resumos automáticos por inatividade (SCRUM-474)
+
+O serviço separado [astro-session-summary-service](https://github.com/Astro-Inter/astro-session-summary-service)
+verifica a coleção `sessoes` **de hora em hora**, no Cloudflare. Após 24 horas
+completas desde `ultima_mensagem_em`, gera e salva o resumo com IA própria e
+indexa-o no Qdrant, sem chamar esta API e **sem encerrar a conversa**. Não há
+worker de resumo executando dentro do processo da API; o serviço precisa ser
+publicado e habilitado separadamente.
+
+A API grava `ultima_mensagem_em` em UTC junto com cada turno persistido.
+Atualizações internas continuam usando `atualizada_em`, sem mudar a última
+interação. Novas mensagens invalidam o resumo anterior por data e quantidade.
+O Worker revalida essas duas informações e seu lease antes de salvar; não bloqueia
+o usuário de continuar a conversa. Sessões antigas usam `atualizada_em` como fallback.
+O resumo fica normalmente disponível entre 24 e 25 horas de inatividade; backlog
+ou indisponibilidade dos provedores podem atrasar o processamento.
+
+A memória aceita resumos de sessões ativas ou encerradas, desde que correspondam
+às mensagens atuais (`resumo_mensagens`, `resumo_ultima_mensagem_em`). Um resumo
+automático salvo permanece consultável mesmo durante falha de indexação: quando
+a busca vetorial não encontra memória atual, o Mongo procura resumos automáticos
+atuais ainda não indexados. Isso não transforma resumos antigos sem relação com
+a pergunta em resultados semânticos. O Mongo
+continua revalidando UID e excluindo a própria sessão. Resumos manuais legados
+sem versão são aceitos apenas quando a sessão estiver encerrada.
+
+Índices novos: `sessoes_inatividade_resumo` (`status`, `ultima_mensagem_em`) e
+`sessoes_inatividade_legado` (`status`, `atualizada_em`). Publicar esta adaptação
+e permitir a criação dos índices antes de habilitar o Cron.
+
+### Iniciar e encerrar (compatibilidade)
 
 As duas rotas usam o mesmo Bearer do chat, sem corpo JSON:
 
@@ -881,7 +911,8 @@ As duas rotas usam o mesmo Bearer do chat, sem corpo JSON:
   ativa existente do próprio usuário; também retoma uma sessão encerrada com o
   mesmo UUID e histórico preservado. O cliente fornece um UUID. Esta chamada é
   opcional: `POST /chat/messages` também cria a sessão quando necessário.
-- `POST /sessions/{session_id}/encerrar`: congela a conversa, gera o resumo com
+- `POST /sessions/{session_id}/encerrar`: **legado/deprecated**, mantido para
+  clientes existentes. Novos clientes não precisam chamar esta rota. Congela a conversa, gera o resumo com
   Groq, salva-o no Mongo, cria o embedding com Mistral e faz upsert no Qdrant.
   O ID do ponto é o mesmo `session_id`; o payload inclui `id_user`, `session_id`,
   `resumo`, `iniciada_em` e `modelo_embedding`.
@@ -904,14 +935,15 @@ encerrada, chame `/iniciar` primeiro; sem essa chamada, o chat retorna `409`.
 A retomada mantém todas as mensagens, título, prévia e data de criação. Invalida
 o resumo anterior e a confirmação pendente para que o próximo encerramento
 gere um resumo atualizado de todo o histórico e substitua o mesmo ponto no
-Qdrant. O resumo vetorial antigo é desconsiderado na busca enquanto a sessão
-estiver ativa, pois o Mongo revalida seu status. Retomar não reinicia os limites
+Qdrant. O resumo vetorial antigo é desconsiderado quando não corresponder às
+mensagens atuais, pois o Mongo revalida sua versão. Retomar não reinicia os limites
 de mensagens ou tamanho da sessão.
 
 Se houver falha, o estado fica `encerrando`: **repita a mesma rota de encerramento**.
 O resumo já gerado e o progresso por trechos são preservados, e o upsert com ID
 estável evita duplicação. Só retornamos `encerrada` depois das gravações confirmadas.
-Não há transação distribuída entre Mongo e Qdrant nem worker automático de retry;
+Não há transação distribuída entre Mongo e Qdrant. O worker externo não processa
+sessões em estado `encerrando`, portanto, para este endpoint legado,
 uma falha após a gravação no Qdrant ainda pode exigir nova tentativa para finalizar
 o estado no Mongo. Sessões em encerramento não entram na busca de memória.
 
@@ -924,7 +956,7 @@ nem deve ser enviado pelo frontend. O backend injeta o UID e limita a consulta
 a uma por mensagem, sempre após aprovação do guardrail de entrada.
 
 A busca semântica filtra `id_user` no Qdrant e retorna até três IDs. O Mongo
-revalida a propriedade e o estado encerrado antes de entregar resumos e trechos
+revalida a propriedade e a versão atual do resumo antes de entregar resumos e trechos
 finais das conversas. Assim, nem um payload vetorial com ID alheio concede acesso.
 Para uma pergunta genérica sobre conversas passadas, a busca vazia retorna os
 três resumos mais recentes diretamente do Mongo. Se o Qdrant/Mistral falhar,

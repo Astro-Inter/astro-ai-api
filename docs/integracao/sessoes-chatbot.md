@@ -30,6 +30,23 @@ O endpoint de histórico já existia e permanece com o mesmo formato de resposta
 O primeiro `POST /chat/messages` sem `session_id` continua criando uma sessão.
 A alteração de comportamento em `/iniciar` permite reabrir uma sessão encerrada.
 
+### Atualização: resumos automáticos (SCRUM-474)
+
+Novos clientes não precisam chamar `/encerrar` para produzir memória. Após a
+publicação e ativação do serviço `astro-session-summary-service`, um Cron no
+Cloudflare consulta as sessões de hora em hora e gera resumos após 24 horas
+completas sem novas mensagens. A sessão continua `ativa` e pode receber mensagens
+normalmente. Não há chamada do serviço ao endpoint de encerramento.
+
+A API registra `ultima_mensagem_em` em UTC a cada turno persistido. Atualizações
+internas e geração de resumo não reiniciam esse prazo. Uma nova mensagem invalida
+a versão anterior do resumo; o serviço revalida a data e a quantidade de mensagens
+antes de salvar. O histórico e os contratos de listagem permanecem os mesmos.
+
+`/encerrar` está marcado como deprecated no OpenAPI, mas permanece disponível
+para clientes antigos. Uma sessão encerrada por esse fluxo ainda exige `/iniciar`
+antes de continuar. Gerar o resumo automático não exige essa retomada.
+
 | Operação | Endpoint | Entrega nesta tarefa |
 | --- | --- | --- |
 | Listar conversas | `GET /sessions` | Novo endpoint. |

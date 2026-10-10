@@ -300,10 +300,20 @@ class ChatService:
                         resumo=doc.get("resumo") or None, resumo_indexado=doc.get("resumo_indexado", False))
                 await self.repository.update(sid, user.uid, token, {"status": "encerrando"})
                 summary = doc.get("resumo") or ""
+                last_message = doc.get("ultima_mensagem_em", doc["atualizada_em"])
+                if "resumo_mensagens" in doc and (
+                    doc["resumo_mensagens"] != len(doc.get("mensagens", []))
+                    or doc.get("resumo_ultima_mensagem_em") != last_message
+                ):
+                    summary = ""
                 if doc.get("mensagens"):
                     if not summary:
                         summary = await self.memory.summarize(doc, token)
-                        await self.repository.update(sid, user.uid, token, {"resumo": summary})
+                    await self.repository.update(sid, user.uid, token, {
+                        "resumo": summary, "resumo_mensagens": len(doc["mensagens"]),
+                        "resumo_ultima_mensagem_em": last_message,
+                        "ultima_mensagem_em": last_message,
+                    })
                     # ID estável: repetir após falha nunca duplica o ponto vetorial.
                     await self.vectors.upsert({**doc, "resumo": summary})
                 indexed = bool(doc.get("mensagens"))
