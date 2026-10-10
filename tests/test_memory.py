@@ -592,7 +592,8 @@ def test_mongo_previous_revalidates_tenant_and_closed_status():
             raise StopAsyncIteration
     def find(query, projection):
         assert query["id_user"] == "owner"
-        assert query["status"] == "encerrada"
+        assert query["status"] == {"$in": ["ativa", "encerrada"]}
+        assert "$or" in query
         assert query["_id"] == {"$ne": "current", "$in": ["candidate"]}
         assert projection["mensagens"] == {"$slice": -6}
         return Cursor()

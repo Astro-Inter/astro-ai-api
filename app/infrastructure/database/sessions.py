@@ -59,6 +59,14 @@ class MongoSessions:
                     [("id_user", 1), ("atualizada_em", -1), ("_id", -1)],
                     name="sessoes_usuario_atualizacao",
                 )
+                await self.collection.create_index(
+                    [("status", 1), ("ultima_mensagem_em", 1)],
+                    name="sessoes_inatividade_resumo",
+                )
+                await self.collection.create_index(
+                    [("status", 1), ("atualizada_em", 1)],
+                    name="sessoes_inatividade_legado",
+                )
                 self.ready = True
         return self.collection
 
@@ -69,7 +77,7 @@ class MongoSessions:
         try:
             # Filtrar também pelo dono impede reutilizar IDs de outro usuário.
             await collection.update_one({"_id": session_id, "id_user": uid}, {"$setOnInsert": {
-                "iniciada_em": now, "atualizada_em": now, "resumo": "",
+                "iniciada_em": now, "atualizada_em": now, "ultima_mensagem_em": now, "resumo": "",
                 "mensagens": [], "status": "ativa", "resumo_indexado": False,
                 "acao_pendente": None,
             }}, upsert=True)
@@ -145,6 +153,13 @@ class MongoSessions:
         if messages:
             # O par humano/assistente é gravado atomicamente; nunca meio turno.
             update["$push"] = {"mensagens": {"$each": messages}}
+            # Só uma nova troca de mensagens reinicia as 24h de inatividade.
+            # Um resumo anterior permanece salvo, mas deixa de ser memória atual.
+            update["$set"].update({
+                "ultima_mensagem_em": now, "resumo_indexado": False,
+                "resumo_job_proxima_tentativa": datetime.fromtimestamp(0, timezone.utc),
+                "resumo_job_tentativas": 0,
+            })
         result = await collection.update_one({
             "_id": session_id, "id_user": uid, "lock_token": token, "lock_ate": {"$gt": now},
         }, update)
@@ -160,14 +175,26 @@ class MongoSessions:
         )
 
     @mongo_errors
-    async def previous(self, uid: str, exclude: str, ids: list[str] | None = None):
+    async def previous(self, uid: str, exclude: str, ids: list[str] | None = None, *, automatic_unindexed=False):
         collection = await self.connect()
         query = {
-            "id_user": uid, "_id": {"$ne": exclude}, "status": "encerrada",
+            "id_user": uid, "_id": {"$ne": exclude}, "status": {"$in": ["ativa", "encerrada"]},
             "resumo": {"$type": "string", "$ne": ""},
+            "$or": [
+                # Compatibilidade com resumos manuais antigos sem versão.
+                {"status": "encerrada", "resumo_mensagens": {"$exists": False}},
+                {"$expr": {"$and": [
+                    {"$eq": ["$resumo_mensagens", {"$size": {"$ifNull": ["$mensagens", []]}}]},
+                    {"$eq": ["$resumo_ultima_mensagem_em", {
+                        "$ifNull": ["$ultima_mensagem_em", "$atualizada_em"],
+                    }]},
+                ]}},
+            ],
         }
         if ids is not None:
             query["_id"]["$in"] = ids
+        if automatic_unindexed:
+            query.update(resumo_origem="automatico", resumo_indexado={"$ne": True})
         # Não confiar no payload vetorial: revalidar dono e buscar a fonte no Mongo.
         cursor = collection.find(query, {
             "resumo": 1, "iniciada_em": 1, "mensagens": {"$slice": -6},

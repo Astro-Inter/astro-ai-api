@@ -46,6 +46,8 @@ class FakeSessions:
         doc.update(deepcopy(fields), atualizada_em=utc_now())
         if messages:
             doc["mensagens"].extend(deepcopy(messages))
+            doc.update(ultima_mensagem_em=doc["atualizada_em"], resumo_indexado=False,
+                       resumo_job_proxima_tentativa=utc_now(), resumo_job_tentativas=0)
 
     async def release(self, sid, uid, token):
         await self.get(sid, uid)
@@ -54,10 +56,17 @@ class FakeSessions:
             doc.pop("lock_token", None)
             doc.pop("lock_ate", None)
 
-    async def previous(self, uid, exclude, ids=None):
+    async def previous(self, uid, exclude, ids=None, *, automatic_unindexed=False):
+        def current(doc):
+            if doc["status"] == "encerrada" and "resumo_mensagens" not in doc:
+                return True
+            return (doc.get("resumo_mensagens") == len(doc["mensagens"])
+                    and doc.get("resumo_ultima_mensagem_em") == doc.get("ultima_mensagem_em", doc["atualizada_em"]))
         docs = [deepcopy(doc) for doc in self.docs.values() if doc["id_user"] == uid
-                and doc["_id"] != exclude and doc["status"] == "encerrada"
-                and doc.get("resumo") and (ids is None or doc["_id"] in ids)]
+                and doc["_id"] != exclude and doc["status"] in {"ativa", "encerrada"}
+                and doc.get("resumo") and current(doc) and (ids is None or doc["_id"] in ids)
+                and (not automatic_unindexed or (doc.get("resumo_origem") == "automatico"
+                                                 and not doc.get("resumo_indexado")))]
         return sorted(docs, key=lambda doc: doc["atualizada_em"], reverse=True)[:3]
 
     async def close(self):

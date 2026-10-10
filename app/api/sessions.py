@@ -87,6 +87,7 @@ async def start_session(session_id: UUID, user: CurrentUserDependency,
 
 
 @router.post("/{session_id}/encerrar", response_model=SessionResponse,
+             deprecated=True,
              summary="Encerrar e resumir uma sessão",
              responses={**SESSION_ERRORS, 404: session_error("Conversa nao encontrada."),
                         409: session_error("Aguarde a operacao anterior desta conversa."),
@@ -94,6 +95,9 @@ async def start_session(session_id: UUID, user: CurrentUserDependency,
 async def end_session(session_id: UUID, user: CurrentUserDependency,
                       request: Request, response: Response):
     """Encerra sem excluir o histórico; repetir a conclusão retorna o mesmo resultado.
+
+    Endpoint legado de compatibilidade. Novos clientes não precisam encerrar:
+    o serviço externo resume sessões após 24h de inatividade sem mudar seu status.
 
     Em falha durante o encerramento, repita esta chamada para finalizar.
     A sessão continua listada e pode ser retomada por /iniciar. Sem corpo JSON.
