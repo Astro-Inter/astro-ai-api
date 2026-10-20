@@ -206,7 +206,7 @@ def test_pdf_corrected_after_judge_review_is_generated_and_link_can_be_recovered
 
     class PdfTool:
         async def ainvoke(self, args, config):
-            assert 'Vou gerar' not in args['resposta']
+            assert 'Vou gerar' not in args['conteudo']
             uploads.append(args)
             return {'status': 'ok', 'url': 'https://r2.example/arquivo.pdf?assinatura=teste'}
 

@@ -40,6 +40,7 @@ from app.modules.roteador.tools import (
     EnviarMensagemArgs, TOOLS_ROTEADOR,
 )
 from app.modules.shared.tools import gerar_pdf
+from app.modules.shared.pdf_document import preparar_documento_pdf
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision
 
 
@@ -1256,11 +1257,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
         try:
             result = await gerar_pdf.ainvoke(
-                {
-                    "titulo": f"Consulta Astro: {state['mensagem'][:110]}",
-                    "pergunta": state["mensagem"],
-                    "resposta": content,
-                },
+                preparar_documento_pdf(content),
                 config={"configurable": {
                     "usuario_atual": state["usuario_atual"].model_dump(),
                 }},

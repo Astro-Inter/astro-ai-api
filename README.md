@@ -763,9 +763,13 @@ dias acessei neste mês?” e “Qual foi meu primeiro acesso ao sistema?”.
 `app/modules/shared/tools.py` implementa `gerar_pdf` para os agentes do chat.
 Quando a mensagem pede explicitamente um PDF, o agente responde à consulta
 normalmente. Somente depois da validação pelo Juiz e pelo guardrail de saída, a
-aplicação transforma a pergunta e a resposta aprovada em um relatório com
-conteúdo variável. Pedidos sem dados confirmados ou bloqueados não enviam
-arquivo ao R2. O modelo não escolhe o conteúdo final nem inventa o link.
+aplicação transforma o conteúdo aprovado em um documento. O contrato da tool
+é `titulo`, `conteudo` (Markdown) e `contexto` opcional. Não há seções fixas de
+pergunta/resposta nem cópia automática do pedido. O título é aproveitado do
+primeiro cabeçalho ou título em negrito do conteúdo; na ausência dele, usa-se
+"Documento Astro". Subtítulos, parágrafos, listas, tabelas e referências recebem
+formatação própria, sem acrescentar fatos ou fazer nova chamada de IA. Pedidos sem dados confirmados ou bloqueados não enviam
+arquivo ao R2. A aplicação usa somente o conteúdo que passou pela revisão e fornece o link real.
 Os relatórios usam a fonte MuseoModerno e a paleta Astro (`#1C1839`,
 `#8F00C4` e branco), com a logo translúcida no cabeçalho de todas as páginas.
 

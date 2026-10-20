@@ -1626,7 +1626,9 @@ def test_pdf_request_uses_approved_faq_answer_and_returns_temporary_link(chat_cl
 
     async def fake_pdf(args, config):
         calls.append((args, config))
-        assert args["resposta"] == "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
+        assert "pergunta" not in args
+        assert args["titulo"] == "Documento Astro"
+        assert args["conteudo"] == "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
         return {"status": "ok", "url": "https://r2.example/arquivo.pdf?assinatura=teste"}
 
     class PdfTool:
@@ -1673,8 +1675,8 @@ def test_pdf_promise_is_routed_to_content_and_waits_for_download(chat_client, mo
 
     class PdfTool:
         async def ainvoke(self, args, config):
-            assert "O Astro centraliza orientações internas." in args["resposta"]
-            assert "Gerarei" not in args["resposta"]
+            assert "O Astro centraliza orientações internas." in args["conteudo"]
+            assert "Gerarei" not in args["conteudo"]
             await asyncio.sleep(0.05)
             completed.append(True)
             return {"status": "ok", "url": "https://r2.example/arquivo.pdf?assinatura=teste"}
