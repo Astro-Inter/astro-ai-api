@@ -1,6 +1,5 @@
 import re
 
-from app.modules.chat.ui_actions import GOOGLE_CALENDAR_CONNECT_ID
 
 
 _FENCED_CODE = re.compile(r"```[^\n`]*\n?(.*?)```", re.DOTALL)
@@ -21,8 +20,7 @@ def markdown_para_texto_simples(value: str) -> str:
         text,
     )
     text = _LINK.sub(
-        lambda match: match.group(0) if match.group(1) == GOOGLE_CALENDAR_CONNECT_ID
-        else f"{match.group(1)} ({match.group(2)})", text,
+        lambda match: f"{match.group(1)} ({match.group(2)})", text,
     )
     text = re.sub(r"<((?:https?://|mailto:)[^>]+)>", r"\1", text)
     text = re.sub(r"`([^`\n]+)`", r"\1", text)

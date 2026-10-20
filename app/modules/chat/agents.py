@@ -190,8 +190,10 @@ async def _invoke_agent(
                 " Se faltam dados, use acao=responder, filtros=null e resposta com "
                 "dominio=agenda, status=esclarecer e esclarecer contendo a pergunta "
                 "nao vazia. Nao invente data, duracao ou participantes para preencher "
-                "filtros de criacao. Peça somente dados ausentes, sem exigir acesso "
-                "ao calendario de uma pessoa apenas mencionada como participante."
+                "uma criacao inexistente. Criar, alterar ou cancelar eventos nao esta "
+                "disponivel. Para essas operacoes, use responder/status indisponivel; "
+                "nao solicite dados, conexao ou confirmacao. Peça dados ausentes "
+                "somente para consultas suportadas."
             )
         correction = HumanMessage(content=correction_text)
         retry = await complete(messages + [correction])

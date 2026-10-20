@@ -91,14 +91,6 @@ services:
         sync: false
       - key: R2_BUCKET_NAME
         sync: false
-      - key: GOOGLE_OAUTH_CLIENT_ID
-        sync: false
-      - key: GOOGLE_OAUTH_CLIENT_SECRET
-        sync: false
-      - key: GOOGLE_OAUTH_REDIRECT_URI
-        sync: false
-      - key: GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY
-        sync: false
       - key: LANGSMITH_API_KEY
         sync: false
       - key: LANGSMITH_PROJECT

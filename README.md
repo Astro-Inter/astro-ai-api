@@ -34,12 +34,12 @@ próprio usuário. Ela não concede novas permissões nem substitui consultas at
 | --- | --- |
 | RH | Consulta autorizada de usuários, dados próprios e conformidade de funcionários |
 | SST | Consulta de NRs internas e pesquisa de orientações oficiais |
-| Agenda | Treinamentos, eventos internos e Google Calendar quando conectado |
+| Agenda | Treinamentos e eventos internos atribuídos |
 | FAQ | RAG com documentos internos e fontes públicas oficiais |
 | Ferramentas do Astro | Mensagens, conversas, notificações e acessos |
 | Memória | Histórico persistente no MongoDB e busca semântica no Qdrant |
 | Segurança | Firebase, autorização no PostgreSQL, guardrails e agente Juiz |
-| Integrações | MCP Fetch, MCP Google Calendar, A2A e geração de PDFs no R2 |
+| Integrações | MCP Fetch, A2A e geração de PDFs no R2 |
 | Observabilidade | Traces no LangSmith, logs OpenTelemetry e métricas SRE |
 
 ## Tecnologias
@@ -84,7 +84,6 @@ Nunca versione `.env`, tokens, chaves de API ou credenciais de banco.
 - [Chat, agentes e grafos](#chat-e-grafos-scrum-186)
 - [Observabilidade e métricas SRE](#observabilidade-e-métricas-sre)
 - [Pesquisa pública por A2A](#pesquisa-pública-por-a2a)
-- [Google Calendar por MCP](#google-calendar-por-mcp)
 - [Histórico persistente e sessões](#histórico-persistente-e-sessões-scrum-187)
 - [Testes](#testes)
 
@@ -324,8 +323,7 @@ No fluxo automático atual, a memória acessa o histórico, a tool de RH consult
 os usuários permitidos pelo perfil autenticado, as tools de SST consultam NRs e
 orientações oficiais, e a tool de Agenda lê treinamentos atribuídos ao usuário.
 O Roteador pode enviar mensagens após uma prévia e uma confirmação explícita. A
-Agenda consulta treinamentos no PostgreSQL e pode consultar ou criar eventos no
-Google Calendar por MCP quando o próprio usuário conectar a conta. Os especialistas
+Agenda consulta eventos internos e treinamentos no PostgreSQL. Os especialistas
 continuam sem autorização para afirmar operações não confirmadas por ferramentas.
 Autenticação não
 concede acesso automático a dados de outras pessoas ou empresas; cada ferramenta
@@ -380,8 +378,7 @@ quando houver busca semântica de histórico ou FAQ, com custos e latência
 dos provedores. `LANGSMITH_*` é lido pelo SDK quando o tracing está habilitado;
 traces podem conter mensagens, contexto do usuário e respostas. Habilite somente
 quando esse envio de dados estiver autorizado. Bearer e chaves não são incluídos
-nos prompts. As variáveis do Google Calendar são opcionais; sem elas, todo o chat
-continua funcionando, exceto as operações que dependem do calendário.
+nos prompts.
 
 ### Observabilidade e métricas SRE
 
@@ -503,43 +500,39 @@ Para testar no chat, pergunte: “Busque uma cartilha da Fundacentro sobre risco
 psicossociais.” O log `Pesquisa pública concluída via A2A` confirma a
 delegação; a resposta continua exibindo somente as fontes oficiais encontradas.
 
-### Google Calendar por MCP
+### Remoção do Google Calendar e limpeza do MongoDB
 
-A integração é sob demanda. O login Firebase não conecta automaticamente uma conta
-Google e consultas como "quais treinamentos preciso realizar?" continuam usando
-somente o PostgreSQL. Quando o usuário pedir para consultar ou criar algo no Google
-Calendar sem ter uma conta conectada, o chat informa a rota de conexão e mantém a
-prévia da criação pendente na sessão.
+O chatbot não conecta contas Google nem consulta/cria eventos externos. As rotas
+`/integracoes/google-calendar` foram removidas. Eventos internos e treinamentos
+continuam disponíveis no PostgreSQL.
 
-Configure um cliente OAuth do tipo aplicação Web no Google Cloud, habilite a Google
-Calendar API e cadastre exatamente a URI de callback usada pela API. Depois preencha:
+Após publicar esta versão e parar as instâncias antigas, você pode excluir, no
+banco configurado em `MONGODB_DATABASE`, somente estas duas coleções exclusivas:
 
-```dotenv
-GOOGLE_OAUTH_CLIENT_ID=
-GOOGLE_OAUTH_CLIENT_SECRET=
-GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/integracoes/google-calendar/callback
-GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY=
+| Coleção | Conteúdo removido |
+| --- | --- |
+| `integracoes_google_calendar` | Conexões por usuário e tokens OAuth criptografados |
+| `integracoes_google_calendar_oauth_states` | Estados temporários de autorização OAuth |
+
+No MongoDB Compass, selecione o banco correto e use **Drop Collection** em cada
+uma dessas duas coleções. Excluir os registros locais não revoga a autorização
+na Google: remova também o acesso do aplicativo nas conexões de terceiros da
+conta Google, se quiser revogar a permissão concedida.
+
+Preserve a coleção `sessoes`, seus históricos e resumos, e as demais coleções do
+Astro. Opcionalmente, limpe só as prévias antigas de criação de evento:
+
+```javascript
+db.sessoes.updateMany(
+  { "acao_pendente.tipo": "criar_evento_google_calendar" },
+  { $set: { acao_pendente: null } }
+)
 ```
 
-Gere uma chave Fernet exclusiva para o ambiente, sem versioná-la:
-
-```powershell
-.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Após reiniciar a API, as rotas são:
-
-- `GET /integracoes/google-calendar/status`: informa se o usuário autenticado conectou a conta.
-- `GET /integracoes/google-calendar/conectar`: retorna `authorization_url`; o front-end deve abrir essa URL.
-- `GET /integracoes/google-calendar/callback`: callback público validado por `state` OAuth de uso único.
-- `DELETE /integracoes/google-calendar`: revoga quando possível e remove a conexão local.
-
-Os tokens ficam criptografados no MongoDB e associados somente ao Firebase UID. Eles
-não entram no `CurrentUser`, no LangGraph nem nos prompts. O agente de Agenda acessa
-uma allowlist de tools por um servidor MCP interno em transporte `stdio`:
-`google_calendar_status`, `google_calendar_list_events` e
-`google_calendar_create_event`. Criar evento sempre exige prévia e confirmação em
-uma mensagem posterior; o ID estável evita duplicar o evento em um retry.
+A API também descarta essas prévias ao receber uma nova mensagem. Não é preciso
+apagar conversas, resumos ou coleções do Qdrant para retirar a integração.
+Remova as quatro variáveis `GOOGLE_OAUTH_*` do `.env` e dos segredos do deploy,
+se ainda estiverem configuradas. Firebase Authentication continua em uso.
 
 ### Tools de consulta de usuários do RH
 
@@ -742,8 +735,7 @@ evento.
 
 ### Consulta de eventos internos da Agenda
 
-Perguntas como “qual é o próximo evento?” usam `consultar_eventos`, sem exigir
-Google Calendar. A consulta lê `evento` e as datas de `turma` somente quando há
+Perguntas como “qual é o próximo evento?” usam `consultar_eventos`. A consulta lê `evento` e as datas de `turma` somente quando há
 inscrição do usuário autenticado em `turma_funcionario`. Não lista eventos de
 terceiros nem interpreta uma NR obrigatória como inscrição. Por padrão retorna
 eventos ativos com início futuro, ordenados por data e turma, independentemente
@@ -751,7 +743,7 @@ do status da conclusão. “Próximo evento” limita a resposta ao primeiro ite
 O histórico completo usa `proximos:false`, com paginação. Datas sem fuso no banco
 são comparadas com a referência local America/Sao_Paulo, sem atribuir fuso ao
 horário exibido. Filtros de data ou título ainda não são suportados por esta tool.
-Google Calendar continua disponível quando mencionado explicitamente.
+O chatbot não possui integração com calendários externos.
 
 ### Tool de consulta dos próprios acessos do Roteador
 

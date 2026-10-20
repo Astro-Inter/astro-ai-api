@@ -8,8 +8,7 @@ CAPABILITIES = (
     "no seu escopo de acesso, NRs, conformidade, eventos e treinamentos atribuídos, "
     "notificações, dias de acesso e conversas. Também posso buscar informações "
     "nos documentos do Astro e gerar um PDF com o conteúdo consultado. "
-    "O envio de mensagens e a criação de eventos no seu Google Calendar exigem "
-    "prévia e confirmação. A conexão Google é opcional. "
+    "O envio de mensagens exige prévia e confirmação. "
     "Não realizo inscrições em treinamentos nem crio eventos internos do Astro."
 )
 

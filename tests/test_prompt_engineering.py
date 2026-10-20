@@ -48,7 +48,7 @@ def test_compact_router_preserves_commands_and_routing_boundaries():
     assert len(ROTEADOR_PROMPT_COMPLETO) < 10000
     for command in ("MEMORY=", "CONVERSATION=", "NOTIFICATIONS=", "ACCESSES=", "MESSAGE="):
         assert command in ROTEADOR_PROMPT_COMPLETO
-    for marker in ("confirmar_envio=false", "sem OAuth", "Fundacentro", "consultar_nrs_organizacao", "usuario_atual.role", "mes_especifico", "intervalo"):
+    for marker in ("confirmar_envio=false", "banco interno do Astro", "Fundacentro", "consultar_nrs_organizacao", "usuario_atual.role", "mes_especifico", "intervalo"):
         assert marker in ROTEADOR_PROMPT_COMPLETO
     assert {answer for _, answer in EXAMPLES["roteador"] if answer.startswith("ROUTE=")} == {
         "ROUTE=rh", "ROUTE=sst", "ROUTE=agenda", "ROUTE=faq", "ROUTE=fora_escopo",
@@ -95,6 +95,6 @@ def test_public_identity_is_astro_agent_not_internal_router():
     answer = dict(EXAMPLES["roteador"])["Qual é sua função?"]
     assert answer.startswith("Sou o Agente do Astro")
     assert "Roteador" not in answer
-    for capability in ("RH", "segurança do trabalho", "agenda", "normas internas", "Google Calendar"):
+    for capability in ("RH", "segurança do trabalho", "agenda", "normas internas"):
         assert capability in answer
     assert 'como "Agente do Astro"' in PROMPT_INICIAL

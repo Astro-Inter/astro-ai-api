@@ -26,7 +26,6 @@ from app.modules.chat.session_listing import (
     compact_session_text, decode_session_cursor, encode_session_cursor,
     session_preview, session_title,
 )
-from app.modules.chat.ui_actions import normalizar_acoes_interface
 from app.modules.memory.service import ConversationMemory
 from app.modules.shared.tools import PDF_LINK_TTL_HOURS
 from app.observability.chat import ChatObservation, observe_chat
@@ -163,6 +162,12 @@ class ChatService:
                     raise ChatError(409, "Conversa encerrada ou em encerramento. "
                                     "Use /iniciar para retomar uma conversa encerrada; "
                                     "repita /encerrar se o encerramento estiver pendente.")
+                # Ignore drafts for operations removed from the chatbot, including
+                # those persisted by previous deployments.
+                pending = doc.get("acao_pendente")
+                if isinstance(pending, dict) and pending.get("tipo") != "enviar_mensagem":
+                    doc["acao_pendente"] = None
+                    await self.repository.update(session_id, user.uid, token, {"acao_pendente": None})
                 messages = doc.get("mensagens", [])
                 previous_pdf = doc.get("ultimo_pdf")
                 if previous_pdf is None and asks_for_pdf_link(request.message):
@@ -192,7 +197,6 @@ class ChatService:
                             "consultar_acessos",
                             "consultar_treinamentos",
                             "consultar_eventos",
-                            "consultar_google_calendar", "criar_evento_google_calendar",
                             "gerar_pdf",
                         ],
                         "fontes_disponiveis": [
@@ -214,11 +218,8 @@ class ChatService:
                                    "usuario, sem contar logins individuais ou horarios. "
                                    "Treinamentos atribuidos ao usuario podem ser consultados "
                                    "pelo agente de agenda, sem inferir inscricoes a partir da NR. "
-                                   "Perguntas sobre eventos sem mencionar Google consultam "
-                                   "eventos do Astro nas turmas atribuídas ao próprio usuário. "
-                                   "O Google Calendar e opcional e conectado sob demanda por OAuth. "
-                                   "Consultar ou criar eventos usa apenas o calendario principal "
-                                   "do usuario; criacao exige previa e confirmacao explicita. "
+                                   "A Agenda consulta somente eventos internos e treinamentos "
+                                   "atribuídos ao próprio usuário. Não há integração com calendários externos. "
                                    "PDFs podem ser gerados da resposta revisada quando pedidos "
                                    "explicitamente; a aplicacao fornece o link temporario. "
                                    "NRs da unidade ou empresa usam vínculos unidade_nr no PostgreSQL "
@@ -247,7 +248,7 @@ class ChatService:
                 }, config={"recursion_limit": 20})
                 observation.mark_result(result)
                 pdf_url = result.get("pdf_url")
-                public_answer = normalizar_acoes_interface(result["resposta"])
+                public_answer = result["resposta"]
                 if not markdown:
                     public_answer = markdown_para_texto_simples(public_answer)
                 stored_answer = public_answer

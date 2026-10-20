@@ -176,7 +176,7 @@ def test_internal_events_do_not_require_google_connection(chat_client):
     })
     assert response.status_code == 200
     assert response.json()['resposta'].startswith('Não.')
-    assert 'opcional' in response.json()['resposta']
+    assert 'não possui integração' in response.json()['resposta']
     assert 'google-calendar-conectar' not in response.json()['resposta']
     assert model.calls == []
 

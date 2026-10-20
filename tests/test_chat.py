@@ -156,7 +156,7 @@ def test_specialist_flow(chat_client, domain):
         '"consultar_orientacoes_sst", "consultar_fontes_publicas", '
             '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
             '"consultar_acessos", "consultar_treinamentos", "consultar_eventos", '
-            '"consultar_google_calendar", "criar_evento_google_calendar", "gerar_pdf"]'
+            '"gerar_pdf"]'
         ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
@@ -294,7 +294,6 @@ def test_next_event_uses_database_without_google_oauth(chat_client, monkeypatch)
 
     monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
     monkeypatch.setattr(agenda_tools, "get_postgres_connection", lambda: Connection())
-    monkeypatch.setattr(agenda_tools, "get_google_calendar_mcp_client", lambda: pytest.fail("OAuth não deve ser consultado"))
     response = client.post("/chat/messages", json={"message": "quero saber qual é o próximo evento"})
     assert response.status_code == 200
     assert "Evento futuro" in response.json()["resposta"]
@@ -342,82 +341,6 @@ def test_internal_event_parser_does_not_override_google_or_writes():
     assert _filtros_eventos("Mostre todos os meus eventos").proximos is False
     for message in ("Qual é o próximo evento no Google Calendar?", "Crie meu próximo evento", "Quais eventos tenho amanhã?"):
         assert _filtros_eventos(message) is None
-
-
-def test_google_calendar_is_connected_on_demand_and_event_stays_pending(
-    chat_client, monkeypatch,
-):
-    client, model, application = chat_client
-    model.route = "agenda"
-
-    class CalendarClient:
-        def __init__(self):
-            self.connected = False
-            self.calls = []
-
-        async def call_tool(self, name, arguments):
-            self.calls.append((name, arguments))
-            if name == "google_calendar_status":
-                return {"status": "ok", "conectado": self.connected, "escopos": []}
-            if name == "google_calendar_create_event" and self.connected:
-                return {
-                    "status": "ok",
-                    "evento": {
-                        "id": arguments["id_evento"],
-                        "titulo": arguments["titulo"],
-                        "inicio": arguments["inicio"],
-                        "fim": arguments["fim"],
-                        "link": "https://calendar.google.com/event?test",
-                    },
-                }
-            return {
-                "status": "conexao_necessaria",
-                "rota_conexao": "/integracoes/google-calendar/conectar",
-            }
-
-    calendar = CalendarClient()
-    monkeypatch.setattr(
-        agenda_tools, "get_google_calendar_mcp_client", lambda: calendar,
-    )
-    model.replies["agenda"] = json.dumps({
-        "acao": "criar_evento_google_calendar",
-        "filtros": {
-            "titulo": "Treinamento NR-12",
-            "inicio": "2026-09-20T08:00:00-03:00",
-            "fim": "2026-09-20T12:00:00-03:00",
-            "descricao": "Treinamento atribuído no Astro.",
-            "confirmar": False,
-        },
-        "resposta": None,
-    })
-
-    preview_response = client.post("/chat/messages", json={
-        "message": "Coloque o treinamento NR-12 no meu Google Calendar.",
-    })
-
-    assert preview_response.status_code == 200
-    preview_body = preview_response.json()
-    assert "[google-calendar-conectar](Conectar minha conta Google)" in preview_body["resposta"]
-    assert "/integracoes/google-calendar/" not in preview_body["resposta"]
-    session_id = preview_body["session_id"]
-    pending = application.state.chat_service.repository.docs[session_id]["acao_pendente"]
-    assert pending["tipo"] == "criar_evento_google_calendar"
-    assert [call[0] for call in calendar.calls] == ["google_calendar_status"]
-
-    calendar.connected = True
-    confirmation_response = client.post("/chat/messages", json={
-        "message": "Sim, pode criar.", "session_id": session_id,
-    })
-
-    assert confirmation_response.status_code == 200
-    assert "criado no seu Google Calendar" in confirmation_response.json()["resposta"]
-    assert application.state.chat_service.repository.docs[session_id]["acao_pendente"] is None
-    assert [call[0] for call in calendar.calls] == [
-        "google_calendar_status", "google_calendar_create_event",
-    ]
-    # A confirmação curta é validada pelo pending confiável antes do LLM; o
-    # guardrail não pode tratá-la como mensagem sem contexto.
-    assert [call[0] for call in model.calls].count("guardrail_entrada") == 1
 
 
 def test_training_filters_and_judge_evidence_stay_compact():
@@ -1000,55 +923,6 @@ def test_short_notification_followup_skips_invalid_guardrail_reply(chat_client, 
     assert [call[0] for call in model.calls] == ["juiz"]
 
 
-@pytest.mark.parametrize("message", [
-    "Quero me conectar com o Google Agenda",
-    "Quero conectar minha conta ao Google Calendar.",
-    "Preciso conectar a minha conta com o Google Agenda!",
-    "Como conecto minha conta ao Google Agenda?",
-    "Como faço para me conectar ao Google Calendar?",
-    "  QUERO   ME CONECTAR COM O GOOGLE AGENDA  ",
-])
-@pytest.mark.parametrize("markdown", [True, False])
-def test_simple_google_connection_guidance_does_not_need_model(chat_client, monkeypatch, message, markdown):
-    client, model, application = chat_client
-
-    async def unavailable(agent, messages, *, json_mode=False):
-        model.calls.append((agent, messages, json_mode))
-        raise ChatError(503, "Cota de IA indisponível.", reason="rate_limited")
-
-    async def unexpected_oauth(*args, **kwargs):
-        pytest.fail("Orientação não deve iniciar OAuth nem gerar uma autorização")
-
-    monkeypatch.setattr(model, "complete", unavailable)
-    monkeypatch.setattr(application.state.google_calendar_oauth, "connection_url", unexpected_oauth)
-    response = client.post(f"/chat/messages?markdown={str(markdown).lower()}", json={"message": message})
-    assert response.status_code == 200
-    body = response.json()
-    assert "[google-calendar-conectar](Conectar minha conta Google)" in body["resposta"]
-    assert "/integracoes/google-calendar/" not in body["resposta"]
-    assert "authorization_url" not in body["resposta"]
-    assert "autorize o acesso" in body["resposta"]
-    assert body["agentes_chamados"] == ["guardrail_entrada", "roteador"]
-    assert model.calls == []
-    history = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"]
-    assert history[-1] == {"role": "assistant", "content": body["resposta"]}
-
-
-@pytest.mark.parametrize("markdown", [True, False])
-def test_model_connection_endpoint_is_normalized_before_delivery_and_storage(chat_client, markdown):
-    client, model, application = chat_client
-    model.replies["roteador"] = "Para conectar, use [Conectar](/integracoes/google-calendar/status)."
-    response = client.post(f"/chat/messages?markdown={str(markdown).lower()}", json={
-        "message": "Onde encontro a integração da agenda?",
-    })
-    assert response.status_code == 200
-    answer = response.json()["resposta"]
-    assert "[google-calendar-conectar](Conectar minha conta Google)" in answer
-    assert "/integracoes/google-calendar/" not in answer
-    history = application.state.chat_service.repository.docs[response.json()["session_id"]]["mensagens"]
-    assert history[-1]["content"] == answer
-
-
 def test_simple_google_connection_still_requires_authentication(chat_client):
     client, model, application = chat_client
     application.dependency_overrides.pop(auth.get_current_user)
@@ -1076,22 +950,6 @@ def test_google_guidance_shortcut_rejects_extra_or_third_party_instructions(chat
     assert response.status_code == 200
     assert response.json()["agentes_chamados"] == ["guardrail_entrada"]
     assert "/integracoes/google-calendar/conectar" not in response.json()["resposta"]
-
-
-def test_google_connection_guidance_uses_real_endpoint(chat_client):
-    client, model, _ = chat_client
-    response = client.post("/chat/messages", json={
-        "message": (
-            "Quero adicionar um evento ao Google Agenda, mas ainda não "
-            "conectei minha conta. O que preciso fazer?"
-        ),
-    })
-
-    assert response.status_code == 200
-    assert "[google-calendar-conectar](Conectar minha conta Google)" in response.json()["resposta"]
-    assert "/integracoes/google-calendar/" not in response.json()["resposta"]
-    assert "authorization_url" not in response.json()["resposta"]
-    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz", "guardrail_saida"]
 
 
 @pytest.mark.parametrize("message,expected_period,expected_consult", [
@@ -2044,8 +1902,8 @@ def test_internal_events_do_not_require_google_connection(chat_client):
         "message": "Preciso conectar o Google Calendar para consultar meus eventos internos?",
     })
     assert response.status_code == 200
-    assert "sem essa conexão" in response.json()["resposta"]
-    assert "opcional" in response.json()["resposta"]
+    assert "eventos internos" in response.json()["resposta"]
+    assert "não possui integração" in response.json()["resposta"]
     assert "guardrail_entrada" not in [call[0] for call in model.calls]
     assert "consultar_google_calendar" not in response.json()["agentes_chamados"]
 
@@ -2609,3 +2467,65 @@ def test_provider_sdks_with_mock_http(monkeypatch, agent, mistral_key, expected_
         assert len(requests) == 1
     finally:
         models.get_model.cache_clear()
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/integracoes/google-calendar/status"),
+    ("GET", "/integracoes/google-calendar/conectar"),
+    ("GET", "/integracoes/google-calendar/callback?code=old&state=old"),
+    ("DELETE", "/integracoes/google-calendar"),
+])
+def test_removed_calendar_endpoints_are_unavailable(chat_client, method, path):
+    client, model, application = chat_client
+    assert client.request(method, path).status_code == 404
+    assert not any("google-calendar" in path for path in application.openapi()["paths"])
+    assert model.calls == []
+
+
+@pytest.mark.parametrize("message", [
+    "Quero conectar minha conta ao Google Calendar.",
+    "Coloque meu treinamento no Google Agenda.",
+    "Quais eventos tenho na agenda do Google?",
+])
+@pytest.mark.parametrize("markdown", [True, False])
+def test_calendar_requests_explain_removal_without_offering_connection(chat_client, message, markdown):
+    client, model, application = chat_client
+    response = client.post(f"/chat/messages?markdown={str(markdown).lower()}", json={"message": message})
+    assert response.status_code == 200
+    body = response.json()
+    assert "não possui integração" in body["resposta"]
+    assert "eventos internos" in body["resposta"]
+    assert "google-calendar-conectar" not in body["resposta"]
+    assert "/integracoes/" not in body["resposta"]
+    assert [call[0] for call in model.calls] == ["guardrail_entrada"]
+    assert application.state.chat_service.repository.docs[body["session_id"]]["acao_pendente"] is None
+
+
+def test_old_calendar_draft_is_discarded_without_losing_conversation(chat_client):
+    client, model, application = chat_client
+    first = client.post("/chat/messages", json={"message": "Olá"}).json()
+    session_id = first["session_id"]
+    doc = application.state.chat_service.repository.docs[session_id]
+    history = list(doc["mensagens"])
+    doc["acao_pendente"] = {"tipo": "criar_evento_google_calendar", "session_id": session_id}
+    model.route = "agenda"
+    response = client.post("/chat/messages", json={
+        "session_id": session_id, "message": "Sim, pode criar o evento",
+    })
+    assert response.status_code == 200
+    doc = application.state.chat_service.repository.docs[session_id]
+    assert doc["acao_pendente"] is None
+    assert doc["mensagens"][:len(history)] == history
+    assert "criar_evento_google_calendar" not in response.json()["agentes_chamados"]
+    assert "indisponível" in response.json()["resposta"]
+
+
+@pytest.mark.parametrize("action", ["consultar_google_calendar", "criar_evento_google_calendar"])
+def test_obsolete_model_calendar_decision_cannot_execute_tools(chat_client, action):
+    client, model, _ = chat_client
+    model.route = "agenda"
+    model.replies["agenda"] = json.dumps({"acao": action, "filtros": {}, "resposta": None})
+    response = client.post("/chat/messages", json={"message": "Retome aquele pedido de agenda."})
+    assert response.status_code == 200
+    assert action not in response.json()["agentes_chamados"]
+    assert "Não consegui interpretar" in response.json()["resposta"]

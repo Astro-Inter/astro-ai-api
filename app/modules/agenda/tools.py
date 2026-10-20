@@ -1,6 +1,5 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from typing import Literal
-from uuid import uuid4
 
 import psycopg
 from app.infrastructure.database.connections import read_only_connection
@@ -10,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core import config as app_config
 from app.core.security import CurrentUser
-from app.infrastructure.mcp_google_calendar import get_google_calendar_mcp_client
 from app.modules.chat.schemas import SpecialistResult
 
 
@@ -39,65 +37,19 @@ class ConsultarEventosArgs(BaseModel):
     limite: int = Field(default=5, ge=1, le=10)
 
 
-class ConsultarEventosGoogleArgs(BaseModel):
-    """Intervalo autorizado para consultar o calendário do próprio usuário."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    inicio: datetime
-    fim: datetime
-    limite: int = Field(default=10, ge=1, le=20)
-
-    @model_validator(mode="after")
-    def validar_intervalo(self):
-        if self.inicio.tzinfo is None or self.fim.tzinfo is None:
-            raise ValueError("Datas da agenda exigem fuso horário.")
-        if self.fim <= self.inicio:
-            raise ValueError("O fim do intervalo deve ser posterior ao início.")
-        if (self.fim - self.inicio).days > 366:
-            raise ValueError("A consulta não pode ultrapassar 366 dias.")
-        return self
-
-
-class CriarEventoGoogleArgs(BaseModel):
-    """Dados da prévia ou confirmação de um evento no Google Calendar."""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    titulo: str = Field(min_length=1, max_length=180)
-    inicio: datetime
-    fim: datetime
-    descricao: str | None = Field(default=None, max_length=2000)
-    confirmar: bool = False
-
-    @model_validator(mode="after")
-    def validar_evento(self):
-        if self.inicio.tzinfo is None or self.fim.tzinfo is None:
-            raise ValueError("Datas do evento exigem fuso horário.")
-        if self.fim <= self.inicio:
-            raise ValueError("O término deve ser posterior ao início.")
-        if self.fim - self.inicio > timedelta(days=7):
-            raise ValueError("A duração do evento não pode ultrapassar sete dias.")
-        return self
-
-
 class AgendaToolDecision(BaseModel):
-    """Decisão de Agenda entre eventos internos, treinamentos e Google Calendar."""
+    """Decisão de Agenda para consultar eventos internos e treinamentos."""
 
     model_config = ConfigDict(extra="forbid")
 
     acao: Literal[
         "consultar_eventos",
         "consultar_treinamentos",
-        "consultar_google_calendar",
-        "criar_evento_google_calendar",
         "responder",
     ]
     filtros: (
         ConsultarTreinamentosArgs
         | ConsultarEventosArgs
-        | ConsultarEventosGoogleArgs
-        | CriarEventoGoogleArgs
         | None
     ) = None
     resposta: SpecialistResult | None = None
@@ -127,8 +79,6 @@ class AgendaToolDecision(BaseModel):
         schemas = {
             "consultar_eventos": ConsultarEventosArgs,
             "consultar_treinamentos": ConsultarTreinamentosArgs,
-            "consultar_google_calendar": ConsultarEventosGoogleArgs,
-            "criar_evento_google_calendar": CriarEventoGoogleArgs,
         }
         schema = schemas.get(action)
         if schema is not None and not isinstance(filters, schema):
@@ -142,8 +92,6 @@ class AgendaToolDecision(BaseModel):
         expected = {
             "consultar_eventos": ConsultarEventosArgs,
             "consultar_treinamentos": ConsultarTreinamentosArgs,
-            "consultar_google_calendar": ConsultarEventosGoogleArgs,
-            "criar_evento_google_calendar": CriarEventoGoogleArgs,
         }
         filter_type = expected.get(self.acao)
         if filter_type is not None and (
@@ -172,53 +120,6 @@ def _usuario_do_contexto(runtime_config: RunnableConfig) -> CurrentUser | None:
 
 def _valor_publico(value):
     return value.isoformat() if isinstance(value, (datetime, date)) else value
-
-
-def _configuravel(runtime_config: RunnableConfig) -> dict:
-    return (runtime_config or {}).get("configurable", {})
-
-
-def _rascunho_evento(
-    *, session_id: str, titulo: str, inicio: datetime, fim: datetime,
-    descricao: str | None, fuso: str,
-) -> dict:
-    return {
-        "tipo": "criar_evento_google_calendar",
-        "session_id": session_id,
-        "id_evento": "astro" + uuid4().hex,
-        "titulo": titulo,
-        "inicio": inicio.isoformat(),
-        "fim": fim.isoformat(),
-        "descricao": descricao,
-        "fuso": fuso,
-        "criado_em": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-def _confirmacao_evento_valida(
-    configurable: dict, pending: dict, *, session_id: str,
-    titulo: str, inicio: datetime, fim: datetime, descricao: str | None,
-) -> bool:
-    try:
-        created_at = datetime.fromisoformat(pending.get("criado_em", ""))
-        active = (
-            created_at.tzinfo is not None
-            and created_at >= datetime.now(timezone.utc) - timedelta(minutes=30)
-        )
-    except (TypeError, ValueError):
-        active = False
-    return (
-        active
-        and configurable.get("confirmacao_explicita") is True
-        and pending.get("tipo") == "criar_evento_google_calendar"
-        and pending.get("session_id") == session_id
-        and pending.get("titulo") == titulo
-        and pending.get("inicio") == inicio.isoformat()
-        and pending.get("fim") == fim.isoformat()
-        and pending.get("descricao") == descricao
-        and isinstance(pending.get("id_evento"), str)
-        and isinstance(pending.get("fuso"), str)
-    )
 
 
 @tool("consultar_treinamentos", args_schema=ConsultarTreinamentosArgs)
@@ -368,119 +269,7 @@ def consultar_eventos(
     return result
 
 
-@tool("consultar_google_calendar", args_schema=ConsultarEventosGoogleArgs)
-async def consultar_google_calendar(
-    inicio: datetime,
-    fim: datetime,
-    limite: int = 10,
-    config: RunnableConfig = None,
-) -> dict:
-    """Consulta somente o calendário principal conectado pelo usuário autenticado."""
-    user = _usuario_do_contexto(config)
-    if user is None:
-        return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
-    return await get_google_calendar_mcp_client().call_tool(
-        "google_calendar_list_events",
-        {
-            "firebase_uid": user.uid,
-            "inicio": inicio.isoformat(),
-            "fim": fim.isoformat(),
-            "limite": limite,
-        },
-    )
-
-
-@tool("criar_evento_google_calendar", args_schema=CriarEventoGoogleArgs)
-async def criar_evento_google_calendar(
-    titulo: str,
-    inicio: datetime,
-    fim: datetime,
-    descricao: str | None = None,
-    confirmar: bool = False,
-    config: RunnableConfig = None,
-) -> dict:
-    """Prepara e, depois da confirmação explícita, cria um evento via MCP.
-
-    A conta Google não é exigida para usar o chat. Quando ainda não houver uma
-    conexão, a prévia fica pendente e a ferramenta devolve a rota OAuth que o
-    cliente deve abrir antes de o usuário confirmar novamente.
-    """
-    user = _usuario_do_contexto(config)
-    if user is None:
-        return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
-    configurable = _configuravel(config)
-    session_id = configurable.get("session_id")
-    if not isinstance(session_id, str) or not session_id:
-        return {"status": "erro", "mensagem": "Sessao nao identificada no contexto."}
-
-    if not confirmar:
-        fuso = configurable.get("fuso", "America/Sao_Paulo")
-        pending = _rascunho_evento(
-            session_id=session_id,
-            titulo=titulo,
-            inicio=inicio,
-            fim=fim,
-            descricao=descricao,
-            fuso=fuso,
-        )
-        connection = await get_google_calendar_mcp_client().call_tool(
-            "google_calendar_status", {"firebase_uid": user.uid},
-        )
-        if connection.get("status") != "ok":
-            return connection
-        status = "aguardando_confirmacao" if connection.get("conectado") else "conexao_necessaria"
-        result = {
-            "status": status,
-            "evento": {
-                "titulo": titulo,
-                "inicio": inicio.isoformat(),
-                "fim": fim.isoformat(),
-                "descricao": descricao,
-                "fuso": fuso,
-            },
-            "acao_pendente": pending,
-        }
-        if status == "conexao_necessaria":
-            result.update({
-                "mensagem": "Conecte sua conta Google Calendar para continuar.",
-                "rota_conexao": "/integracoes/google-calendar/conectar",
-            })
-        return result
-
-    pending = configurable.get("acao_pendente")
-    if not isinstance(pending, dict) or not _confirmacao_evento_valida(
-        configurable,
-        pending,
-        session_id=session_id,
-        titulo=titulo,
-        inicio=inicio,
-        fim=fim,
-        descricao=descricao,
-    ):
-        return {
-            "status": "confirmacao_invalida",
-            "mensagem": "Prepare o evento novamente antes de confirmar.",
-        }
-    result = await get_google_calendar_mcp_client().call_tool(
-        "google_calendar_create_event",
-        {
-            "firebase_uid": user.uid,
-            "id_evento": pending["id_evento"],
-            "titulo": titulo,
-            "inicio": inicio.isoformat(),
-            "fim": fim.isoformat(),
-            "fuso": pending["fuso"],
-            "descricao": descricao,
-        },
-    )
-    if result.get("status") == "conexao_necessaria":
-        result["acao_pendente"] = pending
-    return result
-
-
 TOOLS_AGENDA = [
     consultar_eventos,
     consultar_treinamentos,
-    consultar_google_calendar,
-    criar_evento_google_calendar,
 ]
