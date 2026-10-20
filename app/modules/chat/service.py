@@ -4,7 +4,11 @@ from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from langchain_core.messages import HumanMessage
+from langgraph.types import Overwrite
+
 from app.core.security import CurrentUser
+from app.infrastructure.checkpoints import ConversationCheckpoints, checkpoint_messages
 from app.infrastructure.database.sessions import MongoSessions, utc_now
 from app.infrastructure.llm.models import AgentModel, LanguageModels
 from app.infrastructure.vectorstore.faq import FaqVectors
@@ -26,7 +30,6 @@ from app.modules.chat.session_listing import (
     compact_session_text, decode_session_cursor, encode_session_cursor,
     session_preview, session_title,
 )
-from app.modules.chat.ui_actions import normalizar_acoes_interface
 from app.modules.memory.service import ConversationMemory
 from app.modules.shared.tools import PDF_LINK_TTL_HOURS
 from app.observability.chat import ChatObservation, observe_chat
@@ -55,7 +58,11 @@ class ChatService:
         self.vectors = vectors if vectors is not None else SummaryVectors()
         self.faq_vectors = faq_vectors if faq_vectors is not None else FaqVectors()
         self.memory = ConversationMemory(self.repository, self.vectors, self.model)
-        self.graph = build_chat_graph(self.model, self.memory.search, self.faq_vectors.search)
+        self.checkpoints = ConversationCheckpoints()
+        self.graph = build_chat_graph(
+            self.model, self.memory.search, self.faq_vectors.search,
+            checkpointer=self.checkpoints.saver,
+        )
         self.request_timeout = request_timeout
         self.active_requests = 0
 
@@ -92,6 +99,7 @@ class ChatService:
                 if doc.get("status") == "encerrando":
                     raise ChatError(409, "Conversa em encerramento. Repita /encerrar antes de retomar.")
                 if doc.get("status") == "encerrada":
+                    await self.checkpoints.discard(user.uid, sid)
                     # Mantém UUID/histórico; o próximo encerramento precisa de novo resumo.
                     await self.repository.update(sid, user.uid, token, {
                         "status": "ativa", "encerrada_em": None, "resumo": "",
@@ -158,11 +166,20 @@ class ChatService:
     ) -> ChatResponse:
         async with self.operation():
             await self.repository.ensure(session_id, user.uid)
-            async with self.session_lock(session_id, user.uid) as (doc, token):
+            async with (
+                self.session_lock(session_id, user.uid) as (doc, token),
+                self.checkpoints.turn(self.graph, user.uid, session_id) as checkpoint_turn,
+            ):
                 if doc.get("status", "ativa") != "ativa":
                     raise ChatError(409, "Conversa encerrada ou em encerramento. "
                                     "Use /iniciar para retomar uma conversa encerrada; "
                                     "repita /encerrar se o encerramento estiver pendente.")
+                # Ignore drafts for operations removed from the chatbot, including
+                # those persisted by previous deployments.
+                pending = doc.get("acao_pendente")
+                if isinstance(pending, dict) and pending.get("tipo") != "enviar_mensagem":
+                    doc["acao_pendente"] = None
+                    await self.repository.update(session_id, user.uid, token, {"acao_pendente": None})
                 messages = doc.get("mensagens", [])
                 previous_pdf = doc.get("ultimo_pdf")
                 if previous_pdf is None and asks_for_pdf_link(request.message):
@@ -173,9 +190,13 @@ class ChatService:
                 if (len(messages) >= MAX_MESSAGES or sum(len(m["content"]) for m in messages)
                         + len(request.message) + 6000 > MAX_SESSION_CHARACTERS):
                     raise ChatError(409, "Limite da conversa atingido. Encerre e inicie outra sessao.")
+                history = recent_history(messages)
+                graph_messages = checkpoint_messages(history, len(messages) - len(history))
+                graph_messages.append(HumanMessage(content=request.message, id=f"mongo-{len(messages)}"))
                 result = await self.graph.ainvoke({
+                    "messages": Overwrite(graph_messages),
                     "usuario_atual": user, "session_id": session_id,
-                    "historico": recent_history(messages),
+                    "historico": history,
                     "mensagem": request.message,
                     "contexto": {
                         "workspace_id": None, "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
@@ -192,7 +213,6 @@ class ChatService:
                             "consultar_acessos",
                             "consultar_treinamentos",
                             "consultar_eventos",
-                            "consultar_google_calendar", "criar_evento_google_calendar",
                             "gerar_pdf",
                         ],
                         "fontes_disponiveis": [
@@ -214,11 +234,8 @@ class ChatService:
                                    "usuario, sem contar logins individuais ou horarios. "
                                    "Treinamentos atribuidos ao usuario podem ser consultados "
                                    "pelo agente de agenda, sem inferir inscricoes a partir da NR. "
-                                   "Perguntas sobre eventos sem mencionar Google consultam "
-                                   "eventos do Astro nas turmas atribuídas ao próprio usuário. "
-                                   "O Google Calendar e opcional e conectado sob demanda por OAuth. "
-                                   "Consultar ou criar eventos usa apenas o calendario principal "
-                                   "do usuario; criacao exige previa e confirmacao explicita. "
+                                   "A Agenda consulta somente eventos internos e treinamentos "
+                                   "atribuídos ao próprio usuário. Não há integração com calendários externos. "
                                    "PDFs podem ser gerados da resposta revisada quando pedidos "
                                    "explicitamente; a aplicacao fornece o link temporario. "
                                    "NRs da unidade ou empresa usam vínculos unidade_nr no PostgreSQL "
@@ -244,10 +261,10 @@ class ChatService:
                     "resposta_deterministica": False,
                     "consulta_rh": doc.get("consulta_rh"),
                     "ultimo_pdf": previous_pdf,
-                }, config={"recursion_limit": 20})
+                }, config=checkpoint_turn.config)
                 observation.mark_result(result)
                 pdf_url = result.get("pdf_url")
-                public_answer = normalizar_acoes_interface(result["resposta"])
+                public_answer = result["resposta"]
                 if not markdown:
                     public_answer = markdown_para_texto_simples(public_answer)
                 stored_answer = public_answer
@@ -289,6 +306,13 @@ class ChatService:
                             {"role": "human", "content": request.message},
                             {"role": "assistant", "content": stored_answer},
                         ])
+                    # Compact only after the atomic Mongo update succeeds. An
+                    # old checkpoint never overrides data loaded from another worker.
+                    public_history = recent_history(messages + [
+                        {"role": "human", "content": request.message},
+                        {"role": "assistant", "content": stored_answer},
+                    ])
+                    await checkpoint_turn.commit(public_history, len(messages) + 2 - len(public_history))
                 return response
 
     async def end(self, session_id: UUID, user: CurrentUser):
@@ -296,6 +320,7 @@ class ChatService:
         async with self.operation():
             async with self.session_lock(sid, user.uid) as (doc, token):
                 if doc.get("status") == "encerrada":
+                    await self.checkpoints.discard(user.uid, sid)
                     return SessionResponse(session_id=session_id, status="encerrada",
                         resumo=doc.get("resumo") or None, resumo_indexado=doc.get("resumo_indexado", False))
                 await self.repository.update(sid, user.uid, token, {"status": "encerrando"})
@@ -321,10 +346,12 @@ class ChatService:
                     "status": "encerrada", "encerrada_em": utc_now(), "resumo_indexado": indexed,
                     "resumo_parcial": "", "resumo_ate": 0,
                 })
+                await self.checkpoints.discard(user.uid, sid)
                 return SessionResponse(session_id=session_id, status="encerrada",
                                        resumo=summary or None, resumo_indexado=indexed)
 
     async def close(self):
+        self.checkpoints.clear()
         try:
             try:
                 await self.repository.close()

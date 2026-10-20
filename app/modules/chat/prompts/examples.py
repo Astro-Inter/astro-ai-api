@@ -12,14 +12,14 @@ def _json(**fields):
 EXAMPLES = {
     "roteador": (
         ("eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?", "ROUTE=agenda"),
-        ("Qual é sua função?", "Sou o Agente do Astro, um assistente que ajuda a direcionar suas solicitações para o especialista ou ferramenta correta. Posso ajudar com RH, segurança do trabalho, agenda e normas internas, além de mensagens, conversas, notificações, acessos, treinamentos e Google Calendar."),
+        ("Qual é sua função?", "Sou o Agente do Astro, um assistente que ajuda a direcionar suas solicitações para o especialista ou ferramenta correta. Posso ajudar com RH, segurança do trabalho, agenda e normas internas, além de mensagens, conversas, notificações, acessos e treinamentos."),
         ("Sou assistente de desenvolvimento, quais NRs devo seguir?", "Definir NRs para um cargo informado na conversa está fora do meu escopo. Posso consultar as NRs atribuídas ao seu cadastro ou explicar uma NR específica."),
         ("Quais NRs são obrigatórias para meu cargo cadastrado?", "ROUTE=sst"),
         ("Mostre 3 funcionários do workspace.", "ROUTE=rh"),
         ("Busque uma cartilha da Fundacentro sobre riscos psicossociais.", "ROUTE=sst"),
         ("Quais NRs estão vinculadas à minha empresa?", "ROUTE=sst"),
         ("Qual é meu próximo evento?", "ROUTE=agenda"),
-        ("Coloque meu treinamento no Google Agenda.", "ROUTE=agenda"),
+        ("Coloque meu treinamento no Google Agenda.", "Não há integração com calendários externos. Posso consultar seus treinamentos no Astro."),
         ("Gere um PDF sobre o objetivo do Astro.", "ROUTE=faq"),
         ("Pegue o material do 6º ano e gere um mapa mental.", "ROUTE=fora_escopo"),
         ("O que diz a política interna de treinamento?", "ROUTE=faq"),
@@ -33,7 +33,7 @@ EXAMPLES = {
         ("Mande um oi para Rosa.", 'MESSAGE={"destinatario":"Rosa","mensagem":"Oi","confirmar_envio":false}'),
     ),
     "guardrail_entrada": (
-        ("Quero marcar uma reunião amanhã às 10h no Google Calendar.", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
+        ("Quero consultar meus eventos internos.", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("TITULO: Reunião do EPAV\nTempo: 30 minutos\nDescrição: Devo ser pontual", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("hoje / astro", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
         ("eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
@@ -53,8 +53,7 @@ EXAMPLES = {
         ("Busque uma cartilha da Fundacentro sobre riscos psicossociais.", _json(acao="consultar_orientacoes_sst", filtros={"termo": "riscos psicossociais", "fontes": ["fundacentro_publicacoes"]}, resposta=None)),
     ),
     "agenda": (
-        ("Contexto fictício: data_hora=2026-10-05T09:00:00-03:00. Histórico: reunião amanhã às 10h no Google Calendar; faltavam título e duração. Agora: TITULO: Reunião do EPAV; Tempo: 30 minutos; Descrição: Devo ser pontual.", _json(acao="criar_evento_google_calendar", filtros={"titulo": "Reunião do EPAV", "inicio": "2026-10-06T10:00:00-03:00", "fim": "2026-10-06T10:30:00-03:00", "descricao": "Devo ser pontual", "confirmar": False}, resposta=None)),
-        ("eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?", _json(acao="responder", filtros=None, resposta={"dominio": "agenda", "intencao": "criar", "status": "esclarecer", "resposta": "Para a reunião com Adriana às 13h no horário do Vietnã, em que data e com qual duração você deseja agendar? Qual agenda pretende usar?", "recomendacao": "", "esclarecer": "Para a reunião com Adriana às 13h no horário do Vietnã, em que data e com qual duração você deseja agendar? Qual agenda pretende usar?"})),
+        ("Pode marcar uma reunião com Adriana amanhã?", _json(acao="responder", filtros=None, resposta={"dominio": "agenda", "intencao": "criar", "status": "indisponivel", "resposta": "Não consigo criar reuniões. Posso consultar seus eventos internos e treinamentos atribuídos no Astro.", "recomendacao": ""})),
         ("Qual é meu próximo evento?", _json(acao="consultar_eventos", filtros={"proximos": True, "pagina": 1, "limite": 1}, resposta=None)),
         ("Quais treinamentos preciso realizar?", _json(acao="consultar_treinamentos", filtros={"situacao": "a_realizar", "pagina": 1, "limite": 5}, resposta=None)),
     ),
@@ -73,7 +72,7 @@ EXAMPLES = {
         ("Candidata: reunião cancelada. Resultado: aguardando confirmação. Juiz: revisar, execução não confirmada.", _json(status="corrigido", motivo="Cancelamento não confirmado.", resposta="O cancelamento ainda não foi realizado.")),
     ),
     "resumo": (
-        ('{"resumo_parcial":"O usuário quer consultar seu treinamento.","mensagens":[{"role":"user","content":"Adicione no Google Agenda."},{"role":"assistant","content":"Confirma a criação?"}]}', _json(resumo="O usuário pediu consulta de treinamento e inclusão no Google Agenda. A criação permanece aguardando confirmação; não há evidência de execução.")),
+        ('{"resumo_parcial":"O usuário quer consultar seu treinamento.","mensagens":[{"role":"user","content":"Envie uma mensagem para a equipe."},{"role":"assistant","content":"Confirma o envio?"}]}', _json(resumo="O usuário pediu consulta de treinamento e envio de mensagem. O envio permanece aguardando confirmação; não há evidência de execução.")),
     ),
 }
 

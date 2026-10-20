@@ -13,7 +13,7 @@ from app.observability.report import TraceMetric, project_scenario, summarize_tr
     ({"resposta": "Resposta", "guardar_turno": True, "rota": "direta"}, (1, "resolvido")),
     ({
         "resposta": "Confirma?", "guardar_turno": True, "rota": "agenda",
-        "acao_pendente": {"tipo": "criar_evento_google_calendar"},
+        "acao_pendente": {"tipo": "enviar_mensagem"},
     }, (0, "aguardando_confirmacao")),
     ({
         "resposta": "Indisponivel", "guardar_turno": True, "rota": "sst",

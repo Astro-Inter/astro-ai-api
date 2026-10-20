@@ -6,9 +6,10 @@ from datetime import date, datetime
 from pydantic import ValidationError
 
 from langgraph.graph import END, START, StateGraph
+from langchain_core.messages import AIMessage
 
+from app.infrastructure.checkpoints import COMPLETE_TURN_NODE
 from app.infrastructure.llm.models import AgentModel
-from app.modules.agenda.tools import AgendaToolDecision, CriarEventoGoogleArgs
 from app.modules.chat.agents import invoke_agent
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.public_replies import public_reply
@@ -23,7 +24,6 @@ from app.modules.chat.prompts.orquestrador import ORQUESTRADOR_PROMPT_COMPLETO
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
 from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch, OutputDecision
 from app.modules.chat.state import ChatState
-from app.modules.chat.ui_actions import GOOGLE_CALENDAR_CONNECT_ACTION
 from app.modules.chat.subgraphs import (
     _filtros_treinamentos,
     _filtros_eventos,
@@ -42,17 +42,12 @@ from app.modules.roteador.tools import (
     EnviarMensagemArgs, TOOLS_ROTEADOR,
 )
 from app.modules.shared.tools import gerar_pdf
+from app.modules.shared.pdf_document import preparar_documento_pdf
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision
 
 
 ROTEADOR_TOOLS = {registered_tool.name: registered_tool for registered_tool in TOOLS_ROTEADOR}
 logger = logging.getLogger(__name__)
-GOOGLE_CONNECTION_GUIDANCE = (
-    "Para conectar sua conta Google, use a opção abaixo e autorize o acesso à sua agenda.\n\n"
-    f"{GOOGLE_CALENDAR_CONNECT_ACTION}\n\n"
-    "Depois, volte ao chat e faça o pedido novamente. A conexão é opcional: "
-    "Seus eventos e treinamentos internos do Astro continuam disponíveis sem essa conexão."
-)
 
 
 def _sem_acentos(message: str) -> str:
@@ -82,7 +77,7 @@ def _continuacao_de_agenda(state: ChatState) -> bool:
     return bool(re.fullmatch(
         r"(?:\d{1,2}/\d{1,2}(?:/\d{4})?|\d{1,2} de [a-z]+(?: de \d{4})?|"
         r"\d{1,2}(?:h|:\d{2})(?:\d{2})?|\d{1,3} minutos|"
-        r"(?:hoje|amanha)(?:\s*/\s*(?:astro|google calendar|google agenda))?)",
+        r"(?:hoje|amanha)(?:\s*/\s*astro)?)",
         _sem_acentos(state["mensagem"]).strip(" ."),
     ))
 
@@ -195,33 +190,6 @@ def _pergunta_identidade_astro(message: str) -> bool:
     }
 
 
-def _pedido_simples_conexao_google(message: str) -> bool:
-    """Só orientação sobre conexão própria; não executa OAuth nem aceita comandos extras."""
-    normalized = re.sub(r"\s+", " ", _sem_acentos(message)).strip().rstrip(".?!").strip()
-    return bool(re.fullmatch(
-        r"(?:eu )?(?:(?:quero|preciso|gostaria de) (?:(?:me|em) )?conectar|"
-        r"como (?:eu )?(?:me conecto|conecto|conectar|faco para (?:me )?conectar))"
-        r"(?: (?:a )?minha conta)?(?: (?:com|ao|a|no|na))? "
-        r"(?:o |a )?google (?:agenda|calendar)",
-        normalized,
-    ))
-
-
-def _duvida_conexao_google_calendar(message: str) -> bool:
-    normalized = _sem_acentos(message)
-    asks_how = bool(re.search(r"\b(?:como|o que preciso fazer|como faco)\b", normalized))
-    action = bool(re.search(
-        r"\b(?:crie|criar|adicione|adicionar|marque|marcar|envie|enviar)\b",
-        normalized,
-    ))
-    return bool(
-        re.search(r"\bgoogle (?:calendar|agenda)\b", normalized)
-        and re.search(r"\bconect\w*\b", normalized)
-        and re.search(r"\b(?:como|preciso|quero|ainda nao|desconectad\w*)\b", normalized)
-        and (not action or (asks_how and re.search(r"\bainda nao conect\w*\b", normalized)))
-    )
-
-
 def _consulta_organizacional_segura(message: str) -> bool:
     """Somente uma pergunta completa de leitura; não aceita instruções adicionais."""
     normalized = _sem_acentos(message).strip().rstrip(".?!").strip()
@@ -274,13 +242,12 @@ def _confirmacao_explicita(message: str) -> bool:
         "sim, eu confirmo", "sim eu confirmo", "pode mandar assim",
     }:
         return True
-    action = r"(?:enviar|mandar|criar|adicionar|agendar|envie|envia|manda|mande|crie|adicione|agende)"
+    action = r"(?:enviar|mandar|envie|envia|manda|mande)"
     object_detail = (
-        r"(?:\s+(?:a mensagem|o evento|a criacao|o agendamento|isso))?"
-        r"(?:\s+no meu google (?:calendar|agenda))?"
+        r"(?:\s+(?:a mensagem|isso))?"
     )
     return bool(re.fullmatch(
-        rf"(?:sim,?\s+)?(?:eu\s+)?(?:confirmo(?:\s+(?:o envio|a criacao|o agendamento))?|"
+        rf"(?:sim,?\s+)?(?:eu\s+)?(?:confirmo(?:\s+o envio)?|"
         rf"pode\s+{action}{object_detail}|{action}{object_detail}|"
         rf"e isso mesmo que eu quero enviar|esta certo,? pode\s+(?:enviar|mandar))",
         normalized,
@@ -579,7 +546,7 @@ def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
         return None
 
 
-def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
+def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, checkpointer=None):
     async def input_guard(state: ChatState):
         if requests_internal_instructions(state["mensagem"]):
             return {
@@ -604,7 +571,6 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         if (_campo_dado_proprio(state["mensagem"]) is not None
                 or _pergunta_identidade_astro(state["mensagem"])
                 or _consulta_organizacional_segura(state["mensagem"])
-                or _pedido_simples_conexao_google(state["mensagem"])
                 or _duvida_google_eventos_internos(state["mensagem"])
                 or _explicacao_simples_de_acessos(state["mensagem"])
                 or _consulta_propria_recente(state["mensagem"])
@@ -623,7 +589,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         if (
             isinstance(pending, dict)
             and pending.get("tipo") in {
-                "enviar_mensagem", "criar_evento_google_calendar",
+                "enviar_mensagem",
             }
             and (
                 _confirmacao_explicita(state["mensagem"])
@@ -681,14 +647,6 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 ),
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
-        if _pedido_simples_conexao_google(state["mensagem"]):
-            # Texto fixo do backend, sem dados externos ou ação executada. Não
-            # depende de Juiz/saída por LLM nem transforma a orientação em OAuth.
-            return {
-                "rota": "fim", "resposta": GOOGLE_CONNECTION_GUIDANCE,
-                "guardar_turno": True, "pdf_solicitado": False,
-                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
-            }
         if _pergunta_identidade_astro(state["mensagem"]):
             return {
                 "rota": "direta",
@@ -718,17 +676,18 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             return {
                 "rota": "fim",
                 "resposta": (
-                    "Não. Os eventos internos do Astro continuam disponíveis sem essa conexão, "
-                    "conforme suas permissões. A conexão Google é opcional e só é necessária "
-                    "para consultar ou criar eventos no seu Google Calendar."
+                    "Não. Os eventos internos do Astro estão disponíveis conforme suas permissões. "
+                    "O chatbot não possui integração com o Google Calendar."
                 ),
                 "guardar_turno": True, "pdf_solicitado": False,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
-        if _duvida_conexao_google_calendar(state["mensagem"]):
+        if re.search(r"\bgoogle (?:calendar|agenda)\b|\bagenda (?:do )?google\b", _sem_acentos(state["mensagem"])):
             return {
-                "rota": "direta",
-                "candidato": GOOGLE_CONNECTION_GUIDANCE,
+                "rota": "fim",
+                "resposta": "O chatbot não possui integração com o Google Calendar. Posso consultar seus eventos internos e treinamentos atribuídos no Astro.",
+                "guardar_turno": True, "pdf_solicitado": False,
+                "acao_pendente": None,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
         pending = state.get("acao_pendente")
@@ -749,40 +708,6 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 return {
                     "rota": "mensagem",
                     "roteador_decision": decision,
-                    "agentes_chamados": state["agentes_chamados"] + ["roteador"],
-                }
-
-        if isinstance(pending, dict) and pending.get("tipo") == "criar_evento_google_calendar":
-            if _cancelamento_explicito(state["mensagem"]):
-                return {
-                    "rota": "direta",
-                    "candidato": "A criação foi cancelada. Nenhum evento foi adicionado à agenda.",
-                    "acao_pendente": None,
-                    "agentes_chamados": state["agentes_chamados"] + ["roteador"],
-                }
-            if _confirmacao_explicita(state["mensagem"]):
-                try:
-                    filters = CriarEventoGoogleArgs(
-                        titulo=pending["titulo"],
-                        inicio=datetime.fromisoformat(pending["inicio"]),
-                        fim=datetime.fromisoformat(pending["fim"]),
-                        descricao=pending.get("descricao"),
-                        confirmar=True,
-                    )
-                    decision = AgendaToolDecision(
-                        acao="criar_evento_google_calendar", filtros=filters,
-                    )
-                except (KeyError, TypeError, ValueError, ValidationError):
-                    return {
-                        "rota": "direta",
-                        "candidato": "A prévia do evento expirou. Prepare o agendamento novamente.",
-                        "acao_pendente": None,
-                        "agentes_chamados": state["agentes_chamados"] + ["roteador"],
-                    }
-                return {
-                    "rota": "agenda",
-                    "agenda_decision": decision,
-                    "confirmacao_explicita": True,
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"],
                 }
 
@@ -1257,7 +1182,6 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "consultar_acessos",
                 "consultar_treinamentos",
                 "consultar_eventos",
-                "consultar_google_calendar", "criar_evento_google_calendar",
             }
         ):
             return {
@@ -1284,7 +1208,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
             }
             if evidence.get("nome") in {
-                "enviar_mensagem", "criar_evento_google_calendar",
+                "enviar_mensagem",
             }:
                 result["acao_pendente"] = None
             return result
@@ -1310,7 +1234,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
         }
         if evidence.get("nome") in {
-            "enviar_mensagem", "criar_evento_google_calendar",
+            "enviar_mensagem",
         }:
             # Uma prévia reprovada não pode permanecer disponível para confirmação.
             result["acao_pendente"] = None
@@ -1335,11 +1259,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             }
         try:
             result = await gerar_pdf.ainvoke(
-                {
-                    "titulo": f"Consulta Astro: {state['mensagem'][:110]}",
-                    "pergunta": state["mensagem"],
-                    "resposta": content,
-                },
+                preparar_documento_pdf(content),
                 config={"configurable": {
                     "usuario_atual": state["usuario_atual"].model_dump(),
                 }},
@@ -1357,6 +1277,14 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             "resposta": content + "\n\nNão consegui gerar o PDF agora.",
             "agentes_chamados": state["agentes_chamados"] + ["gerar_pdf"],
         }
+
+    async def complete_turn(state: ChatState):
+        if not state.get("guardar_turno"):
+            return {}
+        answer = state["resposta"]
+        if state.get("pdf_url"):
+            answer += "\n\nPDF gerado e link temporário entregue."
+        return {"messages": [AIMessage(content=answer, id="resposta-atual")]}
 
     graph = StateGraph(ChatState)
     graph.add_node("guardrail_entrada", input_guard)
@@ -1390,9 +1318,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_node("juiz", judge)
     graph.add_node("guardrail_saida", output_guard)
     graph.add_node("gerar_pdf", generate_pdf)
+    graph.add_node(COMPLETE_TURN_NODE, complete_turn)
     graph.add_edge(START, "guardrail_entrada")
     graph.add_conditional_edges("guardrail_entrada", lambda state: state["rota"], {
-        "roteador": "roteador", "fim": END,
+        "roteador": "roteador", "fim": COMPLETE_TURN_NODE,
     })
     graph.add_conditional_edges("roteador", lambda state: state["rota"], {
         "rh": "rh", "sst": "sst", "agenda": "agenda",
@@ -1401,7 +1330,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         "conversa": "consultar_conversas",
         "notificacoes": "consultar_notificacoes",
         "acessos": "consultar_acessos",
-        "fim": END,
+        "fim": COMPLETE_TURN_NODE,
     })
     graph.add_edge("enviar_mensagem", "juiz")
     graph.add_edge("consultar_conversas", "juiz")
@@ -1423,8 +1352,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "notificacoes", "acessos",
             }
         ) else "fim",
-        {"gerar_pdf": "gerar_pdf", "fim": END},
+        {"gerar_pdf": "gerar_pdf", "fim": COMPLETE_TURN_NODE},
     )
-    graph.add_edge("gerar_pdf", END)
-    # Sem checkpoints do grafo: o serviço persiste somente turnos públicos no Mongo.
-    return graph.compile(name="astro_chat")
+    graph.add_edge("gerar_pdf", COMPLETE_TURN_NODE)
+    graph.add_edge(COMPLETE_TURN_NODE, END)
+    # Os subgrafos nativos herdam o checkpointer do grafo principal.
+    return graph.compile(name="astro_chat", checkpointer=checkpointer)

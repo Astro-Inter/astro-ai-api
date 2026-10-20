@@ -46,11 +46,7 @@ O ambiente provisório habilita `/auth/login` para facilitar os testes pelo
 Swagger. Use apenas contas de teste. Antes de transformar esse serviço em
 produção, altere `APP_ENV` para `production` e `ENABLE_DEV_LOGIN` para `false`.
 
-Depois que o Render fornecer a URL da API, configure
-`GOOGLE_OAUTH_REDIRECT_URI` como
-`https://SEU-SERVICO.onrender.com/integracoes/google-calendar/callback` e cadastre
-exatamente a mesma URI no Google Cloud. PostgreSQL, MongoDB, Redis e Qdrant
-também precisam aceitar conexões originadas pelo Render.
+PostgreSQL, MongoDB, Redis e Qdrant precisam aceitar conexões originadas pelo Render.
 
 Planos gratuitos podem hibernar. Na primeira consulta, o agente A2A pode estar
 iniciando; a API mantém o fallback local para o MCP Fetch.
@@ -85,8 +81,7 @@ Antes do EKS, substitua no overlay AWS:
 
 - `ACCOUNT_ID`, `REGION` e a tag da imagem no ECR;
 - o ARN real do certificado ACM;
-- `astro-api.example.com` pelo domínio real;
-- `GOOGLE_OAUTH_REDIRECT_URI` pela callback HTTPS desse domínio.
+- `astro-api.example.com` pelo domínio real.
 
 O Ingress pressupõe o AWS Load Balancer Controller e usa ALB com targets do tipo
 `ip`. No CI/CD, publique uma tag imutável no ECR (por exemplo, o SHA do commit),

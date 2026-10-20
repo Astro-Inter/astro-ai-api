@@ -3,6 +3,8 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.core.pii import PiiTokenizer
+from app.observability.privacy import private_tracing
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.prompts.resumo import RESUMO_PROMPT_COMPLETO
 from app.modules.chat.prompts.examples import example_messages
@@ -65,15 +67,19 @@ class ConversationMemory:
                     break
                 chunk.append(message)
                 chars += len(message["content"])
-            text = await self.model.complete("resumo", [
+            privacy = PiiTokenizer()
+            messages_for_summary = [
                 SystemMessage(content=RESUMO_PROMPT_COMPLETO),
                 *example_messages("resumo"),
                 HumanMessage(content=json.dumps({
                     "iniciada_em": doc["iniciada_em"].isoformat(),
                     "resumo_parcial": summary, "mensagens": chunk,
                 }, ensure_ascii=False)),
-            ], json_mode=True)
+            ]
+            with private_tracing():
+                text = await self.model.complete("resumo", privacy.mask_messages(messages_for_summary), json_mode=True)
             try:
+                text = privacy.restore_output(text)
                 summary = SummaryResult.model_validate_json(text).resumo
             except (ValidationError, ValueError):
                 raise InvalidAgentResponse() from None

@@ -13,6 +13,7 @@ from langsmith import utils as langsmith_utils
 from langsmith.run_helpers import get_tracing_context
 
 from app.core import config
+from app.observability.privacy import private_langsmith_client, private_tracing
 
 
 logger = logging.getLogger(__name__)
@@ -178,11 +179,7 @@ def finish_agent_measurement(measurement: AgentMeasurement | None) -> None:
 
 @lru_cache(maxsize=1)
 def _langsmith_client() -> Client:
-    return Client(
-        api_url=config.LANGSMITH_ENDPOINT,
-        api_key=config.LANGSMITH_API_KEY,
-        workspace_id=config.LANGSMITH_WORKSPACE_ID,
-    )
+    return private_langsmith_client()
 
 
 def _tracing_enabled() -> bool:
@@ -231,7 +228,7 @@ def observe_chat(*, reused_session: bool, markdown: bool) -> Iterator[ChatObserv
                 "response_format": "markdown" if markdown else "plain_text",
             },
             client=_langsmith_client() if config.LANGSMITH_API_KEY else None,
-        ) as run:
+        ) as run, private_tracing():
             trace_id = run.id
             try:
                 yield observation

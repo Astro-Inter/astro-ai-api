@@ -34,12 +34,12 @@ próprio usuário. Ela não concede novas permissões nem substitui consultas at
 | --- | --- |
 | RH | Consulta autorizada de usuários, dados próprios e conformidade de funcionários |
 | SST | Consulta de NRs internas e pesquisa de orientações oficiais |
-| Agenda | Treinamentos, eventos internos e Google Calendar quando conectado |
+| Agenda | Treinamentos e eventos internos atribuídos |
 | FAQ | RAG com documentos internos e fontes públicas oficiais |
 | Ferramentas do Astro | Mensagens, conversas, notificações e acessos |
 | Memória | Histórico persistente no MongoDB e busca semântica no Qdrant |
 | Segurança | Firebase, autorização no PostgreSQL, guardrails e agente Juiz |
-| Integrações | MCP Fetch, MCP Google Calendar, A2A e geração de PDFs no R2 |
+| Integrações | MCP Fetch, A2A e geração de PDFs no R2 |
 | Observabilidade | Traces no LangSmith, logs OpenTelemetry e métricas SRE |
 
 ## Tecnologias
@@ -84,7 +84,6 @@ Nunca versione `.env`, tokens, chaves de API ou credenciais de banco.
 - [Chat, agentes e grafos](#chat-e-grafos-scrum-186)
 - [Observabilidade e métricas SRE](#observabilidade-e-métricas-sre)
 - [Pesquisa pública por A2A](#pesquisa-pública-por-a2a)
-- [Google Calendar por MCP](#google-calendar-por-mcp)
 - [Histórico persistente e sessões](#histórico-persistente-e-sessões-scrum-187)
 - [Testes](#testes)
 
@@ -324,8 +323,7 @@ No fluxo automático atual, a memória acessa o histórico, a tool de RH consult
 os usuários permitidos pelo perfil autenticado, as tools de SST consultam NRs e
 orientações oficiais, e a tool de Agenda lê treinamentos atribuídos ao usuário.
 O Roteador pode enviar mensagens após uma prévia e uma confirmação explícita. A
-Agenda consulta treinamentos no PostgreSQL e pode consultar ou criar eventos no
-Google Calendar por MCP quando o próprio usuário conectar a conta. Os especialistas
+Agenda consulta eventos internos e treinamentos no PostgreSQL. Os especialistas
 continuam sem autorização para afirmar operações não confirmadas por ferramentas.
 Autenticação não
 concede acesso automático a dados de outras pessoas ou empresas; cada ferramenta
@@ -378,10 +376,9 @@ Essas barreiras complementam os prompts, não substituem controles de acesso.
 Cada mensagem pode gerar de uma a sete chamadas de modelo, além de um embedding
 quando houver busca semântica de histórico ou FAQ, com custos e latência
 dos provedores. `LANGSMITH_*` é lido pelo SDK quando o tracing está habilitado;
-traces podem conter mensagens, contexto do usuário e respostas. Habilite somente
-quando esse envio de dados estiver autorizado. Bearer e chaves não são incluídos
-nos prompts. As variáveis do Google Calendar são opcionais; sem elas, todo o chat
-continua funcionando, exceto as operações que dependem do calendário.
+o cliente de tracing omite inputs e conteúdo de outputs, preservando métricas
+e uso de tokens. Metadados recebem remoção adicional de identificadores e segredos.
+Bearer e chaves não são incluídos nos prompts.
 
 ### Observabilidade e métricas SRE
 
@@ -503,43 +500,39 @@ Para testar no chat, pergunte: “Busque uma cartilha da Fundacentro sobre risco
 psicossociais.” O log `Pesquisa pública concluída via A2A` confirma a
 delegação; a resposta continua exibindo somente as fontes oficiais encontradas.
 
-### Google Calendar por MCP
+### Remoção do Google Calendar e limpeza do MongoDB
 
-A integração é sob demanda. O login Firebase não conecta automaticamente uma conta
-Google e consultas como "quais treinamentos preciso realizar?" continuam usando
-somente o PostgreSQL. Quando o usuário pedir para consultar ou criar algo no Google
-Calendar sem ter uma conta conectada, o chat informa a rota de conexão e mantém a
-prévia da criação pendente na sessão.
+O chatbot não conecta contas Google nem consulta/cria eventos externos. As rotas
+`/integracoes/google-calendar` foram removidas. Eventos internos e treinamentos
+continuam disponíveis no PostgreSQL.
 
-Configure um cliente OAuth do tipo aplicação Web no Google Cloud, habilite a Google
-Calendar API e cadastre exatamente a URI de callback usada pela API. Depois preencha:
+Após publicar esta versão e parar as instâncias antigas, você pode excluir, no
+banco configurado em `MONGODB_DATABASE`, somente estas duas coleções exclusivas:
 
-```dotenv
-GOOGLE_OAUTH_CLIENT_ID=
-GOOGLE_OAUTH_CLIENT_SECRET=
-GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/integracoes/google-calendar/callback
-GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY=
+| Coleção | Conteúdo removido |
+| --- | --- |
+| `integracoes_google_calendar` | Conexões por usuário e tokens OAuth criptografados |
+| `integracoes_google_calendar_oauth_states` | Estados temporários de autorização OAuth |
+
+No MongoDB Compass, selecione o banco correto e use **Drop Collection** em cada
+uma dessas duas coleções. Excluir os registros locais não revoga a autorização
+na Google: remova também o acesso do aplicativo nas conexões de terceiros da
+conta Google, se quiser revogar a permissão concedida.
+
+Preserve a coleção `sessoes`, seus históricos e resumos, e as demais coleções do
+Astro. Opcionalmente, limpe só as prévias antigas de criação de evento:
+
+```javascript
+db.sessoes.updateMany(
+  { "acao_pendente.tipo": "criar_evento_google_calendar" },
+  { $set: { acao_pendente: null } }
+)
 ```
 
-Gere uma chave Fernet exclusiva para o ambiente, sem versioná-la:
-
-```powershell
-.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Após reiniciar a API, as rotas são:
-
-- `GET /integracoes/google-calendar/status`: informa se o usuário autenticado conectou a conta.
-- `GET /integracoes/google-calendar/conectar`: retorna `authorization_url`; o front-end deve abrir essa URL.
-- `GET /integracoes/google-calendar/callback`: callback público validado por `state` OAuth de uso único.
-- `DELETE /integracoes/google-calendar`: revoga quando possível e remove a conexão local.
-
-Os tokens ficam criptografados no MongoDB e associados somente ao Firebase UID. Eles
-não entram no `CurrentUser`, no LangGraph nem nos prompts. O agente de Agenda acessa
-uma allowlist de tools por um servidor MCP interno em transporte `stdio`:
-`google_calendar_status`, `google_calendar_list_events` e
-`google_calendar_create_event`. Criar evento sempre exige prévia e confirmação em
-uma mensagem posterior; o ID estável evita duplicar o evento em um retry.
+A API também descarta essas prévias ao receber uma nova mensagem. Não é preciso
+apagar conversas, resumos ou coleções do Qdrant para retirar a integração.
+Remova as quatro variáveis `GOOGLE_OAUTH_*` do `.env` e dos segredos do deploy,
+se ainda estiverem configuradas. Firebase Authentication continua em uso.
 
 ### Tools de consulta de usuários do RH
 
@@ -742,8 +735,7 @@ evento.
 
 ### Consulta de eventos internos da Agenda
 
-Perguntas como “qual é o próximo evento?” usam `consultar_eventos`, sem exigir
-Google Calendar. A consulta lê `evento` e as datas de `turma` somente quando há
+Perguntas como “qual é o próximo evento?” usam `consultar_eventos`. A consulta lê `evento` e as datas de `turma` somente quando há
 inscrição do usuário autenticado em `turma_funcionario`. Não lista eventos de
 terceiros nem interpreta uma NR obrigatória como inscrição. Por padrão retorna
 eventos ativos com início futuro, ordenados por data e turma, independentemente
@@ -751,7 +743,7 @@ do status da conclusão. “Próximo evento” limita a resposta ao primeiro ite
 O histórico completo usa `proximos:false`, com paginação. Datas sem fuso no banco
 são comparadas com a referência local America/Sao_Paulo, sem atribuir fuso ao
 horário exibido. Filtros de data ou título ainda não são suportados por esta tool.
-Google Calendar continua disponível quando mencionado explicitamente.
+O chatbot não possui integração com calendários externos.
 
 ### Tool de consulta dos próprios acessos do Roteador
 
@@ -771,9 +763,13 @@ dias acessei neste mês?” e “Qual foi meu primeiro acesso ao sistema?”.
 `app/modules/shared/tools.py` implementa `gerar_pdf` para os agentes do chat.
 Quando a mensagem pede explicitamente um PDF, o agente responde à consulta
 normalmente. Somente depois da validação pelo Juiz e pelo guardrail de saída, a
-aplicação transforma a pergunta e a resposta aprovada em um relatório com
-conteúdo variável. Pedidos sem dados confirmados ou bloqueados não enviam
-arquivo ao R2. O modelo não escolhe o conteúdo final nem inventa o link.
+aplicação transforma o conteúdo aprovado em um documento. O contrato da tool
+é `titulo`, `conteudo` (Markdown) e `contexto` opcional. Não há seções fixas de
+pergunta/resposta nem cópia automática do pedido. O título é aproveitado do
+primeiro cabeçalho ou título em negrito do conteúdo; na ausência dele, usa-se
+"Documento Astro". Subtítulos, parágrafos, listas, tabelas e referências recebem
+formatação própria, sem acrescentar fatos ou fazer nova chamada de IA. Pedidos sem dados confirmados ou bloqueados não enviam
+arquivo ao R2. A aplicação usa somente o conteúdo que passou pela revisão e fornece o link real.
 Os relatórios usam a fonte MuseoModerno e a paleta Astro (`#1C1839`,
 `#8F00C4` e branco), com a logo translúcida no cabeçalho de todas as páginas.
 
@@ -946,6 +942,78 @@ Não há transação distribuída entre Mongo e Qdrant. O worker externo não pr
 sessões em estado `encerrando`, portanto, para este endpoint legado,
 uma falha após a gravação no Qdrant ainda pode exigir nova tentativa para finalizar
 o estado no Mongo. Sessões em encerramento não entram na busca de memória.
+
+### Proteção dos dados enviados à IA
+
+Antes de chamar os agentes do chat, a API aplica pseudonimização local:
+
+- CPF, CNPJ, e-mail, telefone brasileiro e CEP reconhecidos por padrões viram
+  tokens temporários, consistentes entre mensagem, histórico e evidência.
+- Nomes são protegidos quando identificados em registros pessoais de ferramentas
+  autorizadas ou em declarações explícitas, como "me chamo" ou "Nome:". Campos
+  `nome` de cargo, NR e unidade não são tratados automaticamente como pessoas.
+- O prompt recebe apenas o papel do usuário autenticado. UID, UUID de sessão e
+  identificadores internos presentes em dados estruturados são removidos; as
+  ferramentas continuam recebendo a identidade verdadeira pelo contexto seguro.
+- Credenciais reconhecidas são removidas sem restauração. Cargo, papel, datas,
+  horários, números de NRs e contagens necessários à tarefa são preservados.
+
+O mapa de tokens pertence a uma única chamada, inclusive sua tentativa de
+correção, e não entra no prompt, nos logs, no Mongo ou no checkpointer. A resposta
+volta com tokens e é restaurada localmente, com tratamento estrutural de JSON,
+antes da validação dos argumentos das ferramentas e das regras de acesso. Tokens
+desconhecidos causam falha segura; eles não são interpretados como autorização.
+Os provedores e suas tentativas de fallback recebem somente a versão mascarada.
+
+O mesmo tratamento é aplicado aos resumos manuais gerados por esta API e aos
+agentes de recomendação de NRs. Textos enviados à API de embeddings recebem
+remoção de identificadores por tipo, sem mapa reversível externo. A pesquisa
+pública A2A é evitada quando a consulta contém dados reconhecidos como pessoais;
+o fallback consulta somente URLs oficiais fixas.
+
+No LangSmith, o cliente privado é usado tanto no trace raiz como nos callbacks
+LangChain. Os inputs e o conteúdo dos outputs são omitidos; latência, resolução e
+contagens de tokens continuam disponíveis. Isso evita que o grafo ou as tools
+exponham dados anteriores à pseudonimização nos traces.
+
+Essa medida é **pseudonimização**, não anonimização irreversível de todo o sistema.
+O histórico original e os dados de negócio continuam nos bancos e nas respostas
+que o usuário pode acessar. Não há reconhecimento universal de pessoas em texto
+livre, OCR ou remoção retroativa de dados já enviados/indexados. O serviço de
+resumos automáticos por inatividade é outro repositório e precisa aplicar a mesma
+política em suas próprias chamadas; esta alteração cobre os caminhos desta API.
+
+### Memória híbrida: MongoDB e checkpointer do LangGraph
+
+O grafo usa `InMemorySaver` (o `MemorySaver` das aulas) e `thread_id` derivado do
+UID autenticado e do UUID da sessão. O identificador é um hash; não vem do corpo
+da requisição e não substitui autenticação. RH, SST, Agenda e FAQ são subgrafos
+nativos e herdam o checkpointer do grafo principal.
+
+O Mongo continua sendo a fonte persistente e obrigatória da conversa. Em cada
+mensagem, a API recarrega o histórico autorizado e reconcilia a janela recente no
+campo `messages`, com `add_messages` e substituição explícita por `Overwrite`.
+Os agentes usam essa conversa do estado do grafo, mantendo os limites de contexto
+por papel. A mesma mensagem não é anexada duas vezes. Uma troca de worker ou
+reinício reconstrói a memória a partir do Mongo, inclusive se o checkpoint local
+estiver vazio ou desatualizado.
+
+Durante o pedido, o LangGraph salva o progresso dos nós e subgrafos. Depois da
+gravação do turno no Mongo, a API compacta os checkpoints em um único snapshot
+com a janela de mensagens públicas e o UUID da sessão. Decisões de ferramentas,
+permissões, respostas intermediárias e URLs assinadas não ficam nessa memória
+entre turnos. O próximo pedido recebe identidade e contexto atuais. Não há
+retomada automática de um nó para repetir envio de mensagens ou outras ações.
+
+Turnos bloqueados, timeouts e falhas de persistência descartam o checkpoint local.
+Uma falha de compactação após o Mongo confirmar o turno não invalida a resposta.
+O cache mantém até 128 sessões por processo; sessões ociosas há 30 minutos são
+removidas na próxima operação. Encerrar/reabrir uma sessão e finalizar a API
+limpam seus checkpoints correspondentes. A remoção local não apaga o histórico
+nem os resumos persistidos. Checkpoints de execução não sobrevivem a reinícios.
+
+Não há novas variáveis ou coleções. MongoDB, Qdrant, resumos automáticos e rotas
+de sessões continuam com os mesmos contratos.
 
 ### Memória do roteador
 

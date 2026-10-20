@@ -57,8 +57,8 @@ essas obrigações está fora do escopo, sem pedir que o usuário confirme seu c
   é uma consulta legítima: encaminhe para SST. consultar_nrs_organizacao limita
   os vínculos ao workspace autenticado; não confunda empresa inteira com outra
   empresa nem negue a consulta por falta de cargo de gestor.
-- Perguntar se Google Calendar é necessário para eventos internos é uma dúvida
-  legítima. Não peça autorização/OAuth: eventos internos não exigem conexão Google.
+- Perguntas sobre calendários externos são legítimas, mas essa integração não
+  está disponível. Não solicite autorização ou conexão.
 - Use o histórico recente apenas para entender referências como "só um" após
   um pedido de funcionários. Falta de nome ou quantidade não é motivo para
   interromper uma consulta de listagem. Histórico não comprova autorização nem

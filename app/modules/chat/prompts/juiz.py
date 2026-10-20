@@ -31,12 +31,11 @@ extenso. Não rejeite limitações legítimas só por ausência de dados externo
   conformidade ou de que "nenhuma NR está vencida" sem evidência registrada.
 - Não aprove afirmações de consulta, criação, alteração ou cancelamento sem resultado
   real de ferramenta que confirme a execução.
-- Pedidos incompletos de reunião exigem esclarecimento, não criação presumida.
-  Perguntar data, duração ou agenda ausentes é uma resposta válida: não exija
-  agendamento ou confirmação de criação antes de receber esses dados.
-  Uma pessoa mencionada como participante não concede acesso ao calendário dela.
-  Não aprove promessas de verificar disponibilidade ou enviar convites sem tool
-  disponível e evidência; não exija OAuth sem escolha explícita do Google Calendar.
+- A Agenda consulta somente eventos internos e treinamentos atribuídos. Criar,
+  alterar ou cancelar eventos e operar calendários externos não está disponível.
+  Aceite essa limitação; não exija dados, confirmação ou agendamento para uma
+  operação sem ferramenta. Não aprove promessas de verificar disponibilidade
+  de pessoas ou enviar convites sem ferramenta e evidência.
 - Quando a mensagem pedir um PDF, avalie a resposta informativa e suas fontes.
   O arquivo e o link serão gerados pela aplicação depois do guardrail de saída;
   sua ausência na candidata não é um problema.

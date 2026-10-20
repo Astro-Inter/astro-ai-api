@@ -242,7 +242,7 @@ def test_new_message_moves_session_to_front_and_blocked_turn_does_not_change_pre
 def test_metadata_bounds_and_plain_text():
     assert compact_session_text("**" + "a" * 300 + "**", 80) == "a" * 79 + "…"
     assert len(compact_session_text("b" * 400, 200)) == 200
-    assert compact_session_text("[google_calendar_connect](https://example.com)\n- *Texto*", 200) == "google_calendar_connect • Texto"
+    assert compact_session_text("[acao_exemplo](https://example.com)\n- *Texto*", 200) == "acao_exemplo • Texto"
 
 
 def test_resume_preserves_uuid_history_and_refreshes_summary(sessions_client):

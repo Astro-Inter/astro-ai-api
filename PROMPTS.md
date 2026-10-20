@@ -44,7 +44,17 @@ existentes. Modelos simulados não demonstram ganho de qualidade de um LLM real.
 Após deploy, compare conversas reais no LangSmith: acerto de rota, pedidos de
 esclarecimento desnecessários, fidelidade às fontes, taxa de resolução, erros,
 latência e consumo/custo de tokens. Use os mesmos casos e modelo ao comparar.
-Inclua listagem de funcionários e "só um", próximo evento interno versus Google,
+Inclua listagem de funcionários e "só um", próximo evento interno,
 NRs da empresa versus catálogo, cartilha da Fundacentro versus política interna,
 mensagem com prévia/confirmação, paginação e consultas de memória de outras sessões.
+A integração Google Calendar foi removida; os prompts não oferecem conexão ou ações externas.
 Só traces/evaluations reais permitem concluir se a mudança melhorou esses índices.
+
+
+## Dados pessoais enviados aos modelos
+
+Mensagens, memória e evidências dinâmicas recebem tokens locais antes do agente
+LangChain. O modelo recebe somente o papel autenticado; identificadores internos
+não orientam decisões de permissão. A restauração dos tokens ocorre na aplicação,
+antes da validação local de argumentos, sem conceder acesso adicional. Exemplos
+fixos continuam fictícios. Traces não exportam os payloads de conversa.

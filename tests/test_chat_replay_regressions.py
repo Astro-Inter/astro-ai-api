@@ -176,7 +176,7 @@ def test_internal_events_do_not_require_google_connection(chat_client):
     })
     assert response.status_code == 200
     assert response.json()['resposta'].startswith('Não.')
-    assert 'opcional' in response.json()['resposta']
+    assert 'não possui integração' in response.json()['resposta']
     assert 'google-calendar-conectar' not in response.json()['resposta']
     assert model.calls == []
 
@@ -206,7 +206,7 @@ def test_pdf_corrected_after_judge_review_is_generated_and_link_can_be_recovered
 
     class PdfTool:
         async def ainvoke(self, args, config):
-            assert 'Vou gerar' not in args['resposta']
+            assert 'Vou gerar' not in args['conteudo']
             uploads.append(args)
             return {'status': 'ok', 'url': 'https://r2.example/arquivo.pdf?assinatura=teste'}
 
@@ -223,6 +223,10 @@ def test_pdf_corrected_after_judge_review_is_generated_and_link_can_be_recovered
     assert len(uploads) == 1
     doc = application.state.chat_service.repository.docs[sid]
     assert 'assinatura=teste' not in str(doc['mensagens'])
+    checkpoint_config = application.state.chat_service.checkpoints.config('user-a', sid)
+    checkpoint = application.state.chat_service.checkpoints.saver.get_tuple(checkpoint_config)
+    assert checkpoint is not None
+    assert 'assinatura=teste' not in str(checkpoint.checkpoint['channel_values'])
     assert all('assinatura=teste' not in str(messages) for _, messages, _ in model.calls)
     doc['ultimo_pdf']['expira_em'] = utc_now() - timedelta(seconds=1)
     expired = client.post('/chat/messages', json={'message': 'Cadê o PDF?', 'session_id': sid})
