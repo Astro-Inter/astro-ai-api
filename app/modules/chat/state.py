@@ -1,9 +1,14 @@
-from typing import TypedDict
+from typing import Annotated, TypedDict
+
+from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
 
 from app.core.security import CurrentUser
 
 
 class ChatState(TypedDict, total=False):
+    # Conversa curta do LangGraph, sincronizada com o Mongo a cada turno.
+    messages: Annotated[list[AnyMessage], add_messages]
     usuario_atual: CurrentUser
     session_id: str
     memoria: dict

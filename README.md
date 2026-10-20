@@ -943,6 +943,38 @@ sessões em estado `encerrando`, portanto, para este endpoint legado,
 uma falha após a gravação no Qdrant ainda pode exigir nova tentativa para finalizar
 o estado no Mongo. Sessões em encerramento não entram na busca de memória.
 
+### Memória híbrida: MongoDB e checkpointer do LangGraph
+
+O grafo usa `InMemorySaver` (o `MemorySaver` das aulas) e `thread_id` derivado do
+UID autenticado e do UUID da sessão. O identificador é um hash; não vem do corpo
+da requisição e não substitui autenticação. RH, SST, Agenda e FAQ são subgrafos
+nativos e herdam o checkpointer do grafo principal.
+
+O Mongo continua sendo a fonte persistente e obrigatória da conversa. Em cada
+mensagem, a API recarrega o histórico autorizado e reconcilia a janela recente no
+campo `messages`, com `add_messages` e substituição explícita por `Overwrite`.
+Os agentes usam essa conversa do estado do grafo, mantendo os limites de contexto
+por papel. A mesma mensagem não é anexada duas vezes. Uma troca de worker ou
+reinício reconstrói a memória a partir do Mongo, inclusive se o checkpoint local
+estiver vazio ou desatualizado.
+
+Durante o pedido, o LangGraph salva o progresso dos nós e subgrafos. Depois da
+gravação do turno no Mongo, a API compacta os checkpoints em um único snapshot
+com a janela de mensagens públicas e o UUID da sessão. Decisões de ferramentas,
+permissões, respostas intermediárias e URLs assinadas não ficam nessa memória
+entre turnos. O próximo pedido recebe identidade e contexto atuais. Não há
+retomada automática de um nó para repetir envio de mensagens ou outras ações.
+
+Turnos bloqueados, timeouts e falhas de persistência descartam o checkpoint local.
+Uma falha de compactação após o Mongo confirmar o turno não invalida a resposta.
+O cache mantém até 128 sessões por processo; sessões ociosas há 30 minutos são
+removidas na próxima operação. Encerrar/reabrir uma sessão e finalizar a API
+limpam seus checkpoints correspondentes. A remoção local não apaga o histórico
+nem os resumos persistidos. Checkpoints de execução não sobrevivem a reinícios.
+
+Não há novas variáveis ou coleções. MongoDB, Qdrant, resumos automáticos e rotas
+de sessões continuam com os mesmos contratos.
+
 ### Memória do roteador
 
 O histórico recente da sessão atual vem do Mongo em cada mensagem e sobrevive a

@@ -97,7 +97,13 @@ async def _invoke_agent(
             schema.model_json_schema(), ensure_ascii=False,
         )
     messages = []
-    for item in _history_for_agent(name, state["historico"]):
+    graph_messages = state.get("messages")
+    history = (
+        [{"role": "user" if isinstance(item, HumanMessage) else "assistant", "content": item.content}
+         for item in graph_messages[:-1]]
+        if graph_messages is not None else state["historico"]
+    )
+    for item in _history_for_agent(name, history):
         cls = HumanMessage if item["role"] == "user" else AIMessage
         messages.append(cls(content=item["content"]))
     messages.append(HumanMessage(content=state["mensagem"]))

@@ -4,7 +4,11 @@ from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from langchain_core.messages import HumanMessage
+from langgraph.types import Overwrite
+
 from app.core.security import CurrentUser
+from app.infrastructure.checkpoints import ConversationCheckpoints, checkpoint_messages
 from app.infrastructure.database.sessions import MongoSessions, utc_now
 from app.infrastructure.llm.models import AgentModel, LanguageModels
 from app.infrastructure.vectorstore.faq import FaqVectors
@@ -54,7 +58,11 @@ class ChatService:
         self.vectors = vectors if vectors is not None else SummaryVectors()
         self.faq_vectors = faq_vectors if faq_vectors is not None else FaqVectors()
         self.memory = ConversationMemory(self.repository, self.vectors, self.model)
-        self.graph = build_chat_graph(self.model, self.memory.search, self.faq_vectors.search)
+        self.checkpoints = ConversationCheckpoints()
+        self.graph = build_chat_graph(
+            self.model, self.memory.search, self.faq_vectors.search,
+            checkpointer=self.checkpoints.saver,
+        )
         self.request_timeout = request_timeout
         self.active_requests = 0
 
@@ -91,6 +99,7 @@ class ChatService:
                 if doc.get("status") == "encerrando":
                     raise ChatError(409, "Conversa em encerramento. Repita /encerrar antes de retomar.")
                 if doc.get("status") == "encerrada":
+                    await self.checkpoints.discard(user.uid, sid)
                     # Mantém UUID/histórico; o próximo encerramento precisa de novo resumo.
                     await self.repository.update(sid, user.uid, token, {
                         "status": "ativa", "encerrada_em": None, "resumo": "",
@@ -157,7 +166,10 @@ class ChatService:
     ) -> ChatResponse:
         async with self.operation():
             await self.repository.ensure(session_id, user.uid)
-            async with self.session_lock(session_id, user.uid) as (doc, token):
+            async with (
+                self.session_lock(session_id, user.uid) as (doc, token),
+                self.checkpoints.turn(self.graph, user.uid, session_id) as checkpoint_turn,
+            ):
                 if doc.get("status", "ativa") != "ativa":
                     raise ChatError(409, "Conversa encerrada ou em encerramento. "
                                     "Use /iniciar para retomar uma conversa encerrada; "
@@ -178,9 +190,13 @@ class ChatService:
                 if (len(messages) >= MAX_MESSAGES or sum(len(m["content"]) for m in messages)
                         + len(request.message) + 6000 > MAX_SESSION_CHARACTERS):
                     raise ChatError(409, "Limite da conversa atingido. Encerre e inicie outra sessao.")
+                history = recent_history(messages)
+                graph_messages = checkpoint_messages(history, len(messages) - len(history))
+                graph_messages.append(HumanMessage(content=request.message, id=f"mongo-{len(messages)}"))
                 result = await self.graph.ainvoke({
+                    "messages": Overwrite(graph_messages),
                     "usuario_atual": user, "session_id": session_id,
-                    "historico": recent_history(messages),
+                    "historico": history,
                     "mensagem": request.message,
                     "contexto": {
                         "workspace_id": None, "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
@@ -245,7 +261,7 @@ class ChatService:
                     "resposta_deterministica": False,
                     "consulta_rh": doc.get("consulta_rh"),
                     "ultimo_pdf": previous_pdf,
-                }, config={"recursion_limit": 20})
+                }, config=checkpoint_turn.config)
                 observation.mark_result(result)
                 pdf_url = result.get("pdf_url")
                 public_answer = result["resposta"]
@@ -290,6 +306,13 @@ class ChatService:
                             {"role": "human", "content": request.message},
                             {"role": "assistant", "content": stored_answer},
                         ])
+                    # Compact only after the atomic Mongo update succeeds. An
+                    # old checkpoint never overrides data loaded from another worker.
+                    public_history = recent_history(messages + [
+                        {"role": "human", "content": request.message},
+                        {"role": "assistant", "content": stored_answer},
+                    ])
+                    await checkpoint_turn.commit(public_history, len(messages) + 2 - len(public_history))
                 return response
 
     async def end(self, session_id: UUID, user: CurrentUser):
@@ -297,6 +320,7 @@ class ChatService:
         async with self.operation():
             async with self.session_lock(sid, user.uid) as (doc, token):
                 if doc.get("status") == "encerrada":
+                    await self.checkpoints.discard(user.uid, sid)
                     return SessionResponse(session_id=session_id, status="encerrada",
                         resumo=doc.get("resumo") or None, resumo_indexado=doc.get("resumo_indexado", False))
                 await self.repository.update(sid, user.uid, token, {"status": "encerrando"})
@@ -322,10 +346,12 @@ class ChatService:
                     "status": "encerrada", "encerrada_em": utc_now(), "resumo_indexado": indexed,
                     "resumo_parcial": "", "resumo_ate": 0,
                 })
+                await self.checkpoints.discard(user.uid, sid)
                 return SessionResponse(session_id=session_id, status="encerrada",
                                        resumo=summary or None, resumo_indexado=indexed)
 
     async def close(self):
+        self.checkpoints.clear()
         try:
             try:
                 await self.repository.close()

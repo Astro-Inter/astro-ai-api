@@ -6,7 +6,9 @@ from datetime import date, datetime
 from pydantic import ValidationError
 
 from langgraph.graph import END, START, StateGraph
+from langchain_core.messages import AIMessage
 
+from app.infrastructure.checkpoints import COMPLETE_TURN_NODE
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.agents import invoke_agent
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
@@ -544,7 +546,7 @@ def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
         return None
 
 
-def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
+def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, checkpointer=None):
     async def input_guard(state: ChatState):
         if requests_internal_instructions(state["mensagem"]):
             return {
@@ -1276,6 +1278,14 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
             "agentes_chamados": state["agentes_chamados"] + ["gerar_pdf"],
         }
 
+    async def complete_turn(state: ChatState):
+        if not state.get("guardar_turno"):
+            return {}
+        answer = state["resposta"]
+        if state.get("pdf_url"):
+            answer += "\n\nPDF gerado e link temporário entregue."
+        return {"messages": [AIMessage(content=answer, id="resposta-atual")]}
+
     graph = StateGraph(ChatState)
     graph.add_node("guardrail_entrada", input_guard)
     graph.add_node("roteador", router)
@@ -1308,9 +1318,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
     graph.add_node("juiz", judge)
     graph.add_node("guardrail_saida", output_guard)
     graph.add_node("gerar_pdf", generate_pdf)
+    graph.add_node(COMPLETE_TURN_NODE, complete_turn)
     graph.add_edge(START, "guardrail_entrada")
     graph.add_conditional_edges("guardrail_entrada", lambda state: state["rota"], {
-        "roteador": "roteador", "fim": END,
+        "roteador": "roteador", "fim": COMPLETE_TURN_NODE,
     })
     graph.add_conditional_edges("roteador", lambda state: state["rota"], {
         "rh": "rh", "sst": "sst", "agenda": "agenda",
@@ -1319,7 +1330,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
         "conversa": "consultar_conversas",
         "notificacoes": "consultar_notificacoes",
         "acessos": "consultar_acessos",
-        "fim": END,
+        "fim": COMPLETE_TURN_NODE,
     })
     graph.add_edge("enviar_mensagem", "juiz")
     graph.add_edge("consultar_conversas", "juiz")
@@ -1341,8 +1352,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None):
                 "notificacoes", "acessos",
             }
         ) else "fim",
-        {"gerar_pdf": "gerar_pdf", "fim": END},
+        {"gerar_pdf": "gerar_pdf", "fim": COMPLETE_TURN_NODE},
     )
-    graph.add_edge("gerar_pdf", END)
-    # Sem checkpoints do grafo: o serviço persiste somente turnos públicos no Mongo.
-    return graph.compile(name="astro_chat")
+    graph.add_edge("gerar_pdf", COMPLETE_TURN_NODE)
+    graph.add_edge(COMPLETE_TURN_NODE, END)
+    # Os subgrafos nativos herdam o checkpointer do grafo principal.
+    return graph.compile(name="astro_chat", checkpointer=checkpointer)
