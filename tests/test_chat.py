@@ -146,7 +146,8 @@ def test_specialist_flow(chat_client, domain):
         {"role": "assistant", "content": body["resposta"]},
     ]
     system = model.calls[2][1][0].content
-    assert '"uid": "user-a"' in system
+    assert '"uid"' not in system
+    assert '"role": "COLABORADOR"' in system
     assert '"fuso": "America/Sao_Paulo"' in system
     assert (
         '"ferramentas_disponiveis": ["buscar_historico", "consultar_normas", '
@@ -1188,9 +1189,9 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     assert [call[0] for call in model.calls].count("rh") == 1
     judge_call = next(call for call in model.calls if call[0] == "juiz")
     tool_result = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
-    assert tool_result["resultado"]["evidencia_tool"]["resultado"]["usuarios"][0][
-        "email"
-    ] == "ana@example.com"
+    assert tool_result["resultado"]["evidencia_tool"]["resultado"]["usuarios"][0]["email"].startswith("[ASTRO_PII_")
+    assert "ana@example.com" not in str(judge_call[1])
+    assert "ana@example.com" in response.json()["resposta"]
     evidence = json.loads(judge_call[1][-1].content.split("\n", 1)[1])["resultado"]
     assert evidence["evidencia_tool"]["nome"] == "buscar_outros_usuarios"
     assert evidence["evidencia_tool"]["resultado"]["status"] == "ok"
@@ -1256,11 +1257,19 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, fiel
     data = evidence["evidencia_tool"]["resultado"]["dados"]
     if field:
         assert set(data) == {field}
-        assert str(data[field]) in response.json()["resposta"]
+        expected = {"nome": "Lucas", "email": "lucas@example.com", "cargo": "Analista", "unidade": "Matriz"}[field]
+        assert expected in response.json()["resposta"]
+        if field in {"nome", "email"}:
+            assert data[field].startswith("[ASTRO_PII_")
+            assert expected not in str(judge_call[1])
+        else:
+            assert data[field] == expected
         assert "12345678901" not in response.json()["resposta"]
         assert "12345678901" not in str(judge_call[1])
     else:
-        assert data["cpf"] == "12345678901"
+        assert data["cpf"].startswith("[ASTRO_PII_")
+        assert "12345678901" not in str(judge_call[1])
+        assert "12345678901" in response.json()["resposta"]
 
 
 @pytest.mark.parametrize("message", [
@@ -2270,7 +2279,7 @@ def test_chat_requires_verified_firebase_token(chat_client, monkeypatch):
     assert client.post("/chat/messages", json={"message": "Uma orientação, por favor"}, headers={
         "Authorization": "Bearer fake-valid-token",
     }).status_code == 200
-    assert '"uid": "firebase-user"' in model.calls[0][1][0].content
+    assert "firebase-user" not in str(model.calls)
     assert '"role": "COLABORADOR"' in model.calls[0][1][0].content
     assert application.state.access_roles.calls == ["firebase-user"]
     assert "fake-valid-token" not in str(model.calls)

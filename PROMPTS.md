@@ -49,3 +49,12 @@ NRs da empresa versus catálogo, cartilha da Fundacentro versus política intern
 mensagem com prévia/confirmação, paginação e consultas de memória de outras sessões.
 A integração Google Calendar foi removida; os prompts não oferecem conexão ou ações externas.
 Só traces/evaluations reais permitem concluir se a mudança melhorou esses índices.
+
+
+## Dados pessoais enviados aos modelos
+
+Mensagens, memória e evidências dinâmicas recebem tokens locais antes do agente
+LangChain. O modelo recebe somente o papel autenticado; identificadores internos
+não orientam decisões de permissão. A restauração dos tokens ocorre na aplicação,
+antes da validação local de argumentos, sem conceder acesso adicional. Exemplos
+fixos continuam fictícios. Traces não exportam os payloads de conversa.

@@ -376,9 +376,9 @@ Essas barreiras complementam os prompts, não substituem controles de acesso.
 Cada mensagem pode gerar de uma a sete chamadas de modelo, além de um embedding
 quando houver busca semântica de histórico ou FAQ, com custos e latência
 dos provedores. `LANGSMITH_*` é lido pelo SDK quando o tracing está habilitado;
-traces podem conter mensagens, contexto do usuário e respostas. Habilite somente
-quando esse envio de dados estiver autorizado. Bearer e chaves não são incluídos
-nos prompts.
+o cliente de tracing omite inputs e conteúdo de outputs, preservando métricas
+e uso de tokens. Metadados recebem remoção adicional de identificadores e segredos.
+Bearer e chaves não são incluídos nos prompts.
 
 ### Observabilidade e métricas SRE
 
@@ -942,6 +942,46 @@ Não há transação distribuída entre Mongo e Qdrant. O worker externo não pr
 sessões em estado `encerrando`, portanto, para este endpoint legado,
 uma falha após a gravação no Qdrant ainda pode exigir nova tentativa para finalizar
 o estado no Mongo. Sessões em encerramento não entram na busca de memória.
+
+### Proteção dos dados enviados à IA
+
+Antes de chamar os agentes do chat, a API aplica pseudonimização local:
+
+- CPF, CNPJ, e-mail, telefone brasileiro e CEP reconhecidos por padrões viram
+  tokens temporários, consistentes entre mensagem, histórico e evidência.
+- Nomes são protegidos quando identificados em registros pessoais de ferramentas
+  autorizadas ou em declarações explícitas, como "me chamo" ou "Nome:". Campos
+  `nome` de cargo, NR e unidade não são tratados automaticamente como pessoas.
+- O prompt recebe apenas o papel do usuário autenticado. UID, UUID de sessão e
+  identificadores internos presentes em dados estruturados são removidos; as
+  ferramentas continuam recebendo a identidade verdadeira pelo contexto seguro.
+- Credenciais reconhecidas são removidas sem restauração. Cargo, papel, datas,
+  horários, números de NRs e contagens necessários à tarefa são preservados.
+
+O mapa de tokens pertence a uma única chamada, inclusive sua tentativa de
+correção, e não entra no prompt, nos logs, no Mongo ou no checkpointer. A resposta
+volta com tokens e é restaurada localmente, com tratamento estrutural de JSON,
+antes da validação dos argumentos das ferramentas e das regras de acesso. Tokens
+desconhecidos causam falha segura; eles não são interpretados como autorização.
+Os provedores e suas tentativas de fallback recebem somente a versão mascarada.
+
+O mesmo tratamento é aplicado aos resumos manuais gerados por esta API e aos
+agentes de recomendação de NRs. Textos enviados à API de embeddings recebem
+remoção de identificadores por tipo, sem mapa reversível externo. A pesquisa
+pública A2A é evitada quando a consulta contém dados reconhecidos como pessoais;
+o fallback consulta somente URLs oficiais fixas.
+
+No LangSmith, o cliente privado é usado tanto no trace raiz como nos callbacks
+LangChain. Os inputs e o conteúdo dos outputs são omitidos; latência, resolução e
+contagens de tokens continuam disponíveis. Isso evita que o grafo ou as tools
+exponham dados anteriores à pseudonimização nos traces.
+
+Essa medida é **pseudonimização**, não anonimização irreversível de todo o sistema.
+O histórico original e os dados de negócio continuam nos bancos e nas respostas
+que o usuário pode acessar. Não há reconhecimento universal de pessoas em texto
+livre, OCR ou remoção retroativa de dados já enviados/indexados. O serviço de
+resumos automáticos por inatividade é outro repositório e precisa aplicar a mesma
+política em suas próprias chamadas; esta alteração cobre os caminhos desta API.
 
 ### Memória híbrida: MongoDB e checkpointer do LangGraph
 

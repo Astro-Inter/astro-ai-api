@@ -13,6 +13,7 @@ from typing import Literal
 
 from app.infrastructure.mcp_fetch import get_fetch_mcp_client
 from app.core import config
+from app.core.pii import redact_for_embedding
 
 
 PublicSourceId = Literal[
@@ -307,6 +308,7 @@ async def consultar_fontes_publicas(
 ) -> dict:
     """Delega pesquisa pública por A2A quando configurado; mantém fallback local."""
     if (config.A2A_PUBLIC_RESEARCH_URL and config.A2A_SHARED_TOKEN
+            and redact_for_embedding(termo) == termo
             and len(termo) <= 300 and not re.search(
                 r"@|\b\d{3}[. ]?\d{3}[. ]?\d{3}-?\d{2}\b|"
                 r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"

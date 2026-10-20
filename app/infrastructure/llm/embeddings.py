@@ -3,6 +3,7 @@ import math
 import httpx
 
 from app.core import config
+from app.core.pii import redact_for_embedding
 from app.modules.chat.errors import ChatError
 
 
@@ -21,7 +22,7 @@ async def gerar_embeddings_batch(textos: list[str]) -> list[list[float]]:
             response = await client.post(
                 "https://api.mistral.ai/v1/embeddings",
                 headers={"Authorization": f"Bearer {config.MISTRAL_API_KEY}"},
-                json={"model": EMBEDDING_MODEL, "input": textos, "encoding_format": "float"},
+                json={"model": EMBEDDING_MODEL, "input": [redact_for_embedding(text) for text in textos], "encoding_format": "float"},
             )
             response.raise_for_status()
             data = response.json()["data"]
