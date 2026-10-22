@@ -715,7 +715,7 @@ grande, recomenda-se um índice composto em `id_usuario` e `data_criacao`.
 `app/modules/agenda/tools.py` registra `consultar_treinamentos`, disponível
 somente no subgrafo de Agenda. A ferramenta resolve o Firebase UID autenticado
 para `usuario.id_usuario` no PostgreSQL e lê suas inscrições em
-`turma_funcionario`, juntando `turma`, `evento`, `conclusao_evento` e o título da
+`turma_colaborador`, juntando `turma`, `evento`, `conclusao_evento` e o título da
 NR quando houver. Não aceita UID ou ID de outra pessoa como filtro.
 
 Por padrão, lista treinamentos atribuídos em eventos `ATIVO` cuja conclusão
@@ -736,7 +736,7 @@ evento.
 ### Consulta de eventos internos da Agenda
 
 Perguntas como “qual é o próximo evento?” usam `consultar_eventos`. A consulta lê `evento` e as datas de `turma` somente quando há
-inscrição do usuário autenticado em `turma_funcionario`. Não lista eventos de
+inscrição do usuário autenticado em `turma_colaborador`. Não lista eventos de
 terceiros nem interpreta uma NR obrigatória como inscrição. Por padrão retorna
 eventos ativos com início futuro, ordenados por data e turma, independentemente
 do status da conclusão. “Próximo evento” limita a resposta ao primeiro item.

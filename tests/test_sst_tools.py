@@ -575,7 +575,7 @@ def test_consultar_situacao_nrs_classifies_requirements_for_authenticated_user(m
     query = connection.db_cursor.query
     assert "FROM usuario" in query
     assert "FROM conformidade" in query
-    assert "FROM turma_funcionario" in query
+    assert "FROM turma_colaborador" in query
     assert "LEFT JOIN LATERAL" in query
     assert "CURRENT_DATE + 30" in query
 

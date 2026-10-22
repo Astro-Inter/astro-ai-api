@@ -754,14 +754,14 @@ def _consultar_situacao_nrs_filtrada(condition: str, parameters: list) -> dict:
                CASE
                    WHEN nrs_obrigatorias.numero IS NULL THEN NULL
                    WHEN conformidade_atual.data_validade >= CURRENT_DATE THEN 'VIGENTE'
-                   WHEN pendencia.id_turma_funcionario IS NOT NULL THEN 'PENDENTE'
+                   WHEN pendencia.id_turma_colaborador IS NOT NULL THEN 'PENDENTE'
                    WHEN conformidade_atual.data_validade < CURRENT_DATE
                        THEN 'RENOVACAO_NECESSARIA'
                    ELSE 'REALIZACAO_NECESSARIA'
                END AS situacao,
                CASE
                    WHEN nrs_obrigatorias.numero IS NULL THEN NULL
-                   WHEN pendencia.id_turma_funcionario IS NOT NULL
+                   WHEN pendencia.id_turma_colaborador IS NOT NULL
                        THEN 'CONCLUIR_PENDENCIA'
                    WHEN conformidade_atual.data_validade > CURRENT_DATE + 30 THEN 'NENHUMA'
                    WHEN conformidade_atual.data_validade >= CURRENT_DATE
@@ -782,18 +782,18 @@ def _consultar_situacao_nrs_filtrada(condition: str, parameters: list) -> dict:
                LIMIT 1
           ) AS conformidade_atual ON TRUE
           LEFT JOIN LATERAL (
-              SELECT turma_funcionario.id_turma_funcionario,
+              SELECT turma_colaborador.id_turma_colaborador,
                      turma.data_inicial,
                      turma.data_termino
-                FROM turma_funcionario
+                FROM turma_colaborador
                 JOIN turma
-                  ON turma.id_turma = turma_funcionario.turma_id
+                  ON turma.id_turma = turma_colaborador.turma_id
                 JOIN evento
                   ON evento.id_evento = turma.evento_id
                 LEFT JOIN conclusao_evento
-                  ON conclusao_evento.turma_funcionario_id =
-                     turma_funcionario.id_turma_funcionario
-               WHERE turma_funcionario.usuario_id = nrs_obrigatorias.id_usuario
+                  ON conclusao_evento.turma_colaborador_id =
+                     turma_colaborador.id_turma_colaborador
+               WHERE turma_colaborador.usuario_id = nrs_obrigatorias.id_usuario
                  AND evento.nr_id = nrs_obrigatorias.numero
                  AND evento.status <> 'CANCELADO'
                  AND COALESCE(conclusao_evento.status, 'PENDENTE') = 'PENDENTE'
@@ -847,7 +847,7 @@ def _consultar_situacao_nrs_filtrada(condition: str, parameters: list) -> dict:
             "tipo": "postgresql",
             "tabelas": [
                 "usuario", "cargo", "unidade", "cargo_nr", "unidade_nr",
-                "nr_catalogo", "conformidade", "turma_funcionario", "turma",
+                "nr_catalogo", "conformidade", "turma_colaborador", "turma",
                 "evento", "conclusao_evento",
             ],
         },
