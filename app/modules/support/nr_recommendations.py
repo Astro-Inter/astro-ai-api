@@ -185,7 +185,7 @@ class PositionRepository:
 class EmployeeNrRepository:
     """Lê o catálogo interno permitido para a análise, sem aceitar filtros livres."""
 
-    USABILITY_PATTERN = r"^Funcion[aá]rio$"
+    USABILITY_PATTERN = r"^(?:Colaborador|Funcion[aá]rio)$"
 
     def __init__(self, client_factory: Callable | None = None):
         self._client_factory = client_factory or MongoClient

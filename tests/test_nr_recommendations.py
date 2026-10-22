@@ -266,6 +266,9 @@ def test_employee_nr_repository_applies_fixed_filters(monkeypatch):
     assert collection.query["revogada"] == {"$ne": True}
     assert collection.query["usabilidade"].match("Funcionario")
     assert collection.query["usabilidade"].match("Funcionário")
+    assert collection.query["usabilidade"].match("Colaborador")
+    assert collection.query["usabilidade"].match("colaborador")
+    assert not collection.query["usabilidade"].match("Empresa")
     assert set(collection.projection) == {
         "_id", "nome", "objetivo", "descricao", "aplicabilidade",
     }
