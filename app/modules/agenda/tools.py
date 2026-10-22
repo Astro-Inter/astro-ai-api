@@ -164,13 +164,13 @@ def _consultar_participacoes(situacao, pagina, limite, config, *, proximos=False
             " AND turma.data_inicial >= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')"
         )
     from_clause = f"""
-        FROM turma_funcionario AS participacao
+        FROM turma_colaborador AS participacao
         JOIN turma
           ON turma.id_turma = participacao.turma_id
         JOIN evento
           ON evento.id_evento = turma.evento_id
         LEFT JOIN conclusao_evento AS conclusao
-          ON conclusao.turma_funcionario_id = participacao.id_turma_funcionario
+          ON conclusao.turma_colaborador_id = participacao.id_turma_colaborador
         LEFT JOIN nr_catalogo AS nr
           ON nr.codigo_nr = evento.nr_id
        WHERE participacao.usuario_id = %s

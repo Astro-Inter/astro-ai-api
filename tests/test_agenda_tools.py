@@ -184,7 +184,7 @@ def test_pending_training_is_scoped_to_authenticated_user_and_returns_schedule(m
     assert cursor.calls[1][1] == [7]
     assert cursor.calls[2][1] == [7, 5, 0]
     query = cursor.calls[2][0]
-    for table in ("turma_funcionario", "turma", "evento", "conclusao_evento"):
+    for table in ("turma_colaborador", "turma", "evento", "conclusao_evento"):
         assert table in query
     assert "evento.status = 'ATIVO'" in query
     assert "COALESCE(conclusao.status, 'PENDENTE') IN ('PENDENTE', 'REJEITADO')" in query
