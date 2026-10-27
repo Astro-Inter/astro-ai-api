@@ -4,14 +4,14 @@ from qdrant_client import AsyncQdrantClient, models
 
 from app.core import config
 from app.infrastructure.llm.embeddings import (
-    EMBEDDING_DIMENSIONS, gerar_embeddings_batch,
+    EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, gerar_embeddings_batch,
 )
 from app.modules.chat.errors import ChatError
 
 
-COLLECTION_FAQ = "faq_chunks"
+COLLECTION_FAQ = config.QDRANT_FAQ_COLLECTION
 FAQ_RESULT_LIMIT = 5
-FAQ_SCORE_THRESHOLD = 0.35
+FAQ_SCORE_THRESHOLD = config.FAQ_SCORE_THRESHOLD
 MAX_CHUNK_CHARACTERS = 2000
 
 
@@ -33,6 +33,8 @@ class FaqVectors:
         self.ready = False
 
     async def connect(self):
+        if "_openai_te3s_" not in COLLECTION_FAQ:
+            raise ChatError(503, "Use uma colecao FAQ nova para text-embedding-3-small.")
         if not self.ready:
             if not config.QDRANT_URL:
                 raise ChatError(503, "Consulta as normas indisponivel.")
@@ -54,7 +56,7 @@ class FaqVectors:
             if (vector is None or vector.size != EMBEDDING_DIMENSIONS
                     or vector.distance != models.Distance.COSINE):
                 raise ChatError(
-                    503, "Colecao FAQ incompativel com mistral-embed (1024/Cosine).",
+                    503, "Colecao FAQ incompativel com openai/text-embedding-3-small (1536/Cosine).",
                 )
             self.ready = True
         return self.client
@@ -67,6 +69,8 @@ class FaqVectors:
                 COLLECTION_FAQ,
                 query=vector,
                 using=self.vector_name,
+                query_filter=models.Filter(must=[models.FieldCondition(
+                    key="modelo_embedding", match=models.MatchValue(value=EMBEDDING_MODEL))]),
                 limit=FAQ_RESULT_LIMIT,
                 score_threshold=FAQ_SCORE_THRESHOLD,
                 with_payload=True,

@@ -9,7 +9,7 @@ from app.infrastructure.llm.embeddings import (
 from app.modules.chat.errors import ChatError
 
 
-COLLECTION_MEMORY = "memoria_resumos"
+COLLECTION_MEMORY = config.QDRANT_MEMORY_COLLECTION
 
 
 class SummaryVectors:
@@ -19,6 +19,8 @@ class SummaryVectors:
         self.ready = False
 
     async def connect(self):
+        if "_openai_te3s_" not in COLLECTION_MEMORY:
+            raise ChatError(503, "Use uma colecao de memoria nova para text-embedding-3-small.")
         if not self.ready:
             if not config.QDRANT_URL:
                 raise ChatError(503, "Qdrant nao configurado.")
@@ -37,7 +39,7 @@ class SummaryVectors:
                 vector = vectors
             if (vector is None or vector.size != EMBEDDING_DIMENSIONS
                     or vector.distance != models.Distance.COSINE):
-                raise ChatError(503, "Colecao de memoria incompativel com mistral-embed (1024/Cosine).")
+                raise ChatError(503, "Colecao de memoria incompativel com openai/text-embedding-3-small (1536/Cosine).")
             if "id_user" not in info.payload_schema:
                 await self.client.create_payload_index(
                     COLLECTION_MEMORY, "id_user",
@@ -74,7 +76,8 @@ class SummaryVectors:
             result = await client.query_points(
                 COLLECTION_MEMORY, query=vector, using=self.vector_name,
                 query_filter=models.Filter(
-                    must=[models.FieldCondition(key="id_user", match=models.MatchValue(value=uid))],
+                    must=[models.FieldCondition(key="id_user", match=models.MatchValue(value=uid)),
+                          models.FieldCondition(key="modelo_embedding", match=models.MatchValue(value=EMBEDDING_MODEL))],
                     must_not=[models.HasIdCondition(has_id=[exclude])],
                 ), limit=3, with_payload=False, with_vectors=False,
             )

@@ -1,62 +1,17 @@
 import logging
-import math
 import time
-from functools import lru_cache
 from typing import Protocol
 
-from langchain_core.messages import BaseMessage, SystemMessage
-from langchain_groq import ChatGroq
+from langchain_core.messages import BaseMessage
 
 from app.core import config
+from app.infrastructure.llm.openrouter import request
+from app.infrastructure.llm.decisions import classify_route, verify_evidence
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 
-
-# Escolha de modelos fica no código, conforme a configuração do projeto.
-GROQ_FAST_MODEL = "openai/gpt-oss-20b"
+TEXT_MODEL = "openai/gpt-6-luna"
 TRUNCATION_RETRY_MAX_TOKENS = 4096
-MISTRAL_SPECIALIST_MODEL = "mistral-small-latest"
 logger = logging.getLogger(__name__)
-MISTRAL_COOLDOWN_SECONDS = 300
-GROQ_COOLDOWN_SECONDS = 60
-
-
-def _http_status(error: Exception):
-    response = getattr(error, "response", None)
-    return getattr(error, "status_code", None) or getattr(response, "status_code", None)
-
-
-def _provider_error_code(error: Exception) -> str:
-    body = getattr(error, "body", None)
-    if not isinstance(body, dict):
-        return ""
-    details = body.get("error", body)
-    return str(details.get("code", "")) if isinstance(details, dict) else ""
-
-
-def groq_api_keys() -> tuple[str, ...]:
-    """Uma chave ou lista com pipe; ignora espaços, entradas vazias e duplicatas."""
-    return tuple(dict.fromkeys(
-        key.strip() for key in (config.GROQ_API_KEY or "").split("|") if key.strip()
-    ))
-
-
-def _new_groq(index: int = 0):
-    keys = groq_api_keys()
-    if not keys:
-        raise ChatError(503, "Provedor de IA nao configurado.")
-    return ChatGroq(
-        model=GROQ_FAST_MODEL, api_key=keys[index], temperature=0,
-        timeout=30, max_retries=0, max_tokens=1600,
-    )
-
-
-def _groq_cooldown(error: Exception) -> float:
-    headers = getattr(getattr(error, "response", None), "headers", {}) or {}
-    try:
-        delay = float(headers.get("retry-after", GROQ_COOLDOWN_SECONDS))
-    except (TypeError, ValueError):
-        return GROQ_COOLDOWN_SECONDS
-    return min(max(delay, 1), 86400) if math.isfinite(delay) else GROQ_COOLDOWN_SECONDS
 
 
 class AgentModel(Protocol):
@@ -65,183 +20,64 @@ class AgentModel(Protocol):
     ) -> str: ...
 
 
-@lru_cache(maxsize=2)
-def get_model(specialist: bool):
-    if specialist and config.MISTRAL_API_KEY:
-        from langchain_mistralai import ChatMistralAI
-
-        return ChatMistralAI(
-            model=MISTRAL_SPECIALIST_MODEL, api_key=config.MISTRAL_API_KEY,
-            temperature=0, timeout=30, max_retries=2, max_tokens=1600,
-        )
-    return _new_groq()
+def serialize_messages(messages: list[BaseMessage]) -> list[dict]:
+    roles = {"system": "system", "human": "user", "ai": "assistant"}
+    if any(m.type not in roles or not isinstance(m.content, str) for m in messages):
+        raise InvalidAgentResponse()
+    return [{"role": roles[m.type], "content": m.content} for m in messages]
 
 
 class LanguageModels:
     def __init__(self):
-        self._mistral_retry_after = 0.0
-        self._groq_index = 0
-        self._groq_retry_after: dict[int, float] = {}
+        self._jev_retry_after = 0.0
 
-    @staticmethod
-    async def _invoke(model, agent: str, messages: list[BaseMessage], json_mode: bool) -> str:
-        if json_mode:
-            model = model.bind(response_format={"type": "json_object"})
-        for attempt in range(2):
-            result = await model.ainvoke(messages, config={"run_name": agent})
-            if result.response_metadata.get("finish_reason") != "length":
-                break
-            # O orçamento inclui o raciocínio do modelo: ele pode se esgotar
-            # antes de qualquer texto. Nunca aceite uma resposta truncada.
-            if attempt:
-                raise InvalidAgentResponse(stage=agent)
-            logger.warning(
-                "Resposta truncada agente=%s; repetindo uma vez com max_tokens=%s",
-                agent, TRUNCATION_RETRY_MAX_TOKENS,
-            )
-            model = model.bind(max_tokens=TRUNCATION_RETRY_MAX_TOKENS)
-        content = result.content
-        if isinstance(content, list) and content and all(
-            isinstance(block, dict) and block.get("type") == "text"
-            and isinstance(block.get("text"), str) for block in content
-        ):
-            content = "\n".join(block["text"] for block in content)
-        if not isinstance(content, str) or not content.strip():
-            raise InvalidAgentResponse()
-        if len(content) > 16000:
-            raise InvalidAgentResponse()
-        return content.strip()
-
-    async def _invoke_groq(
-        self, model, agent: str, messages: list[BaseMessage], json_mode: bool,
-    ) -> str:
+    async def _decision(self, function, *args):
+        if not config.OPENROUTER_JEV_ENABLED or time.monotonic() < self._jev_retry_after:
+            return None
         try:
-            return await self._invoke(model, agent, messages, json_mode)
-        except Exception as error:
-            if _http_status(error) == 400 and _provider_error_code(error) == "tool_use_failed":
-                # O grafo executa as tools: uma chamada nativa espontânea não
-                # deve virar indisponibilidade. Reitere o contrato uma vez, sem
-                # executar nem reaproveitar a chamada rejeitada pelo provedor.
-                logger.warning("Chamada nativa recusada agente=%s; repetindo somente texto", agent)
-                reminder = SystemMessage(content=(
-                    "Nenhuma ferramenta nativa esta disponivel nesta chamada. "
-                    "Nao emita tool_calls nem tags de funcao. Responda somente "
-                    "texto no formato definido pelas instrucoes de sistema: "
-                    "JSON quando solicitado, ou decisao textual do roteador. "
-                    "As ferramentas serao executadas exclusivamente pela aplicacao."
-                ))
-                return await self._invoke(model, agent, messages + [reminder], json_mode)
-            if not json_mode or _http_status(error) != 400:
+            return await function(*args)
+        except ChatError as error:
+            if error.reason in {"provider_configuration", "insufficient_credits"}:
                 raise
-            # O Groq pode rejeitar no servidor uma geração em response_format
-            # antes de devolver o texto. Repetimos sem essa restrição e deixamos
-            # o schema Pydantic do agente validar o JSON localmente.
-            logger.warning(
-                "Modo JSON recusado pelo agente=%s provedor=groq status=400; "
-                "repetindo com validacao local",
-                agent,
-            )
-            return await self._invoke(model, agent, messages, False)
+        except (KeyError, TypeError, ValueError):
+            pass
+        self._jev_retry_after = time.monotonic() + 60
+        logger.warning("Decisao delegada ao Luna motivo=alpha_indisponivel_ou_invalida")
+        return None
 
-    async def _complete_groq(
-        self, agent: str, messages: list[BaseMessage], json_mode: bool,
-    ) -> str:
-        keys = groq_api_keys()
-        if not keys:
-            raise ChatError(503, "Provedor de IA nao configurado.")
-        start = self._groq_index % len(keys)
-        for offset in range(len(keys)):
-            index = (start + offset) % len(keys)
-            if time.monotonic() < self._groq_retry_after.get(index, 0):
-                continue
-            try:
-                # Mantém o cliente primário em cache; fallback e outras chaves
-                # nunca recebem a string inteira com pipes como credencial.
-                model = (
-                    get_model(False) if index == 0 and agent not in {"rh", "sst", "agenda"}
-                    else _new_groq(index)
-                )
-                response = await self._invoke_groq(model, agent, messages, json_mode)
-                self._groq_index = index
-                return response
-            except ChatError:
-                raise
-            except Exception as error:
-                if _http_status(error) != 429:
-                    raise
-                self._groq_retry_after[index] = time.monotonic() + _groq_cooldown(error)
-                self._groq_index = (index + 1) % len(keys)
-                logger.warning(
-                    "Limite Groq agente=%s chave_posicao=%s total_chaves=%s status=429; "
-                    "tentando proxima disponivel", agent, index + 1, len(keys),
-                )
-        # Não espera nem percorre a lista indefinidamente; novas requisições
-        # podem reutilizar as chaves depois do cooldown informado pelo provedor.
-        raise ChatError(
-            503, "O serviço de IA atingiu o limite temporário de uso. Aguarde um pouco e tente novamente.",
-            reason="rate_limited",
-            retry_after=max(1, math.ceil(min(self._groq_retry_after.values()) - time.monotonic())),
-        )
+    async def verify_evidence(self, state: dict) -> bool | None:
+        return await self._decision(verify_evidence, state)
 
     async def complete(
         self, agent: str, messages: list[BaseMessage], *, json_mode: bool = False,
     ) -> str:
-        specialist = agent in {"rh", "sst", "agenda"}
-        mistral_available = (
-            bool(config.MISTRAL_API_KEY)
-            and time.monotonic() >= self._mistral_retry_after
-        )
-        primary_mistral = specialist and mistral_available
-        primary_error = None
-        try:
-            if not primary_mistral:
-                return await self._complete_groq(agent, messages, json_mode)
-            primary_model = get_model(True)
-            return await self._invoke(primary_model, agent, messages, json_mode)
-        except Exception as error:
-            primary_error = error
-            if isinstance(error, ChatError) and not (
-                isinstance(error, InvalidAgentResponse) or error.reason == "rate_limited"
-            ):
-                raise
-            logger.warning(
-                "Falha no provedor agente=%s provedor=%s status=%s tipo=%s",
-                agent, "mistral" if primary_mistral else "groq",
-                _http_status(error), type(error).__name__,
-            )
-        # No máximo um provedor alternativo; preserva mensagem, contexto e schema.
-        # JSON inválido/vazio não é autorização para usar a resposta descartada.
-        if primary_mistral:
-            self._mistral_retry_after = time.monotonic() + MISTRAL_COOLDOWN_SECONDS
-        fallback = "groq" if primary_mistral and groq_api_keys() else (
-            "mistral" if not primary_mistral and mistral_available else None
-        )
-        final_error = primary_error
-        if fallback:
-            logger.warning("Acionando fallback agente=%s provedor=%s", agent, fallback)
+        serialized = serialize_messages(messages)
+        if agent == "roteador" and not json_mode:
+            route = await self._decision(classify_route, serialized)
+            if route:
+                return "ROUTE=" + route
+        payload = {
+            "model": TEXT_MODEL, "messages": serialized, "max_tokens": 1600,
+            # O catálogo de Luna não anuncia temperature; none evita raciocínio oculto.
+            "reasoning": {"effort": "none"},
+            "provider": {"require_parameters": True, "data_collection": "deny"},
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        for attempt in range(2):
+            data = await request("/v1/chat/completions", payload, stage=agent)
             try:
-                if fallback == "groq":
-                    return await self._complete_groq(agent, messages, json_mode)
-                return await self._invoke(get_model(True), agent, messages, json_mode)
-            except Exception as error:
-                final_error = error
-                if fallback == "mistral":
-                    self._mistral_retry_after = time.monotonic() + MISTRAL_COOLDOWN_SECONDS
-                logger.warning(
-                    "Falha no fallback agente=%s provedor=%s status=%s tipo=%s",
-                    agent, fallback, _http_status(error), type(error).__name__,
-                )
-        if isinstance(final_error, InvalidAgentResponse):
-            raise InvalidAgentResponse(agent) from None
-        if isinstance(final_error, ChatError):
-            raise final_error from None
-        if _http_status(final_error) == 429:
-            raise ChatError(
-                503, "O serviço de IA atingiu o limite temporário de uso. Aguarde um pouco e tente novamente.",
-                reason="rate_limited", retry_after=math.ceil(_groq_cooldown(final_error)),
-            ) from None
-        # Nunca encaminha payloads, prompts ou credenciais do SDK ao usuário.
-        raise ChatError(
-            503, "Não consegui consultar o serviço de IA agora. Tente novamente em instantes.",
-            reason="provider_failure",
-        ) from None
+                choice = data["choices"][0]
+                message = choice["message"]
+                if choice.get("finish_reason") == "length" and not attempt:
+                    payload["max_tokens"] = TRUNCATION_RETRY_MAX_TOKENS
+                    logger.warning("Resposta truncada agente=%s; repetindo uma vez", agent)
+                    continue
+                content = message.get("content")
+                if (choice.get("finish_reason") != "stop" or message.get("tool_calls")
+                        or not isinstance(content, str) or not content.strip() or len(content) > 16000):
+                    raise ValueError()
+                return content.strip()
+            except (KeyError, IndexError, TypeError, ValueError, AttributeError):
+                raise InvalidAgentResponse(agent) from None
+        raise InvalidAgentResponse(agent)

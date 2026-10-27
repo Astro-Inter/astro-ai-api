@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from langgraph.graph import END, START, StateGraph
 from langchain_core.messages import AIMessage
 
+from app.core import config
 from app.infrastructure.checkpoints import COMPLETE_TURN_NODE
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.agents import invoke_agent
@@ -1238,9 +1239,22 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }:
             # Uma prévia reprovada não pode permanecer disponível para confirmação.
             result["acao_pendente"] = None
+        if (config.OPENROUTER_EVIDENCE_CHECK_ENABLED and result.get("guardar_turno")
+                and callable(getattr(model, "verify_evidence", None))):
+            checked_state = {**state, "resposta": response, "candidato": response}
+            supported = await model.verify_evidence(checked_state)
+            if supported is None:
+                review = await invoke_agent(model, "juiz", JUIZ_PROMPT_COMPLETO, checked_state, JudgeDecision)
+                supported = review.status == "aprovado"
+            result["agentes_chamados"] += ["verificador_evidencias"]
+            if not supported:
+                result.update(resposta="Não tenho evidência para afirmar isso.", guardar_turno=False,
+                              acao_pendente=None)
         return result
 
     async def generate_pdf(state: ChatState):
+        if not state.get("guardar_turno"):
+            return {}
         if state.get("resultado", {}).get("status") in {
             "indisponivel", "sem_dados", "nao_autorizado", "esclarecer",
             "aguardando_confirmacao", "erro", "bloqueado",

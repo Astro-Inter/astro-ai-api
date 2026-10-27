@@ -79,10 +79,18 @@ services:
         sync: false
       - key: QDRANT_API_KEY
         sync: false
-      - key: GROQ_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
-      - key: MISTRAL_API_KEY
-        sync: false
+      - key: OPENROUTER_JEV_ENABLED
+        value: "true"
+      - key: OPENROUTER_EVIDENCE_CHECK_ENABLED
+        value: "false"
+      - key: QDRANT_FAQ_COLLECTION
+        value: faq_chunks_openai_te3s_v1
+      - key: QDRANT_MEMORY_COLLECTION
+        value: memoria_resumos_openai_te3s_v1
+      - key: FAQ_SCORE_THRESHOLD
+        value: "0.35"
       - key: R2_ACCESS_KEY_ID
         sync: false
       - key: R2_SECRET_ACCESS_KEY
