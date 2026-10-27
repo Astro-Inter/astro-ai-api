@@ -1,11 +1,4 @@
-"""Substitui TODOS os pontos de faq_chunks pelos PDFs fornecidos.
-
-    python -m app.scripts.ingest_faq "C:\\documentos\\faq.pdf"
-    python -m app.scripts.ingest_faq "C:\\documentos\\faq"
-
-Valida PDFs, coleção e embeddings antes da limpeza. Não execute em paralelo.
-Não altera a coleção memoria_resumos.
-"""
+"""Ingere PDFs em uma coleção NOVA. Sem --apply apenas extrai e estima custo."""
 import argparse
 import asyncio
 from pathlib import Path
@@ -18,13 +11,11 @@ from app.core import config
 from app.infrastructure.llm.embeddings import (
     EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, gerar_embeddings_batch,
 )
-from app.modules.chat.errors import ChatError
 
 
-COLLECTION_FAQ = "faq_chunks"
+COLLECTION_FAQ = config.QDRANT_FAQ_COLLECTION
 CHUNK_SIZE = 700
 CHUNK_OVERLAP = 150
-BATCH_SIZE = 50
 
 
 def dividir_texto(texto: str) -> list[str]:
@@ -86,84 +77,58 @@ def carregar_chunks(entradas: list[str | Path]) -> list[dict]:
     return chunks
 
 
-def validar_colecao(info):
-    vectors = info.config.params.vectors
-    vector_name = None
-    if isinstance(vectors, dict):
-        if len(vectors) != 1:
-            raise ValueError("faq_chunks deve ter um unico vetor denso.")
-        vector_name, vectors = next(iter(vectors.items()))
-    if (vectors is None or vectors.size != EMBEDDING_DIMENSIONS
-            or vectors.distance != models.Distance.COSINE):
-        raise ValueError("faq_chunks precisa usar 1024 dimensoes e Cosine. Nada foi apagado.")
-    return vector_name
-
-
-async def ingerir_faq(entradas: list[str | Path], *, client=None, embed_batch=None) -> int:
-    """Extrai PDFs, prepara os vetores e substitui toda a base FAQ. Retorna chunks."""
+async def ingerir_faq(entradas: list[str | Path], *, client=None, embed_batch=None,
+                      target: str = COLLECTION_FAQ) -> int:
+    """Nunca substitui dados existentes. Após falha use outro destino e mantenha a origem."""
+    from app.scripts.migrate_vectors import populate
     chunks = carregar_chunks(entradas)
-    embed_batch = embed_batch or gerar_embeddings_batch
+    if "_openai_te3s_" not in target:
+        raise ValueError("Use uma colecao nova com _openai_te3s_.")
     owns_client = client is None
     if owns_client:
         if not config.QDRANT_URL:
-            raise ValueError("Configure QDRANT_URL no .env.")
+            raise ValueError("Configure QDRANT_URL.")
         client = AsyncQdrantClient(url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY,
                                    timeout=30, check_compatibility=False)
-    cleanup_started = False
     try:
-        name = validar_colecao(await client.get_collection(COLLECTION_FAQ))
-        points = []
-        for i in range(0, len(chunks), BATCH_SIZE):
-            batch = chunks[i:i + BATCH_SIZE]
-            print(f"[ingest] Gerando embeddings: {i + 1}-{i + len(batch)}")
-            vectors = await embed_batch([chunk["page_content"] for chunk in batch])
-            if len(vectors) != len(batch):
-                raise ValueError("Quantidade de embeddings diferente da quantidade de chunks.")
-            points.extend(models.PointStruct(
-                id=str(uuid4()), vector={name: vector} if name is not None else vector,
-                payload=chunk,
-            ) for chunk, vector in zip(batch, vectors, strict=True))
-
-        old_count = (await client.count(COLLECTION_FAQ, exact=True)).count
-        print(f"[ingest] Apagando TODOS os {old_count} ponto(s) de {COLLECTION_FAQ}...")
-        cleanup_started = True
-        await client.delete(COLLECTION_FAQ, points_selector=models.FilterSelector(
-            filter=models.Filter(must=[])), wait=True)
-        if (await client.count(COLLECTION_FAQ, exact=True)).count != 0:
-            raise ValueError("Colecao nao ficou vazia apos a limpeza.")
-        for i in range(0, len(points), BATCH_SIZE):
-            await client.upsert(COLLECTION_FAQ, points=points[i:i + BATCH_SIZE], wait=True)
-        if (await client.count(COLLECTION_FAQ, exact=True)).count != len(points):
-            raise ValueError("Contagem final diferente da quantidade enviada.")
-        print(f"[ingest] Concluido: {len(points)} chunk(s) em {COLLECTION_FAQ}.")
-        return len(points)
-    except Exception as error:
-        if cleanup_started:
-            message = "Falha durante a substituicao. faq_chunks pode estar vazia ou parcial; " \
-                      "execute novamente com TODOS os PDFs. Nao ha rollback automatico."
-        else:
-            message = "Falha na preparacao. Nenhum ponto existente foi apagado."
-        if isinstance(error, (ValueError, ChatError)):
-            message += " " + str(error)
-        raise RuntimeError(message) from None
+        if await client.collection_exists(target):
+            raise ValueError("O destino ja existe; escolha outro nome. Nenhum ponto foi apagado.")
+        await client.create_collection(target, vectors_config=models.VectorParams(
+            size=EMBEDDING_DIMENSIONS, distance=models.Distance.COSINE))
+        await client.create_payload_index(target, "modelo_embedding", models.PayloadSchemaType.KEYWORD, wait=True)
+        await populate(client, target, [(str(uuid4()), c["page_content"], c) for c in chunks],
+                       embed=embed_batch or gerar_embeddings_batch)
+        return len(chunks)
+    except Exception:
+        raise RuntimeError("Falha na ingestao. Fontes preservadas; destino pode estar vazio ou parcial. "
+                           "Nao ative esse destino; repita em uma NOVA colecao.") from None
     finally:
         if owns_client:
             await client.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description=(
-        "Substitui TODOS os pontos de faq_chunks pelos PDFs informados. "
-        "Pastas incluem apenas PDFs do primeiro nivel. Envie a base completa a cada execucao."
-    ))
+    from app.scripts.migrate_vectors import estimate
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("arquivos", nargs="+", help="PDFs ou pastas contendo PDFs")
+    parser.add_argument("--target", default=COLLECTION_FAQ)
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--expected-points", type=int)
+    parser.add_argument("--max-cost-usd", type=float)
     args = parser.parse_args()
     try:
-        asyncio.run(ingerir_faq(args.arquivos))
+        chunks = carregar_chunks(args.arquivos)
+        report = estimate([(None, c["page_content"], c) for c in chunks])
+        print(report)
+        if args.apply:
+            import math
+            if (args.expected_points != len(chunks) or args.max_cost_usd is None
+                    or not math.isfinite(args.max_cost_usd)
+                    or args.max_cost_usd < report["cost_usd_upper_bound"]):
+                raise ValueError("Confirme volume e teto de custo antes de aplicar.")
+            asyncio.run(ingerir_faq(args.arquivos, target=args.target))
     except (ValueError, RuntimeError) as error:
         parser.exit(1, f"[ingest] ERRO: {error}\n")
-    except KeyboardInterrupt:
-        parser.exit(130, "[ingest] Interrompido. Confira a colecao antes de usar o FAQ.\n")
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ próprio usuário. Ela não concede novas permissões nem substitui consultas at
 
 - Python 3.12 e FastAPI para a API.
 - LangChain para criação dos agentes e LangGraph para a orquestração.
-- Groq e Mistral como provedores de modelos e embeddings.
+- OpenRouter como ponto único de acesso a modelos de texto, decisões e embeddings.
 - PostgreSQL, MongoDB e Qdrant para dados relacionais, histórico e busca vetorial.
 - Firebase Authentication para identidade dos usuários.
 - LangSmith e OpenTelemetry para observabilidade.
@@ -109,56 +109,20 @@ de configuração, segredos e execução estão em [`deploy/README.md`](deploy/R
 
 ## Ingestão de PDFs do FAQ
 
-O script `app/scripts/ingest_faq.py` substitui **todos os pontos** de `faq_chunks`
-pelos PDFs informados, em cada execução. Não altera `memoria_resumos` e não apaga
-a coleção em si: mantém configurações e índices. Não execute duas ingestões
-simultâneas nem grave nessa coleção por outro processo durante a substituição.
-
-Instale as dependências e execute na raiz do projeto:
-
-```powershell
-.venv\Scripts\python.exe -m pip install -e .
-.venv\Scripts\python.exe -m app.scripts.ingest_faq "C:\documentos\faq.pdf"
-```
-
-Para vários arquivos, informe todos na mesma execução:
-
-```powershell
-.venv\Scripts\python.exe -m app.scripts.ingest_faq "C:\documentos\rh.pdf" "C:\documentos\sst.pdf"
-```
-
-Ou informe uma pasta para ler todos os PDFs diretamente nela (sem subpastas):
+O script `app/scripts/ingest_faq.py` extrai PDFs em chunks de 700 caracteres,
+com sobreposição de 150, preservando documento e página. Cada execução grava em
+uma coleção **nova**, sem apagar pontos existentes. Sem `--apply`, apenas estima
+volume e custo. Consulte o [roteiro de migração](docs/operacao/openrouter.md)
+antes de gerar vetores ou trocar as coleções em uso.
 
 ```powershell
 .venv\Scripts\python.exe -m app.scripts.ingest_faq "C:\documentos\faq"
 ```
 
-Os caminhos acima são exemplos. Use os caminhos reais dos seus PDFs. O script usa
-`QDRANT_URL`, `QDRANT_API_KEY` e `MISTRAL_API_KEY` já existentes no `.env`.
-`faq_chunks` deve existir com um único vetor denso de 1024 dimensões e Cosine;
-vetor padrão ou nomeado são aceitos. Não há configuração de coleção/modelo no `.env`.
-
-Fluxo: extrair texto por página → dividir em chunks de 700 caracteres com
-sobreposição de 150 → gerar embeddings `mistral-embed` em lotes de até 50 →
-apagar todos os pontos antigos → inserir os novos em lotes → conferir a contagem.
-Cada ponto contém `page_content`, `page_number` (começando em zero), `source`
-(nome do PDF, sem caminho local completo) e `modelo_embedding`.
-
-**Sempre envie a base completa.** Se executar primeiro com A.pdf e depois apenas
-com B.pdf, a coleção final conterá somente B.pdf. Entradas inválidas, PDFs sem
-texto e falhas ao gerar embeddings abortam antes da limpeza. PDFs digitalizados
-precisam de OCR prévio; páginas sem texto são avisadas e ignoradas. Revise a
-extração de tabelas e layouts complexos antes de usar os documentos como fonte.
-
-Os novos pontos são preparados em memória antes de apagar os antigos. Não há
-rollback automático nem substituição atômica: uma falha durante a gravação pode
-deixar a coleção vazia/parcial. Execute novamente com todos os PDFs; durante a
-limpeza a consulta de FAQ pode ficar temporariamente indisponível. Mantenha os
-PDFs originais ou snapshots próprios se precisar recuperar a versão anterior.
-Gerar embeddings envia os textos à Mistral e pode gerar custos.
-
-O script apenas carrega a base; nenhum upload é disparado ao iniciar a API. Nas
-respostas, o número interno da página é convertido para começar em 1.
+Use `OPENROUTER_API_KEY`, `QDRANT_URL` e `QDRANT_API_KEY` no backend. O modelo é
+`openai/text-embedding-3-small`, com 1536 dimensões e Cosine. Não reutilize as
+coleções legadas. PDFs digitalizados precisam de OCR prévio; revise tabelas e
+layouts complexos. A API não dispara ingestão ao iniciar.
 
 ## Login de desenvolvimento
 
@@ -288,7 +252,7 @@ contexto confiável da aplicação.
 ### Fluxo implementado
 
 Cada papel que chama um modelo é criado com `langchain.agents.create_agent`,
-usando seu prompt e o adaptador dos provedores Groq/Mistral. O LangGraph externo
+usando seu prompt e o adaptador do OpenRouter. O LangGraph externo
 continua responsável pelo roteamento e pela execução das tools autorizadas; elas
 não são entregues ao loop automático do agente, preservando autenticação,
 confirmações e validações existentes.
@@ -299,8 +263,8 @@ confirmações e validações existentes.
 - RH, SST e Agenda: cada um possui um subgrafo compilado; o resultado estruturado
   segue para o Orquestrador, o Juiz e o guardrail de saída.
 - FAQ: subgrafo com nós de consulta de normas e resposta direta, sem Orquestrador,
-  conforme a modelagem. A pergunta é transformada em embedding `mistral-embed` e
-  consulta até cinco trechos de `faq_chunks` por similaridade Cosine. Somente
+  conforme a modelagem. A pergunta é transformada em embedding `openai/text-embedding-3-small` e
+  consulta até cinco trechos da coleção configurada em `QDRANT_FAQ_COLLECTION` por similaridade Cosine. Somente
   resultados com score mínimo de 0,35 são enviados ao agente, como dados não
   confiáveis e nunca como instruções. A resposta usa apenas esses trechos e cita
   nome do PDF e página. Quando a pergunta pede legislação, manual, cartilha ou
@@ -331,30 +295,16 @@ deve aplicar sua própria regra de autorização.
 
 ### Modelos e configuração
 
-Atualize as dependências com `python -m pip install -e .` e reinicie a API.
-Os nomes de modelos ficam em `app/infrastructure/llm/models.py`, não no `.env`:
+Configure somente `OPENROUTER_API_KEY` para inferência, sempre no backend.
+Todos os agentes textuais usam `openai/gpt-6-luna`. O roteador separa classificação
+fechada (`typesafe/jev-1.14`, Decisions API alpha) de respostas, esclarecimentos e
+argumentos de ferramentas (Luna). Baixa confiança, contrato inválido e falhas alpha
+seguem para Luna pelo OpenRouter. Embeddings usam `openai/text-embedding-3-small`.
+Nenhum modelo alternativo é escolhido silenciosamente.
 
-- `GROQ_API_KEY`: necessária para guardrails, Roteador, Juiz e Orquestrador, usando
-  `openai/gpt-oss-20b`.
-  Aceita uma chave ou uma lista: `GROQ_API_KEY=chave1|chave2|chave3`.
-  No Render, use o mesmo formato no valor da variável. Espaços, posições vazias
-  e chaves duplicadas são ignorados. Reinicie/redeploy após mudar a configuração.
-  Em HTTP 429, tenta a próxima chave disponível na ordem; mantém a chave que
-  funcionar e pausa temporariamente a limitada conforme `retry-after` (60s
-  quando ausente). Cada chamada percorre a lista no máximo uma vez. Se todas
-  estiverem limitadas, tenta Mistral quando configurada e disponível; sem
-  recuperação, retorna 503 sem expor credenciais. A alternância vale
-  também para os especialistas sem Mistral e para o fallback Mistral → Groq.
-  Outros erros não provocam troca de chave. O cooldown é local ao processo,
-  não compartilhado entre réplicas. Chaves da mesma organização compartilham
-  limites e não multiplicam a cota ([limites do Groq](https://console.groq.com/docs/rate-limits)).
-- `MISTRAL_API_KEY`: quando preenchida, os especialistas usam
-  `mistral-small-latest` como primeira opção. Sem ela, ou quando a chamada à
-  Mistral falhar, os especialistas usam `openai/gpt-oss-20b` no Groq. A falha
-  somente é devolvida pela API se os dois provedores falharem.
-  Guardrails, Roteador, Juiz e Orquestrador também podem usar Mistral como
-  alternativa se a chamada ao Groq falhar. O fallback mantém instruções e
-  validações e pode gerar custos no provedor alternativo.
+Os contratos Pydantic, permissões das ferramentas, confirmação de operações e
+pseudonimização são preservados. Veja [configuração, limites da API alpha,
+checagem opcional de evidência da Etapa 7 e migração de vetores](docs/operacao/openrouter.md).
 
 ### Recuperação de respostas dos agentes
 
@@ -366,14 +316,13 @@ Decisões malformadas de RH, SST e Agenda também podem virar esclarecimentos ap
 uma tentativa de correção. Contratos de segurança dos guardrails e do Juiz
 continuam obrigatórios; respostas inválidas não são usadas para confirmar ações.
 
-Chamadas nativas de ferramenta rejeitadas pelo Groq são repetidas uma vez com
-uma instrução de saída somente textual: as tools são executadas pelo grafo,
-após validação e autorização. Falhas de cota são diferenciadas de outras falhas
-do provedor. Pedidos explícitos de instruções internas são interrompidos antes
-dos revisores; marcadores internos conhecidos também são verificados na saída.
-Essas barreiras complementam os prompts, não substituem controles de acesso.
+Chamadas nativas de ferramentas e respostas vazias, truncadas ou inválidas são
+rejeitadas. As ferramentas são executadas pelo grafo após validação e autorização.
+Erros do OpenRouter são sanitizados; cota, saldo insuficiente e indisponibilidade
+são diferenciados nos sinais operacionais. Pedidos de instruções internas continuam
+interrompidos antes dos revisores e verificados na saída.
 
-Cada mensagem pode gerar de uma a sete chamadas de modelo, além de um embedding
+Cada mensagem pode gerar várias chamadas de modelo conforme o caminho e as correções, além de um embedding
 quando houver busca semântica de histórico ou FAQ, com custos e latência
 dos provedores. `LANGSMITH_*` é lido pelo SDK quando o tracing está habilitado;
 o cliente de tracing omite inputs e conteúdo de outputs, preservando métricas
@@ -572,8 +521,7 @@ passam por uma segunda chamada do especialista nem pelo Orquestrador. O backend
 formata os dados confirmados, o Juiz os valida e, quando aprovados, o guardrail de
 saída preserva deterministicamente a resposta. Casos reprovados continuam usando
 o revisor de saída. O Roteador recebe no máximo seis mensagens anteriores e cada
-especialista, dez. Após uma falha da Mistral, os especialistas usam Groq durante
-cinco minutos antes de tentar a Mistral novamente.
+especialista, dez. Todos os especialistas usam Luna pelo OpenRouter.
 
 ### Tool de consulta de NRs do SST
 
@@ -787,18 +735,12 @@ apenas a etapa e o código do erro, sem URL assinada ou credenciais.
 
 ## Histórico persistente e sessões (SCRUM-187)
 
-Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY`,
-`GROQ_API_KEY` e `MISTRAL_API_KEY` no `.env`. Não há variáveis novas.
-A chave Mistral é necessária para embeddings, mesmo que os agentes de chat usem
-Groq. Reinicie a API após alterar configurações.
-
-O MongoDB usa a coleção `sessoes`; o Qdrant usa `memoria_resumos`. Os nomes ficam
-no código. O Mongo cria a coleção e o índice de histórico no primeiro acesso;
-o usuário do banco precisa das permissões correspondentes. A API não apaga nem
-recria a coleção Qdrant: ela deve existir com um único vetor denso **1024/Cosine**
-e índice keyword `id_user` (tenant). Um índice ausente é criado no primeiro uso.
-O modelo `mistral-embed` gera vetores de 1024 dimensões; não misture embeddings de
-modelos diferentes na mesma coleção. [Documentação Mistral](https://docs.mistral.ai/resources/cookbooks/mistral-embeddings-embeddings).
+Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY` e
+`OPENROUTER_API_KEY`. O MongoDB continua usando `sessoes` com os mesmos contratos.
+`QDRANT_MEMORY_COLLECTION` aponta para uma coleção nova de 1536 dimensões/Cosine,
+com índice tenant `id_user` e identificador `modelo_embedding`. A consulta continua
+filtrando por dono e a sessão atual é excluída. O índice antigo permanece intacto;
+[execute a migração e valide antes do corte](docs/operacao/openrouter.md).
 
 ### Documento MongoDB
 
@@ -909,7 +851,7 @@ As duas rotas usam o mesmo Bearer do chat, sem corpo JSON:
   opcional: `POST /chat/messages` também cria a sessão quando necessário.
 - `POST /sessions/{session_id}/encerrar`: **legado/deprecated**, mantido para
   clientes existentes. Novos clientes não precisam chamar esta rota. Congela a conversa, gera o resumo com
-  Groq, salva-o no Mongo, cria o embedding com Mistral e faz upsert no Qdrant.
+  Luna pelo OpenRouter, salva-o no Mongo, cria o embedding pelo OpenRouter e faz upsert no Qdrant.
   O ID do ponto é o mesmo `session_id`; o payload inclui `id_user`, `session_id`,
   `resumo`, `iniciada_em` e `modelo_embedding`.
 
@@ -1027,7 +969,7 @@ A busca semântica filtra `id_user` no Qdrant e retorna até três IDs. O Mongo
 revalida a propriedade e a versão atual do resumo antes de entregar resumos e trechos
 finais das conversas. Assim, nem um payload vetorial com ID alheio concede acesso.
 Para uma pergunta genérica sobre conversas passadas, a busca vazia retorna os
-três resumos mais recentes diretamente do Mongo. Se o Qdrant/Mistral falhar,
+três resumos mais recentes diretamente do Mongo. Se o Qdrant/OpenRouter falhar,
 retorna os recentes do Mongo com indicação de busca semântica indisponível.
 Sem resultados semânticos, não afirmamos que conversas diferentes deram match.
 

@@ -92,3 +92,15 @@ vez de criá-los manualmente.
 O Deployment inicia com duas réplicas, rolling update sem indisponibilidade,
 probes de inicialização/prontidão/vida, recursos definidos, usuário sem root,
 filesystem somente leitura e um volume temporário limitado.
+
+## OpenRouter e corte dos vetores
+
+Forneça `OPENROUTER_API_KEY` somente como segredo em tempo de execução, usando
+`--env-file` local, o painel do Render ou o Secret/ExternalSecret do Kubernetes.
+Remova as variáveis antigas Groq/Mistral da plataforma após o corte validado.
+A imagem não inclui `.env` nem credenciais. Não execute ingestão no build/startup.
+
+Antes de publicar esta versão, siga o [roteiro de migração](../docs/operacao/openrouter.md).
+As coleções novas precisam existir e estar validadas antes de receber tráfego.
+No ambiente centralizado, ajuste também os manifests/segredos no astro-gitops.
+Merge na main pode acionar publicação/GitOps; a PR não autoriza deploy de produção.

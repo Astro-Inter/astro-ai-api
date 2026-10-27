@@ -10,8 +10,8 @@ from app.infrastructure.vectorstore.faq import FaqVectors
 from app.modules.chat.errors import ChatError
 
 
-QUERY_VECTOR = [1.0] + [0.0] * 1023
-OTHER_VECTOR = [0.0, 1.0] + [0.0] * 1022
+QUERY_VECTOR = [1.0] + [0.0] * 1535
+OTHER_VECTOR = [0.0, 1.0] + [0.0] * 1534
 
 
 @pytest.mark.parametrize("source,expected", [
@@ -46,23 +46,23 @@ def test_faq_search_returns_relevant_sanitized_chunks(monkeypatch, vector_name, 
     async def scenario():
         store = FaqVectors()
         store.client = AsyncQdrantClient(":memory:")
-        params = models.VectorParams(size=1024, distance=models.Distance.COSINE)
-        await store.client.create_collection("faq_chunks", vectors_config=(
+        params = models.VectorParams(size=1536, distance=models.Distance.COSINE)
+        await store.client.create_collection("faq_chunks_openai_te3s_v1", vectors_config=(
             params if vector_name is None else {vector_name: params}
         ))
         def vector(value):
             return value if vector_name is None else {vector_name: value}
-        await store.client.upsert("faq_chunks", points=[
+        await store.client.upsert("faq_chunks_openai_te3s_v1", points=[
             models.PointStruct(id=str(uuid4()), vector=vector(QUERY_VECTOR), payload={
-                "page_content": "O objetivo do Astro é organizar as informações.",
+                "modelo_embedding": "openai/text-embedding-3-small", "page_content": "O objetivo do Astro é organizar as informações.",
                 "page_number": 0,
                 "source": source,
             }),
             models.PointStruct(id=str(uuid4()), vector=vector(OTHER_VECTOR), payload={
-                "page_content": "Trecho sem relação.", "page_number": 1, "source": "outro.pdf",
+                "modelo_embedding": "openai/text-embedding-3-small", "page_content": "Trecho sem relação.", "page_number": 1, "source": "outro.pdf",
             }),
             models.PointStruct(id=str(uuid4()), vector=vector(QUERY_VECTOR), payload={
-                "page_content": "", "page_number": 2, "source": "invalido.pdf",
+                "modelo_embedding": "openai/text-embedding-3-small", "page_content": "", "page_number": 2, "source": "invalido.pdf",
             }),
         ])
         async def embed(texts):
@@ -77,7 +77,7 @@ def test_faq_search_returns_relevant_sanitized_chunks(monkeypatch, vector_name, 
             "pagina": 1,
             "relevancia": 1.0,
         }]
-        assert (await store.client.count("faq_chunks")).count == 3
+        assert (await store.client.count("faq_chunks_openai_te3s_v1")).count == 3
         await store.close()
     asyncio.run(scenario())
 
@@ -86,14 +86,35 @@ def test_faq_rejects_incompatible_collection_without_changing_it(monkeypatch):
     async def scenario():
         store = FaqVectors()
         store.client = AsyncQdrantClient(":memory:")
-        await store.client.create_collection("faq_chunks", vectors_config=models.VectorParams(
+        await store.client.create_collection("faq_chunks_openai_te3s_v1", vectors_config=models.VectorParams(
             size=768, distance=models.Distance.COSINE,
         ))
         monkeypatch.setattr(config, "QDRANT_URL", "http://localhost:6333")
         with pytest.raises(ChatError) as error:
             await store.search("Pergunta")
         assert error.value.status_code == 503
-        assert "1024/Cosine" in error.value.detail
-        assert (await store.client.count("faq_chunks")).count == 0
+        assert "1536/Cosine" in error.value.detail
+        assert (await store.client.count("faq_chunks_openai_te3s_v1")).count == 0
+        await store.close()
+    asyncio.run(scenario())
+
+def test_faq_does_not_mix_models_even_with_equal_dimension(monkeypatch):
+    from unittest.mock import AsyncMock
+    async def scenario():
+        store = FaqVectors()
+        store.client = AsyncQdrantClient(":memory:")
+        await store.client.create_collection(faq.COLLECTION_FAQ,
+            vectors_config=models.VectorParams(size=1536, distance=models.Distance.COSINE))
+        await store.client.upsert(faq.COLLECTION_FAQ, points=[
+            models.PointStruct(id=str(uuid4()), vector=QUERY_VECTOR, payload={
+                "page_content": "Legado indevido", "source": "legado.pdf", "page_number": 0,
+                "modelo_embedding": "mistral-embed"}),
+            models.PointStruct(id=str(uuid4()), vector=QUERY_VECTOR, payload={
+                "page_content": "Texto validado", "source": "novo.pdf", "page_number": 0,
+                "modelo_embedding": "openai/text-embedding-3-small"}),
+        ])
+        monkeypatch.setattr(config, "QDRANT_URL", "http://localhost:6333")
+        monkeypatch.setattr(faq, "gerar_embeddings_batch", AsyncMock(return_value=[QUERY_VECTOR]))
+        assert [s["fonte"] for s in await store.search("pergunta")] == ["novo.pdf"]
         await store.close()
     asyncio.run(scenario())
