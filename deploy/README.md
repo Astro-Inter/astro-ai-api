@@ -104,3 +104,31 @@ Antes de publicar esta versão, siga o [roteiro de migração](../docs/operacao/
 As coleções novas precisam existir e estar validadas antes de receber tráfego.
 No ambiente centralizado, ajuste também os manifests/segredos no astro-gitops.
 Merge na main pode acionar publicação/GitOps; a PR não autoriza deploy de produção.
+
+### Preencher Render e AWS
+
+O `.env` local foi alinhado ao `.env.example`, preservando os valores suportados.
+O exemplo não contém credenciais. Variáveis antigas de Google OAuth, DeepInfra,
+Llama Guard e provedores diretos não são usadas por esta versão.
+
+| Variável | Render | AWS/Kubernetes |
+| --- | --- | --- |
+| `OPENROUTER_API_KEY` | Environment, valor secreto | Secret/Secrets Manager/ExternalSecret |
+| `OPENROUTER_JEV_ENABLED=true` | Environment | ConfigMap |
+| `OPENROUTER_EVIDENCE_CHECK_ENABLED=false` | Environment | ConfigMap; habilitar após calibração |
+| `QDRANT_FAQ_COLLECTION=faq_chunks_openai_te3s_v1` | Environment | ConfigMap; destino validado |
+| `QDRANT_MEMORY_COLLECTION=memoria_resumos_openai_te3s_v1` | Environment | ConfigMap; destino validado |
+| `FAQ_SCORE_THRESHOLD=0.35` | Environment | ConfigMap; provisório |
+| `APP_ENV=production` e `ENABLE_DEV_LOGIN=false` | Ajustar antes de produção | Já definidos no ConfigMap |
+
+O Blueprint Render continua sendo um ambiente provisório de desenvolvimento;
+ajuste as duas últimas opções ao preparar produção. Para bancos, Firebase, R2,
+telemetria e A2A, use os mesmos nomes do `.env.example`, com os valores específicos
+do ambiente. Na AWS, não duplique configurações não secretas no Secret: elas já
+ficam no ConfigMap. A2A usa a URL interna do sidecar na AWS e o vínculo de serviço
+no Blueprint Render. Mantenha as origens CORS explícitas dos frontends autorizados.
+
+Só configure as novas coleções para receber tráfego depois da migração e validação.
+Não importe indiscriminadamente o `.env` de desenvolvimento em produção e não use
+os placeholders do exemplo como credenciais. Este ajuste não envia valores às
+plataformas nem aplica manifests.
