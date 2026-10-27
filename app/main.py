@@ -1,3 +1,4 @@
+from app.diagnostics import HttpObservability
 from contextlib import asynccontextmanager
 import logging
 
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
             allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type"],
         )
+    application.add_middleware(HttpObservability, service="astro-ai-api", sink=logger)
     application.state.chat_service = ChatService()
     application.state.nr_recommendation_service = PositionNrRecommendationService()
     application.state.unit_nr_recommendation_service = UnitNrRecommendationService()
