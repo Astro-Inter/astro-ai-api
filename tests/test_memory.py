@@ -399,8 +399,8 @@ def test_load_session_messages_for_authenticated_owner():
         "status": "ativa",
         "total": 2,
         "mensagens": [
-            {"role": "user", "content": "Oi"},
-            {"role": "assistant", "content": sent.json()["resposta"]},
+            {"role": "user", "content": "Oi", "blocos": []},
+            {"role": "assistant", "content": sent.json()["resposta"], "blocos": []},
         ],
     }
 
