@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.diagnostics import request_context
+
 import json
 import logging
 import os
@@ -81,7 +83,7 @@ class StructuredJsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": _redact(record.getMessage()),
         }
-        for attribute in ("job", "operation", "duration", "status", "error"):
+        for attribute in ("job", "operation", "duration", "status", "error", "event", "request_id", "service_name", "http_method", "http_route", "http_status", "duration_ms", "error_type", "error_code", "error_causes", "error_frames"):
             value = getattr(record, attribute, None)
             if value is not None:
                 payload[attribute] = _redact(value) if isinstance(value, str) else (
@@ -90,6 +92,14 @@ class StructuredJsonFormatter(logging.Formatter):
         if record.exc_info:
             payload["error"] = _redact(self.formatException(record.exc_info))
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+class RequestContextFilter(logging.Filter):
+    def filter(self, record):
+        context = request_context.get()
+        if context:
+            record.request_id = context["request_id"]
+        return True
 
 
 class _SkipExporterInternals(logging.Filter):
@@ -155,6 +165,7 @@ def _build_otlp_pipeline(resource: Resource) -> tuple[LoggerProvider, LoggingHan
     provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
     handler = _SafeOtelLoggingHandler(level=logging.INFO, logger_provider=provider)
     handler.addFilter(_SkipExporterInternals())
+    handler.addFilter(RequestContextFilter())
     return provider, handler
 
 
@@ -181,6 +192,7 @@ def configure_logging(
         service_version=service_version,
         worker_name=worker_name,
     ))
+    console_handler.addFilter(RequestContextFilter())
     root.addHandler(console_handler)
 
     endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()

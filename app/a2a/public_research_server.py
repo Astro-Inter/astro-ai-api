@@ -1,3 +1,4 @@
+from app.diagnostics import HttpObservability
 """Agente A2A independente para pesquisa em publicações oficiais.
 
 Execute com ``python -m app.a2a.public_research_server``. O servidor não recebe
@@ -156,7 +157,7 @@ def create_app(
             *create_agent_card_routes(card),
             *create_jsonrpc_routes(handler, "/"),
         ],
-        middleware=[Middleware(SharedTokenMiddleware, token=token)],
+        middleware=[Middleware(HttpObservability, service="astro-ai-a2a", sink=logger), Middleware(SharedTokenMiddleware, token=token)],
     )
 
 

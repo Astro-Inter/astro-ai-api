@@ -1013,3 +1013,7 @@ Testes usam repositório/LLMs simulados e Qdrant local em memória, sem escrever
 coleções reais ou enviar traces. Cobrem propriedade por UID, retomada, concorrência,
 resumo por trechos, repetição de encerramento, falhas parciais entre os bancos e a
 obrigatoriedade de o guardrail respeitar avaliações negativas do Juiz.
+
+## Diagnóstico operacional
+
+Consulte [os campos e limites dos novos diagnósticos](docs/observability-diagnostics.md) para investigar falhas por requisição ou execução no Grafana.
