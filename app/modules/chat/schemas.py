@@ -44,7 +44,49 @@ class BlocoGraficoLinhas(BlocoGrafico):
     tipo: Literal["grafico_linhas"] = "grafico_linhas"
 
 
-BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoLinhas, Field(discriminator="tipo")]
+class ColunaTabela(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    chave: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    titulo: str = Field(min_length=1, max_length=100)
+
+
+class BlocoTabela(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["tabela"] = "tabela"
+    versao: Literal[1] = 1
+    titulo: str = Field(min_length=1, max_length=200)
+    colunas: list[ColunaTabela] = Field(min_length=1, max_length=10)
+    linhas: list[dict[str, str | int | float | None]] = Field(min_length=1, max_length=50)
+    pagina: int = Field(ge=1)
+    total_paginas: int = Field(ge=1)
+    total: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validar_colunas(self):
+        keys = [column.chave for column in self.colunas]
+        if len(keys) != len(set(keys)) or any(set(row) != set(keys) for row in self.linhas):
+            raise ValueError("Linhas e colunas da tabela devem corresponder.")
+        if any(isinstance(value, str) and len(value) > 500 for row in self.linhas for value in row.values()):
+            raise ValueError("Conteúdo de tabela excede o limite.")
+        return self
+
+
+class ImagemUsuario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    nome: str = Field(min_length=1, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
+    url: str | None = Field(default=None, max_length=4096)
+
+
+class BlocoGaleriaUsuarios(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["galeria_usuarios"] = "galeria_usuarios"
+    versao: Literal[1] = 1
+    titulo: str = Field(min_length=1, max_length=200)
+    imagens: list[ImagemUsuario] = Field(min_length=1, max_length=50)
+
+
+BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoLinhas | BlocoTabela | BlocoGaleriaUsuarios, Field(discriminator="tipo")]
 
 
 class ChatResponse(BaseModel):

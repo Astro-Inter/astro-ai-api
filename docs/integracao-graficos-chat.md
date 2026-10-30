@@ -79,3 +79,60 @@ setores, use `"tipo":"grafico_setores"` com os mesmos campos e categorias do
 gráfico de barras. O cliente deve apresentar uma tabela ou descrição acessível
 para todos os tipos. A fonte e o escopo explicitam que não há comparação direta
 com os gráficos organizacionais da API de dashboards.
+
+
+## Tabela de usuários e fotos de perfil
+
+Quando uma consulta autorizada de RH lista usuários, o chat pode entregar blocos
+`texto`, `tabela`, `galeria_usuarios`, `texto`, nessa ordem quando ambos são
+solicitados. A tabela e a galeria são blocos independentes; um não precisa estar
+dentro do outro. Se pedir apenas tabela, a resposta pode conter só a tabela; se
+pedir apenas fotos, só a galeria. Uma listagem sem preferência apresenta ambos. O contrato versionado é:
+
+```json
+{"tipo":"tabela","versao":1,"titulo":"Usuários","pagina":1,
+ "total_paginas":1,"total":1,
+ "colunas":[{"chave":"nome","titulo":"Nome"},{"chave":"email","titulo":"E-mail"}],
+ "linhas":[{"nome":"Ana Exemplo","email":"ana@example.com"}]}
+```
+
+O exemplo de tabela foi abreviado: a resposta de usuários também traz cargo,
+unidade, perfil e situação. As colunas definem as chaves de cada linha, com
+valores textuais, numéricos ou nulos. Cada página contém no máximo 50 linhas.
+As imagens chegam em bloco separado:
+
+```json
+{"tipo":"galeria_usuarios","versao":1,"titulo":"Fotos dos usuários",
+ "imagens":[{"nome":"Ana Exemplo","email":"ana@example.com","url":null}]}
+```
+
+Cada item `url` é uma URL HTTPS assinada e temporária ou `null` quando não há
+foto, autorização ou acesso ao serviço. O
+frontend deve exibir nome e iniciais quando faltar foto ou ocorrer erro no
+carregamento; não registre ou analise a URL nem a persista em cache local. Exiba
+campos como texto, preserve paginação e leia as linhas como tabela acessível.
+O campo `resposta` permanece o fallback para clientes que não renderizam blocos.
+As URLs não são armazenadas no histórico nem enviadas aos modelos. Ao abrir o
+histórico, a API revalida as permissões atuais e obtém novamente as URLs; se o
+usuário deixar de ter acesso à foto, esse campo retorna `null`.
+
+O fluxo reutiliza a consulta autorizada `buscar_outros_usuarios`. Depois do Juiz e
+antes de enviar ao cliente, o backend revalida cada pessoa no PostgreSQL com o
+UID e o papel atuais, limita o escopo à unidade do gestor ou workspace do gestor
+do workspace, consulta `usuario_foto_perfil` e somente então acessa o Redis.
+Administradores e colaboradores recebem fallback sem foto nesta implementação.
+Nunca exponha chaves R2, caminho do objeto ou chaves Redis ao modelo/cliente.
+
+O Redis usa a mesma chave `user:avatar:<id>` da API principal. Uma URL válida é
+reutilizada apenas para o mesmo endpoint, bucket e objeto, dentro da validade; na
+ausência ou expiração, o backend gera URL de até 24h e atualiza o cache com TTL
+inferior ao da assinatura. Falha do Redis não impede geração; ausência de dados,
+credenciais ou erro de autorização retorna `null`. A foto é acessível por quem
+possuir a URL até sua expiração, portanto somente entregue a usuários autorizados.
+
+Configuração exclusivamente no backend: `AVATAR_REDIS_URL`, `AVATAR_R2_ENDPOINT`,
+`AVATAR_R2_ACCESS_KEY_ID`, `AVATAR_R2_SECRET_ACCESS_KEY` e `R2_BUCKET_AVATARS`.
+O endpoint deve ser HTTPS de Cloudflare R2. Configure Redis e bucket iguais aos da
+API principal para compartilhar o cache; os segredos de PDF têm nomes separados.
+Use `.env.example` como referência e nunca versione valores reais. Testes locais
+usam serviços simulados; conexão e permissões reais exigem homologação própria.

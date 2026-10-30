@@ -2465,3 +2465,55 @@ def test_novos_graficos_no_chat_e_no_historico(chat_client, monkeypatch, questio
     assert [block["tipo"] for block in body["blocos"]] == ["texto", kind, "texto"]
     assert [(row["categoria"], row["valor"]) for row in body["blocos"][1]["dados"]] == list(values.items())
     assert client.get(f"/sessions/{body['session_id']}/messages").json()["mensagens"][-1]["blocos"] == body["blocos"]
+
+
+def test_tabela_com_avatar_tem_url_efemera_e_reautoriza_historico(chat_client, monkeypatch):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs, service as chat_service
+    @tool("buscar_outros_usuarios")
+    def fake_people(config: RunnableConfig = None, **kwargs) -> dict:
+        """Usuários sintéticos autorizados."""
+        return {"status":"ok", "consulta":"listar", "total":1, "pagina":1, "total_paginas":1, "quantidade":1,
+                "usuarios":[{"nome":"Ana", "email":"ana@example.com", "cargo":"Técnica", "unidade":"Matriz", "tipo":"COLABORADOR", "status":"ATIVO"}]}
+    monkeypatch.setitem(subgraphs.RH_TOOLS, "buscar_outros_usuarios", fake_people)
+    calls = []
+    def resolve(user, emails):
+        calls.append((user.uid, emails))
+        return {"ana@example.com":"https://example.test/signed"}
+    monkeypatch.setattr(chat_service, "resolve_avatar_urls", resolve)
+    client, model, application = chat_client
+    model.route = "rh"
+    model.replies["rh"] = json.dumps({"acao":"buscar_outros_usuarios", "filtros":{}, "resposta":None})
+    body = client.post("/chat/messages", json={"message":"Liste funcionários em tabela e mostre suas fotos"}).json()
+    assert [b["tipo"] for b in body["blocos"]] == ["texto", "tabela", "galeria_usuarios", "texto"]
+    assert body["blocos"][2]["imagens"][0]["url"] == "https://example.test/signed"
+    stored = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"][-1]
+    assert stored["blocos"][2]["imagens"][0]["url"] is None
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"][2]["imagens"][0]["url"] == "https://example.test/signed"
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("Liste funcionários em tabela", ["texto", "tabela", "texto"]),
+    ("Liste funcionários e mostre fotos", ["texto", "galeria_usuarios", "texto"]),
+    ("Liste funcionários com tabela e fotos", ["texto", "tabela", "galeria_usuarios", "texto"]),
+])
+def test_tabela_e_galeria_funcionam_independentes_e_juntas(chat_client, monkeypatch, question, expected):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs, service as chat_service
+    @tool("buscar_outros_usuarios")
+    def fake_people(config: RunnableConfig = None, **kwargs) -> dict:
+        """Usuários sintéticos autorizados."""
+        return {"status":"ok", "consulta":"listar", "total":1, "pagina":1, "total_paginas":1, "quantidade":1,
+                "usuarios":[{"nome":"Ana", "email":"ana@example.com", "cargo":"Técnica", "unidade":"Matriz", "tipo":"COLABORADOR", "status":"ATIVO"}]}
+    monkeypatch.setitem(subgraphs.RH_TOOLS, "buscar_outros_usuarios", fake_people)
+    monkeypatch.setattr(chat_service, "resolve_avatar_urls", lambda *_: {})
+    client, model, _ = chat_client
+    model.route = "rh"
+    model.replies["rh"] = json.dumps({"acao":"buscar_outros_usuarios", "filtros":{}, "resposta":None})
+    response = client.post("/chat/messages", json={"message":question})
+    assert response.status_code == 200
+    assert [block["tipo"] for block in response.json()["blocos"]] == expected
