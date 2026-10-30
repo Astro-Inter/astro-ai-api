@@ -2406,3 +2406,39 @@ def test_obsolete_model_calendar_decision_cannot_execute_tools(chat_client, acti
     assert response.status_code == 200
     assert action not in response.json()["agentes_chamados"]
     assert "Não consegui interpretar" in response.json()["resposta"]
+
+
+def test_grafico_no_chat_e_historico_preservam_ordem_e_escopo(chat_client, monkeypatch):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs
+    @tool("consultar_grafico_treinamentos")
+    def fake_chart(config: RunnableConfig = None) -> dict:
+        """Retorna dados sintéticos de treinamentos pessoais."""
+        assert config["configurable"]["usuario_atual"]["uid"] == "user-a"
+        return {"status": "ok", "categorias": {"Pendentes": 3, "Concluídos": 2, "Rejeitados": 1},
+                "fonte": "Participações em treinamentos ativos atribuídas ao usuário"}
+    monkeypatch.setitem(subgraphs.AGENDA_TOOLS, "consultar_grafico_treinamentos", fake_chart)
+    client, model, application = chat_client
+    response = client.post("/chat/messages", json={"message": "Mostre um gráfico dos meus treinamentos"})
+    assert response.status_code == 200
+    body = response.json()
+    assert [b["tipo"] for b in body["blocos"]] == ["texto", "grafico_barras", "texto"]
+    assert sum(item["valor"] for item in body["blocos"][1]["dados"]) == 6
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"] == body["blocos"]
+
+
+def test_grafico_nao_e_emitido_quando_juiz_rejeita(chat_client, monkeypatch):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs
+    @tool("consultar_grafico_treinamentos")
+    def fake_chart(config: RunnableConfig = None) -> dict:
+        """Retorna dados sintéticos."""
+        return {"status": "ok", "categorias": {"Pendentes": 1}, "fonte": "Teste"}
+    monkeypatch.setitem(subgraphs.AGENDA_TOOLS, "consultar_grafico_treinamentos", fake_chart)
+    client, model, _ = chat_client
+    model.replies["juiz"] = json.dumps({"status": "rejeitado", "motivo": "Inconsistência", "problemas": ["dados"]})
+    body = client.post("/chat/messages", json={"message": "Mostre um gráfico dos meus treinamentos"}).json()
+    assert body["blocos"] == []

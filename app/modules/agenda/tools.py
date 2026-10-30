@@ -269,7 +269,46 @@ def consultar_eventos(
     return result
 
 
+@tool("consultar_grafico_treinamentos")
+def consultar_grafico_treinamentos(config: RunnableConfig = None) -> dict:
+    """Conta as participações do usuário autenticado por status de conclusão."""
+    user = _usuario_do_contexto(config)
+    if user is None or user.role == "ADMIN":
+        return {"status": "nao_autorizado", "mensagem": "Não foi possível consultar treinamentos para esta conta."}
+    if not app_config.DATABASE_URL:
+        return {"status": "indisponivel", "mensagem": "Consulta de treinamentos indisponível."}
+    try:
+        with get_postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT id_usuario FROM usuario WHERE firebase_uid = %s LIMIT 1", [user.uid])
+                profile = cursor.fetchone()
+                if not profile:
+                    return {"status": "sem_perfil", "mensagem": "Usuário não encontrado no cadastro funcional."}
+                cursor.execute("""
+                    SELECT COALESCE(conclusao.status, 'PENDENTE'), COUNT(*)
+                    FROM turma_colaborador participacao
+                    JOIN turma ON turma.id_turma = participacao.turma_id
+                    JOIN evento ON evento.id_evento = turma.evento_id
+                    LEFT JOIN conclusao_evento conclusao
+                      ON conclusao.turma_colaborador_id = participacao.id_turma_colaborador
+                    WHERE participacao.usuario_id = %s AND evento.status = 'ATIVO'
+                    GROUP BY COALESCE(conclusao.status, 'PENDENTE')
+                """, [profile[0]])
+                rows = cursor.fetchall()
+        allowed = {"PENDENTE": "Pendentes", "CONCLUIDO": "Concluídos", "REJEITADO": "Rejeitados"}
+        counts = {label: 0 for label in allowed.values()}
+        for status, count in rows:
+            if status not in allowed or type(count) is not int or count < 0:
+                return {"status": "indisponivel", "mensagem": "Não foi possível validar os estados dos treinamentos."}
+            counts[allowed[status]] += count
+        return {"status": "ok" if sum(counts.values()) else "sem_dados", "categorias": counts,
+                "fonte": "Participações em treinamentos ativos atribuídas ao usuário"}
+    except Exception:
+        return {"status": "indisponivel", "mensagem": "Consulta de treinamentos indisponível."}
+
+
 TOOLS_AGENDA = [
+    consultar_grafico_treinamentos,
     consultar_eventos,
     consultar_treinamentos,
 ]

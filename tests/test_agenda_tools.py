@@ -239,3 +239,22 @@ def test_admin_cannot_query_functional_training(monkeypatch):
     )
     result = consultar_treinamentos.invoke({}, config=tool_config(role="ADMIN"))
     assert result["status"] == "nao_aplicavel"
+
+
+def test_grafico_treinamentos_usa_somente_uid_do_contexto(monkeypatch):
+    from app.modules.agenda.tools import consultar_grafico_treinamentos
+    cursor = FakeCursor(profile=(7,), rows=[("CONCLUIDO", 2), ("PENDENTE", 3), ("REJEITADO", 1)])
+    setup_database(monkeypatch, cursor)
+    result = consultar_grafico_treinamentos.invoke({}, config=tool_config())
+    assert result["categorias"] == {"Pendentes": 3, "Concluídos": 2, "Rejeitados": 1}
+    assert cursor.calls[0][1] == ["firebase-user"]
+    assert cursor.calls[1][1] == [7]
+    assert "participacao.usuario_id = %s" in cursor.calls[1][0]
+    assert consultar_grafico_treinamentos.invoke({}, config=tool_config(role="ADMIN"))["status"] == "nao_autorizado"
+
+
+def test_grafico_rejeita_status_desconhecido(monkeypatch):
+    from app.modules.agenda.tools import consultar_grafico_treinamentos
+    cursor = FakeCursor(profile=(7,), rows=[("DESCONHECIDO", 2)])
+    setup_database(monkeypatch, cursor)
+    assert consultar_grafico_treinamentos.invoke({}, config=tool_config())["status"] == "indisponivel"

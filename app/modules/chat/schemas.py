@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -14,10 +14,36 @@ class ChatRequest(BaseModel):
     )
 
 
+class BlocoTexto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["texto"] = "texto"
+    conteudo: str = Field(min_length=1, max_length=6000)
+
+
+class PontoGrafico(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    categoria: str = Field(min_length=1, max_length=100)
+    valor: int = Field(ge=0)
+
+
+class BlocoGrafico(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["grafico_barras"] = "grafico_barras"
+    versao: Literal[1] = 1
+    titulo: str = Field(min_length=1, max_length=200)
+    dados: list[PontoGrafico] = Field(min_length=1, max_length=10)
+    unidade: Literal["participações"] = "participações"
+    fonte: str = Field(min_length=1, max_length=200)
+
+
+BlocoResposta = Annotated[BlocoTexto | BlocoGrafico, Field(discriminator="tipo")]
+
+
 class ChatResponse(BaseModel):
     session_id: UUID
     resposta: str
     agentes_chamados: list[str]
+    blocos: list[BlocoResposta] = Field(default_factory=list, max_length=10)
 
 
 class SessionResponse(BaseModel):
@@ -36,6 +62,7 @@ class SessionResponse(BaseModel):
 class SessionMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
+    blocos: list[BlocoResposta] = Field(default_factory=list, max_length=10)
 
 
 class SessionMessagesResponse(BaseModel):

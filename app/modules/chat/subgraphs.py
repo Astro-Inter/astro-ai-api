@@ -957,9 +957,20 @@ def build_sst_graph(model: AgentModel):
     return graph.compile(name="subgrafo_sst")
 
 
+def pedido_grafico_treinamentos(message: str) -> bool:
+    text = "".join(c for c in unicodedata.normalize("NFKD", message.casefold()) if not unicodedata.combining(c))
+    return bool(re.search(r"\b(grafico|dashboard|visualizacao)\b", text)
+                and re.search(r"\b(treinamentos?|capacitac(?:ao|oes))\b", text)
+                and re.search(r"\b(meus?|minhas?|para mim)\b", text)
+                and not re.search(r"\b(empresa|unidade|equipe|todos|outros|mensal|ano|mes|periodo|vencid[oa]s?|pendentes?|concluid[oa]s?|rejeitad[oa]s?)\b|\d", text))
+
+
 def build_agenda_graph(model: AgentModel):
     async def decide(state: ChatState):
         prepared_decision = state.get("agenda_decision")
+        if pedido_grafico_treinamentos(state["mensagem"]):
+            return {"agenda_route": "tool", "agenda_decision": "grafico_pessoal",
+                    "agentes_chamados": state["agentes_chamados"] + ["agenda"]}
         filters = _filtros_treinamentos(state["mensagem"])
         event_filters = _filtros_eventos(state["mensagem"])
         if isinstance(prepared_decision, AgendaToolDecision):
@@ -985,6 +996,17 @@ def build_agenda_graph(model: AgentModel):
         }
 
     async def use_tool(state: ChatState):
+        if state["agenda_decision"] == "grafico_pessoal":
+            result = await AGENDA_TOOLS["consultar_grafico_treinamentos"].ainvoke(
+                {}, config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}})
+            categories = result.get("categorias", {})
+            total = sum(categories.values())
+            candidate = ("Seus treinamentos atribuídos em eventos ativos por situação: " +
+                         ", ".join(f"{name}: {count}" for name, count in categories.items()) +
+                         f". Total: {total}.") if result.get("status") in {"ok", "sem_dados"} else result.get("mensagem", "Consulta indisponível.")
+            return {"resultado_tool": result, "resposta_deterministica": True, "candidato": candidate,
+                    "resultado": {"dominio": "agenda", "intencao": "consultar", "status": "concluido" if result.get("status") == "ok" else "sem_dados" if result.get("status") == "sem_dados" else "indisponivel", "resposta": candidate, "recomendacao": "", "evidencia_tool": {"nome": "consultar_grafico_treinamentos", "resultado": result}},
+                    "acao_pendente": None, "agentes_chamados": state["agentes_chamados"] + ["consultar_grafico_treinamentos"]}
         filters = state["agenda_decision"].filtros
         decision = state["agenda_decision"]
         tool_name = decision.acao

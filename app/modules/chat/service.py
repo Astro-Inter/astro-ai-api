@@ -20,6 +20,7 @@ from app.modules.chat.pdf_delivery import asks_for_pdf_link
 from app.modules.chat.schemas import (
     ChatRequest,
     ChatResponse,
+    BlocoTexto, BlocoGrafico, PontoGrafico,
     SessionMessage,
     SessionMessagesResponse,
     SessionResponse,
@@ -131,6 +132,7 @@ class ChatService:
                 SessionMessage(
                     role="user" if message["role"] == "human" else "assistant",
                     content=message["content"],
+                    blocos=message.get("blocos", []) if message["role"] == "assistant" else [],
                 )
                 for message in doc.get("mensagens", [])
                 if message.get("role") in {"human", "assistant"}
@@ -285,8 +287,18 @@ class ChatService:
                             f"{validity.capitalize()}."
                         )
                     stored_answer += "\n\nPDF gerado e link temporário entregue."
+                blocks = []
+                chart_data = result.get("resultado_tool", {})
+                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                        and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_grafico_treinamentos"
+                        and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):
+                    counts = chart_data["categorias"]
+                    blocks = [BlocoTexto(conteudo="Veja a distribuição dos seus treinamentos atribuídos em eventos ativos:"),
+                              BlocoGrafico(titulo="Seus treinamentos por situação", fonte=chart_data["fonte"],
+                                           dados=[PontoGrafico(categoria=k, valor=v) for k, v in counts.items()]),
+                              BlocoTexto(conteudo=public_answer)]
                 response = ChatResponse(session_id=session_id, resposta=public_answer,
-                                        agentes_chamados=result["agentes_chamados"])
+                                        agentes_chamados=result["agentes_chamados"], blocos=blocks)
                 if result["guardar_turno"]:
                     delivery_fields = {}
                     if result.get("pdf_solicitado"):
@@ -304,7 +316,7 @@ class ChatService:
                             "consulta_rh": result.get("consulta_rh"),
                         }, messages=[
                             {"role": "human", "content": request.message},
-                            {"role": "assistant", "content": stored_answer},
+                            {"role": "assistant", "content": stored_answer, **({"blocos": [block.model_dump() for block in blocks]} if blocks else {})},
                         ])
                     # Compact only after the atomic Mongo update succeeds. An
                     # old checkpoint never overrides data loaded from another worker.
