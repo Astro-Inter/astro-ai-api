@@ -27,6 +27,7 @@ from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch,
 from app.modules.chat.state import ChatState
 from app.modules.chat.subgraphs import (
     _filtros_treinamentos,
+    pedido_grafico_treinamentos,
     _filtros_eventos,
     _filtros_nrs_organizacao,
     _pedido_conformidade_terceiro,
@@ -747,7 +748,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             }
 
         if memory_request is None and (
-            _filtros_treinamentos(state["mensagem"]) is not None
+            pedido_grafico_treinamentos(state["mensagem"])
+            or _filtros_treinamentos(state["mensagem"]) is not None
             or _filtros_eventos(state["mensagem"]) is not None
             or _pedido_de_agendamento_reuniao(state["mensagem"])
         ):

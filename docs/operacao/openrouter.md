@@ -162,7 +162,7 @@ Nunca substitui os pontos de uma coleção existente.
 
 ## Similaridade e avaliação
 
-FAQ mantém top 5; memória mantém top 3 com filtro por UID e exclusão da sessão
+FAQ consulta top 6; memória mantém top 3 com filtro por UID e exclusão da sessão
 atual. Todas as buscas exigem `modelo_embedding=openai/text-embedding-3-small` e
 validam dimensão/Cosine. Nomes novos também impedem reutilizar coleções antigas.
 
@@ -208,3 +208,46 @@ Antes de produção ainda é preciso autorizar a migração, validar os destinos
 casos de produto, configurar segredos/coleções no ambiente central astro-gitops,
 confirmar o build CI e autorizar o deploy. A checagem final de evidência fica
 optativa até calibração; as validações textuais existentes permanecem obrigatórias.
+
+
+### Validação de 27/10/2026 — preparação, sem corte
+
+Os oito trechos FAQ existentes tinham texto, fonte e página válidos. Foram
+reindexados em `faq_chunks_openai_te3s_20261027`, 1536/Cosine, com os mesmos IDs e
+metadados e `modelo_embedding=openai/text-embedding-3-small`. O índice legado foi
+conferido e permaneceu intacto. A configuração dos consumidores não foi alterada.
+A migração consumiu 1462 tokens, US$ 0,00002924; o teto apresentado era US$ 0,00010262.
+
+Quatro perguntas baseadas no documento e três controles negativos foram usados
+na calibração. A evidência de público-alvo ficou em sexto lugar (0,5149), fora do
+limite anterior de cinco. O limite passa a seis; não há chamada adicional de IA,
+mas o contexto pode crescer em até um trecho de 2000 caracteres por busca. O
+limiar 0,35 é mantido: o maior score negativo da amostra foi 0,2006. Essa amostra
+pequena não comprova cobertura de toda pergunta futura; ampliar casos na evolução
+do corpus. O teste automatizado reproduz a evidência em sexto e a rejeição do
+resultado negativo, sem chamadas pagas.
+
+A migração de memória permanece bloqueada até acessar os resumos canônicos no
+Mongo. Existem 14 pontos no índice legado, que não são tratados automaticamente
+como resumos atuais. Não usar vetores antigos como substituto da fonte canônica,
+nem habilitar o serviço de resumos antes da reconciliação e validação de isolamento.
+O acesso Mongo local apresentou timeout; o diagnóstico remoto temporário foi
+recusado com HTTP 403/1010. Não foram alteradas regras de rede/TLS para contornar
+isso. A próxima execução deve ocorrer em um ambiente autorizado com acesso ao
+Mongo e Qdrant.
+
+Para ativar o FAQ após revisão e homologação, configure
+`QDRANT_FAQ_COLLECTION=faq_chunks_openai_te3s_20261027` junto do código corrigido.
+Para recuperar, mantenha ou restaure código/modelo e configuração legados como
+conjunto; nenhuma coleção é apagada. As PRs dos dois Workers ainda dependem da
+aprovação exigida pelas regras do GitHub antes de publicação.
+
+
+Com top 6, os sete casos passaram, incluindo a continuação da seção de público-alvo,
+e as citações mantiveram fonte/página. Os 44 testes locais de FAQ e ingestão/migração
+passaram com embeddings simulados e Qdrant em memória. O custo observado total da
+migração e das consultas de calibração/diagnóstico foi US$ 0,00003488. O relatório
+operacional registra contagens e scores, sem textos de memória ou identificadores
+de usuários. A autorização para merge/deploy dos Workers foi recebida; a proteção
+do GitHub exige outra aprovação e os repositórios não permitem auto-merge. Nenhuma
+regra foi contornada e nenhuma versão de produção foi alterada.

@@ -118,3 +118,37 @@ def test_faq_does_not_mix_models_even_with_equal_dimension(monkeypatch):
         assert [s["fonte"] for s in await store.search("pergunta")] == ["novo.pdf"]
         await store.close()
     asyncio.run(scenario())
+
+
+def test_faq_preserves_evidence_ranked_sixth_and_rejects_irrelevant_results(monkeypatch):
+    """Regressão da calibração real: público-alvo ficou em sexto, score 0,5149."""
+    import math
+    from unittest.mock import AsyncMock
+
+    async def scenario():
+        store = FaqVectors()
+        store.client = AsyncQdrantClient(":memory:")
+        await store.client.create_collection(faq.COLLECTION_FAQ, vectors_config=models.VectorParams(
+            size=1536, distance=models.Distance.COSINE))
+        points = []
+        for rank, score in enumerate((0.6634, 0.6382, 0.6083, 0.606, 0.5777, 0.5149, 0.2006)):
+            vector = [score, math.sqrt(1 - score * score)] + [0.0] * 1534
+            points.append(models.PointStruct(id=str(uuid4()), vector=vector, payload={
+                "modelo_embedding": "openai/text-embedding-3-small",
+                "page_content": "PÚBLICO-ALVO: RH, empresas e colaboradores." if rank == 5 else "Outro trecho.",
+                "source": "uso_astro.pdf", "page_number": rank,
+            }))
+        await store.client.upsert(faq.COLLECTION_FAQ, points=points)
+        embed = AsyncMock(return_value=[QUERY_VECTOR])
+        monkeypatch.setattr(config, "QDRANT_URL", "http://localhost:6333")
+        monkeypatch.setattr(faq, "gerar_embeddings_batch", embed)
+        monkeypatch.setattr(faq, "FAQ_SCORE_THRESHOLD", 0.35)
+        snippets = await store.search("Para quem a plataforma Astro é destinada?")
+        assert len(snippets) == 6
+        assert snippets[-1]["pagina"] == 6
+        assert snippets[-1]["conteudo"].startswith("PÚBLICO-ALVO")
+        assert all(item["relevancia"] >= 0.35 for item in snippets)
+        embed.assert_awaited_once()
+        assert (await store.client.count(faq.COLLECTION_FAQ)).count == 7
+        await store.close()
+    asyncio.run(scenario())

@@ -2406,3 +2406,114 @@ def test_obsolete_model_calendar_decision_cannot_execute_tools(chat_client, acti
     assert response.status_code == 200
     assert action not in response.json()["agentes_chamados"]
     assert "Não consegui interpretar" in response.json()["resposta"]
+
+
+def test_grafico_no_chat_e_historico_preservam_ordem_e_escopo(chat_client, monkeypatch):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs
+    @tool("consultar_grafico_treinamentos")
+    def fake_chart(config: RunnableConfig = None) -> dict:
+        """Retorna dados sintéticos de treinamentos pessoais."""
+        assert config["configurable"]["usuario_atual"]["uid"] == "user-a"
+        return {"status": "ok", "categorias": {"Pendentes": 3, "Concluídos": 2, "Rejeitados": 1},
+                "fonte": "Participações em treinamentos ativos atribuídas ao usuário"}
+    monkeypatch.setitem(subgraphs.AGENDA_TOOLS, "consultar_grafico_treinamentos", fake_chart)
+    client, model, application = chat_client
+    response = client.post("/chat/messages", json={"message": "Mostre um gráfico dos meus treinamentos"})
+    assert response.status_code == 200
+    body = response.json()
+    assert [b["tipo"] for b in body["blocos"]] == ["texto", "grafico_barras", "texto"]
+    assert sum(item["valor"] for item in body["blocos"][1]["dados"]) == 6
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"] == body["blocos"]
+
+
+def test_grafico_nao_e_emitido_quando_juiz_rejeita(chat_client, monkeypatch):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs
+    @tool("consultar_grafico_treinamentos")
+    def fake_chart(config: RunnableConfig = None) -> dict:
+        """Retorna dados sintéticos."""
+        return {"status": "ok", "categorias": {"Pendentes": 1}, "fonte": "Teste"}
+    monkeypatch.setitem(subgraphs.AGENDA_TOOLS, "consultar_grafico_treinamentos", fake_chart)
+    client, model, _ = chat_client
+    model.replies["juiz"] = json.dumps({"status": "rejeitado", "motivo": "Inconsistência", "problemas": ["dados"]})
+    body = client.post("/chat/messages", json={"message": "Mostre um gráfico dos meus treinamentos"}).json()
+    assert body["blocos"] == []
+
+
+@pytest.mark.parametrize("question,tool_name,kind,values", [
+    ("Mostre um gráfico de setores dos meus treinamentos", "consultar_grafico_treinamentos", "grafico_setores", {"Pendentes": 3, "Concluídos": 2, "Rejeitados": 1}),
+    ("Mostre um gráfico de linhas dos meus treinamentos concluídos", "consultar_evolucao_treinamentos", "grafico_linhas", {f"2026-{m:02d}": 2 if m == 5 else 0 for m in range(1, 13)}),
+])
+def test_novos_graficos_no_chat_e_no_historico(chat_client, monkeypatch, question, tool_name, kind, values):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs
+    @tool(tool_name)
+    def fake_chart(config: RunnableConfig = None) -> dict:
+        """Retorna dados sintéticos autorizados."""
+        assert config["configurable"]["usuario_atual"]["uid"] == "user-a"
+        return {"status": "ok", "categorias": values, "fonte": "Dados sintéticos"}
+    monkeypatch.setitem(subgraphs.AGENDA_TOOLS, tool_name, fake_chart)
+    client, _, _ = chat_client
+    response = client.post("/chat/messages", json={"message": question})
+    assert response.status_code == 200
+    body = response.json()
+    assert [block["tipo"] for block in body["blocos"]] == ["texto", kind, "texto"]
+    assert [(row["categoria"], row["valor"]) for row in body["blocos"][1]["dados"]] == list(values.items())
+    assert client.get(f"/sessions/{body['session_id']}/messages").json()["mensagens"][-1]["blocos"] == body["blocos"]
+
+
+def test_tabela_com_avatar_tem_url_efemera_e_reautoriza_historico(chat_client, monkeypatch):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs, service as chat_service
+    @tool("buscar_outros_usuarios")
+    def fake_people(config: RunnableConfig = None, **kwargs) -> dict:
+        """Usuários sintéticos autorizados."""
+        return {"status":"ok", "consulta":"listar", "total":1, "pagina":1, "total_paginas":1, "quantidade":1,
+                "usuarios":[{"nome":"Ana", "email":"ana@example.com", "cargo":"Técnica", "unidade":"Matriz", "tipo":"COLABORADOR", "status":"ATIVO"}]}
+    monkeypatch.setitem(subgraphs.RH_TOOLS, "buscar_outros_usuarios", fake_people)
+    calls = []
+    def resolve(user, emails):
+        calls.append((user.uid, emails))
+        return {"ana@example.com":"https://example.test/signed"}
+    monkeypatch.setattr(chat_service, "resolve_avatar_urls", resolve)
+    client, model, application = chat_client
+    model.route = "rh"
+    model.replies["rh"] = json.dumps({"acao":"buscar_outros_usuarios", "filtros":{}, "resposta":None})
+    body = client.post("/chat/messages", json={"message":"Liste funcionários em tabela e mostre suas fotos"}).json()
+    assert [b["tipo"] for b in body["blocos"]] == ["texto", "tabela", "galeria_usuarios", "texto"]
+    assert body["blocos"][2]["imagens"][0]["url"] == "https://example.test/signed"
+    stored = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"][-1]
+    assert stored["blocos"][2]["imagens"][0]["url"] is None
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"][2]["imagens"][0]["url"] == "https://example.test/signed"
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("Liste funcionários em tabela", ["texto", "tabela", "texto"]),
+    ("Liste funcionários e mostre fotos", ["texto", "galeria_usuarios", "texto"]),
+    ("Liste funcionários com tabela e fotos", ["texto", "tabela", "galeria_usuarios", "texto"]),
+])
+def test_tabela_e_galeria_funcionam_independentes_e_juntas(chat_client, monkeypatch, question, expected):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs, service as chat_service
+    @tool("buscar_outros_usuarios")
+    def fake_people(config: RunnableConfig = None, **kwargs) -> dict:
+        """Usuários sintéticos autorizados."""
+        return {"status":"ok", "consulta":"listar", "total":1, "pagina":1, "total_paginas":1, "quantidade":1,
+                "usuarios":[{"nome":"Ana", "email":"ana@example.com", "cargo":"Técnica", "unidade":"Matriz", "tipo":"COLABORADOR", "status":"ATIVO"}]}
+    monkeypatch.setitem(subgraphs.RH_TOOLS, "buscar_outros_usuarios", fake_people)
+    monkeypatch.setattr(chat_service, "resolve_avatar_urls", lambda *_: {})
+    client, model, _ = chat_client
+    model.route = "rh"
+    model.replies["rh"] = json.dumps({"acao":"buscar_outros_usuarios", "filtros":{}, "resposta":None})
+    response = client.post("/chat/messages", json={"message":question})
+    assert response.status_code == 200
+    assert [block["tipo"] for block in response.json()["blocos"]] == expected

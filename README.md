@@ -264,7 +264,7 @@ confirmações e validações existentes.
   segue para o Orquestrador, o Juiz e o guardrail de saída.
 - FAQ: subgrafo com nós de consulta de normas e resposta direta, sem Orquestrador,
   conforme a modelagem. A pergunta é transformada em embedding `openai/text-embedding-3-small` e
-  consulta até cinco trechos da coleção configurada em `QDRANT_FAQ_COLLECTION` por similaridade Cosine. Somente
+  consulta até seis trechos da coleção configurada em `QDRANT_FAQ_COLLECTION` por similaridade Cosine. Somente
   resultados com score mínimo de 0,35 são enviados ao agente, como dados não
   confiáveis e nunca como instruções. A resposta usa apenas esses trechos e cita
   nome do PDF e página. Quando a pergunta pede legislação, manual, cartilha ou

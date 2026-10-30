@@ -269,7 +269,96 @@ def consultar_eventos(
     return result
 
 
+@tool("consultar_grafico_treinamentos")
+def consultar_grafico_treinamentos(config: RunnableConfig = None) -> dict:
+    """Conta as participações do usuário autenticado por status de conclusão."""
+    user = _usuario_do_contexto(config)
+    if user is None or user.role == "ADMIN":
+        return {"status": "nao_autorizado", "mensagem": "Não foi possível consultar treinamentos para esta conta."}
+    if not app_config.DATABASE_URL:
+        return {"status": "indisponivel", "mensagem": "Consulta de treinamentos indisponível."}
+    try:
+        with get_postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT id_usuario FROM usuario WHERE firebase_uid = %s LIMIT 1", [user.uid])
+                profile = cursor.fetchone()
+                if not profile:
+                    return {"status": "sem_perfil", "mensagem": "Usuário não encontrado no cadastro funcional."}
+                cursor.execute("""
+                    SELECT COALESCE(conclusao.status, 'PENDENTE'), COUNT(*)
+                    FROM turma_colaborador participacao
+                    JOIN turma ON turma.id_turma = participacao.turma_id
+                    JOIN evento ON evento.id_evento = turma.evento_id
+                    LEFT JOIN conclusao_evento conclusao
+                      ON conclusao.turma_colaborador_id = participacao.id_turma_colaborador
+                    WHERE participacao.usuario_id = %s AND evento.status = 'ATIVO'
+                    GROUP BY COALESCE(conclusao.status, 'PENDENTE')
+                """, [profile[0]])
+                rows = cursor.fetchall()
+        allowed = {"PENDENTE": "Pendentes", "CONCLUIDO": "Concluídos", "REJEITADO": "Rejeitados"}
+        counts = {label: 0 for label in allowed.values()}
+        for status, count in rows:
+            if status not in allowed or type(count) is not int or count < 0:
+                return {"status": "indisponivel", "mensagem": "Não foi possível validar os estados dos treinamentos."}
+            counts[allowed[status]] += count
+        return {"status": "ok" if sum(counts.values()) else "sem_dados", "categorias": counts,
+                "fonte": "Participações em treinamentos ativos atribuídas ao usuário"}
+    except Exception:
+        return {"status": "indisponivel", "mensagem": "Consulta de treinamentos indisponível."}
+
+
+@tool("consultar_evolucao_treinamentos")
+def consultar_evolucao_treinamentos(config: RunnableConfig = None) -> dict:
+    """Contagem mensal de conclusões pessoais nos últimos 12 meses civis."""
+    user = _usuario_do_contexto(config)
+    if user is None or user.role == "ADMIN":
+        return {"status": "nao_autorizado", "mensagem": "Não foi possível consultar treinamentos para esta conta."}
+    if not app_config.DATABASE_URL:
+        return {"status": "indisponivel", "mensagem": "Consulta de treinamentos indisponível."}
+    try:
+        with get_postgres_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT id_usuario FROM usuario WHERE firebase_uid = %s LIMIT 1", [user.uid])
+                profile = cursor.fetchone()
+                if not profile:
+                    return {"status": "sem_perfil", "mensagem": "Usuário não encontrado no cadastro funcional."}
+                cursor.execute("""
+                    WITH meses AS (
+                      SELECT generate_series(date_trunc('month', CURRENT_DATE) - interval '11 months',
+                                             date_trunc('month', CURRENT_DATE), interval '1 month') AS mes
+                    ), concluidos AS (
+                      SELECT date_trunc('month', conclusao.data_conclusao) AS mes, COUNT(*) AS total
+                      FROM turma_colaborador participacao
+                      JOIN turma ON turma.id_turma = participacao.turma_id
+                      JOIN evento ON evento.id_evento = turma.evento_id
+                      JOIN conclusao_evento conclusao ON conclusao.turma_colaborador_id = participacao.id_turma_colaborador
+                      WHERE participacao.usuario_id = %s AND evento.status = 'ATIVO'
+                        AND conclusao.status = 'CONCLUIDO' AND conclusao.data_conclusao IS NOT NULL
+                        AND conclusao.data_conclusao >= date_trunc('month', CURRENT_DATE) - interval '11 months'
+                        AND conclusao.data_conclusao < date_trunc('month', CURRENT_DATE) + interval '1 month'
+                      GROUP BY 1
+                    )
+                    SELECT to_char(meses.mes, 'YYYY-MM'), COALESCE(concluidos.total, 0)
+                    FROM meses LEFT JOIN concluidos ON concluidos.mes = meses.mes ORDER BY meses.mes
+                """, [profile[0]])
+                rows = cursor.fetchall()
+        import re
+        if len(rows) != 12 or any(not isinstance(month, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month)
+                                  or type(count) is not int or count < 0 for month, count in rows):
+            raise ValueError("invalid_monthly_series")
+        months = [month for month, _ in rows]
+        if len(set(months)) != 12 or months != sorted(months):
+            raise ValueError("invalid_monthly_series")
+        return {"status": "ok" if sum(count for _, count in rows) else "sem_dados",
+                "categorias": dict(rows), "fonte": "Conclusões pessoais de treinamentos em eventos ativos",
+                "tipo_grafico": "grafico_linhas"}
+    except Exception:
+        return {"status": "indisponivel", "mensagem": "Consulta de evolução de treinamentos indisponível."}
+
+
 TOOLS_AGENDA = [
+    consultar_evolucao_treinamentos,
+    consultar_grafico_treinamentos,
     consultar_eventos,
     consultar_treinamentos,
 ]

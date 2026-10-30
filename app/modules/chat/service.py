@@ -1,4 +1,5 @@
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
@@ -8,6 +9,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Overwrite
 
 from app.core.security import CurrentUser
+from app.infrastructure.avatar_urls import resolve_avatar_urls
 from app.infrastructure.checkpoints import ConversationCheckpoints, checkpoint_messages
 from app.infrastructure.database.sessions import MongoSessions, utc_now
 from app.infrastructure.llm.models import AgentModel, LanguageModels
@@ -20,6 +22,7 @@ from app.modules.chat.pdf_delivery import asks_for_pdf_link
 from app.modules.chat.schemas import (
     ChatRequest,
     ChatResponse,
+    BlocoTexto, BlocoGrafico, BlocoGraficoSetores, BlocoGraficoLinhas, BlocoTabela, ColunaTabela, BlocoGaleriaUsuarios, ImagemUsuario, PontoGrafico,
     SessionMessage,
     SessionMessagesResponse,
     SessionResponse,
@@ -131,11 +134,13 @@ class ChatService:
                 SessionMessage(
                     role="user" if message["role"] == "human" else "assistant",
                     content=message["content"],
+                    blocos=message.get("blocos", []) if message["role"] == "assistant" else [],
                 )
                 for message in doc.get("mensagens", [])
                 if message.get("role") in {"human", "assistant"}
                 and isinstance(message.get("content"), str)
             ]
+            await self._populate_avatars(messages, user)
             status = doc.get("status", "ativa")
             if status not in {"ativa", "encerrando", "encerrada"}:
                 raise ChatError(503, "Historico de conversas indisponivel.")
@@ -145,6 +150,17 @@ class ChatService:
                 total=len(messages),
                 mensagens=messages,
             )
+
+    @staticmethod
+    async def _populate_avatars(messages, user: CurrentUser):
+        galleries = [block for message in messages for block in message.blocos if isinstance(block, BlocoGaleriaUsuarios)]
+        emails = [item.email for gallery in galleries for item in gallery.imagens if item.email]
+        if not emails:
+            return
+        urls = await asyncio.to_thread(resolve_avatar_urls, user, emails)
+        for gallery in galleries:
+            for item in gallery.imagens:
+                item.url = urls.get(item.email)
 
     async def chat(
         self, request: ChatRequest, user: CurrentUser, *, markdown: bool = True,
@@ -285,8 +301,41 @@ class ChatService:
                             f"{validity.capitalize()}."
                         )
                     stored_answer += "\n\nPDF gerado e link temporário entregue."
+                blocks = []
+                chart_data = result.get("resultado_tool", {})
+                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                        and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") in {"consultar_grafico_treinamentos", "consultar_evolucao_treinamentos"}
+                        and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):
+                    counts = chart_data["categorias"]
+                    kind = chart_data.get("tipo_grafico", "grafico_barras")
+                    graph_class = {"grafico_barras": BlocoGrafico, "grafico_setores": BlocoGraficoSetores, "grafico_linhas": BlocoGraficoLinhas}.get(kind)
+                    if graph_class is None:
+                        raise ChatError(502, "Tipo de gráfico inválido.")
+                    title = "Suas conclusões por mês" if kind == "grafico_linhas" else "Seus treinamentos por situação"
+                    introduction = "Veja a evolução mensal das suas conclusões em eventos ativos:" if kind == "grafico_linhas" else "Veja a distribuição dos seus treinamentos atribuídos em eventos ativos:"
+                    blocks = [BlocoTexto(conteudo=introduction),
+                              graph_class(titulo=title, fonte=chart_data["fonte"],
+                                           dados=[PontoGrafico(categoria=k, valor=v) for k, v in counts.items()]),
+                              BlocoTexto(conteudo=public_answer)]
+                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                        and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "buscar_outros_usuarios"
+                        and chart_data.get("status") == "ok" and chart_data.get("consulta") == "listar"
+                        and chart_data.get("usuarios") and public_answer == result.get("candidato")):
+                    columns = [("nome", "Nome"), ("email", "E-mail"), ("cargo", "Cargo"),
+                               ("unidade", "Unidade"), ("tipo", "Perfil"), ("status", "Situação")]
+                    rows = [{key: item.get(key) for key, _ in columns} for item in chart_data["usuarios"]]
+                    message = request.message.casefold()
+                    wants_table = bool(re.search(r"\btabelas?\b", message))
+                    wants_images = bool(re.search(r"\b(fotos?|imagens?|avatares?|galeria)\b", message))
+                    blocks = [BlocoTexto(conteudo="Veja os usuários encontrados no seu escopo:")]
+                    if wants_table or not wants_images:
+                        blocks.append(BlocoTabela(titulo="Usuários", colunas=[ColunaTabela(chave=key, titulo=label) for key, label in columns],
+                                                  linhas=rows, pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]))
+                    if wants_images or not wants_table:
+                        blocks.append(BlocoGaleriaUsuarios(titulo="Fotos dos usuários", imagens=[ImagemUsuario(nome=row["nome"], email=row["email"]) for row in rows]))
+                    blocks.append(BlocoTexto(conteudo=f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} usuário(s)."))
                 response = ChatResponse(session_id=session_id, resposta=public_answer,
-                                        agentes_chamados=result["agentes_chamados"])
+                                        agentes_chamados=result["agentes_chamados"], blocos=blocks)
                 if result["guardar_turno"]:
                     delivery_fields = {}
                     if result.get("pdf_solicitado"):
@@ -304,7 +353,7 @@ class ChatService:
                             "consulta_rh": result.get("consulta_rh"),
                         }, messages=[
                             {"role": "human", "content": request.message},
-                            {"role": "assistant", "content": stored_answer},
+                            {"role": "assistant", "content": stored_answer, **({"blocos": [block.model_dump() for block in blocks]} if blocks else {})},
                         ])
                     # Compact only after the atomic Mongo update succeeds. An
                     # old checkpoint never overrides data loaded from another worker.
@@ -313,6 +362,8 @@ class ChatService:
                         {"role": "assistant", "content": stored_answer},
                     ])
                     await checkpoint_turn.commit(public_history, len(messages) + 2 - len(public_history))
+                # A URL assinada é acrescentada só após a gravação: não vai para Mongo, agentes ou traces.
+                await self._populate_avatars([response], user)
                 return response
 
     async def end(self, session_id: UUID, user: CurrentUser):

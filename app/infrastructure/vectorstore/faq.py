@@ -10,7 +10,8 @@ from app.modules.chat.errors import ChatError
 
 
 COLLECTION_FAQ = config.QDRANT_FAQ_COLLECTION
-FAQ_RESULT_LIMIT = 5
+# A calibração do corpus real encontrou a evidência de público-alvo na sexta posição.
+FAQ_RESULT_LIMIT = 6
 FAQ_SCORE_THRESHOLD = config.FAQ_SCORE_THRESHOLD
 MAX_CHUNK_CHARACTERS = 2000
 
