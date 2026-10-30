@@ -959,10 +959,12 @@ def build_sst_graph(model: AgentModel):
 
 def pedido_grafico_treinamentos(message: str) -> bool:
     text = "".join(c for c in unicodedata.normalize("NFKD", message.casefold()) if not unicodedata.combining(c))
+    if re.search(r"\b(concluid[oa]s?|mensal)\b", text) and not re.search(r"\b(linhas?|evolucao|mensal)\b", text):
+        return False
     return bool(re.search(r"\b(grafico|dashboard|visualizacao)\b", text)
                 and re.search(r"\b(treinamentos?|capacitac(?:ao|oes))\b", text)
                 and re.search(r"\b(meus?|minhas?|para mim)\b", text)
-                and not re.search(r"\b(empresa|unidade|equipe|todos|outros|mensal|ano|mes|periodo|vencid[oa]s?|pendentes?|concluid[oa]s?|rejeitad[oa]s?)\b|\d", text))
+                and not re.search(r"\b(empresa|unidade|equipe|todos|outros|ano|mes|periodo|vencid[oa]s?|pendentes?|rejeitad[oa]s?)\b|\d", text))
 
 
 def build_agenda_graph(model: AgentModel):
@@ -997,16 +999,21 @@ def build_agenda_graph(model: AgentModel):
 
     async def use_tool(state: ChatState):
         if state["agenda_decision"] == "grafico_pessoal":
-            result = await AGENDA_TOOLS["consultar_grafico_treinamentos"].ainvoke(
+            normalized = "".join(c for c in unicodedata.normalize("NFKD", state["mensagem"].casefold()) if not unicodedata.combining(c))
+            chart_type = "grafico_linhas" if re.search(r"\b(linhas?|evolucao|mensal)\b", normalized) else "grafico_setores" if re.search(r"\b(setores?|pizza|circular)\b", normalized) else "grafico_barras"
+            tool_name = "consultar_evolucao_treinamentos" if chart_type == "grafico_linhas" else "consultar_grafico_treinamentos"
+            result = await AGENDA_TOOLS[tool_name].ainvoke(
                 {}, config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}})
+            result = {**result, "tipo_grafico": chart_type}
             categories = result.get("categorias", {})
             total = sum(categories.values())
-            candidate = ("Seus treinamentos atribuídos em eventos ativos por situação: " +
+            prefix = "Suas conclusões de treinamentos em eventos ativos por mês, nos últimos 12 meses: " if chart_type == "grafico_linhas" else "Seus treinamentos atribuídos em eventos ativos por situação: "
+            candidate = (prefix +
                          ", ".join(f"{name}: {count}" for name, count in categories.items()) +
                          f". Total: {total}.") if result.get("status") in {"ok", "sem_dados"} else result.get("mensagem", "Consulta indisponível.")
             return {"resultado_tool": result, "resposta_deterministica": True, "candidato": candidate,
-                    "resultado": {"dominio": "agenda", "intencao": "consultar", "status": "concluido" if result.get("status") == "ok" else "sem_dados" if result.get("status") == "sem_dados" else "indisponivel", "resposta": candidate, "recomendacao": "", "evidencia_tool": {"nome": "consultar_grafico_treinamentos", "resultado": result}},
-                    "acao_pendente": None, "agentes_chamados": state["agentes_chamados"] + ["consultar_grafico_treinamentos"]}
+                    "resultado": {"dominio": "agenda", "intencao": "consultar", "status": "concluido" if result.get("status") == "ok" else "sem_dados" if result.get("status") == "sem_dados" else "indisponivel", "resposta": candidate, "recomendacao": "", "evidencia_tool": {"nome": tool_name, "resultado": result}},
+                    "acao_pendente": None, "agentes_chamados": state["agentes_chamados"] + [tool_name]}
         filters = state["agenda_decision"].filtros
         decision = state["agenda_decision"]
         tool_name = decision.acao

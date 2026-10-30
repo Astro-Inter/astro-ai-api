@@ -2442,3 +2442,26 @@ def test_grafico_nao_e_emitido_quando_juiz_rejeita(chat_client, monkeypatch):
     model.replies["juiz"] = json.dumps({"status": "rejeitado", "motivo": "Inconsistência", "problemas": ["dados"]})
     body = client.post("/chat/messages", json={"message": "Mostre um gráfico dos meus treinamentos"}).json()
     assert body["blocos"] == []
+
+
+@pytest.mark.parametrize("question,tool_name,kind,values", [
+    ("Mostre um gráfico de setores dos meus treinamentos", "consultar_grafico_treinamentos", "grafico_setores", {"Pendentes": 3, "Concluídos": 2, "Rejeitados": 1}),
+    ("Mostre um gráfico de linhas dos meus treinamentos concluídos", "consultar_evolucao_treinamentos", "grafico_linhas", {f"2026-{m:02d}": 2 if m == 5 else 0 for m in range(1, 13)}),
+])
+def test_novos_graficos_no_chat_e_no_historico(chat_client, monkeypatch, question, tool_name, kind, values):
+    from langchain_core.tools import tool
+    from langchain_core.runnables import RunnableConfig
+    from app.modules.chat import subgraphs
+    @tool(tool_name)
+    def fake_chart(config: RunnableConfig = None) -> dict:
+        """Retorna dados sintéticos autorizados."""
+        assert config["configurable"]["usuario_atual"]["uid"] == "user-a"
+        return {"status": "ok", "categorias": values, "fonte": "Dados sintéticos"}
+    monkeypatch.setitem(subgraphs.AGENDA_TOOLS, tool_name, fake_chart)
+    client, _, _ = chat_client
+    response = client.post("/chat/messages", json={"message": question})
+    assert response.status_code == 200
+    body = response.json()
+    assert [block["tipo"] for block in body["blocos"]] == ["texto", kind, "texto"]
+    assert [(row["categoria"], row["valor"]) for row in body["blocos"][1]["dados"]] == list(values.items())
+    assert client.get(f"/sessions/{body['session_id']}/messages").json()["mensagens"][-1]["blocos"] == body["blocos"]

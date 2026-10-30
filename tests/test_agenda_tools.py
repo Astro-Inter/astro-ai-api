@@ -258,3 +258,22 @@ def test_grafico_rejeita_status_desconhecido(monkeypatch):
     cursor = FakeCursor(profile=(7,), rows=[("DESCONHECIDO", 2)])
     setup_database(monkeypatch, cursor)
     assert consultar_grafico_treinamentos.invoke({}, config=tool_config())["status"] == "indisponivel"
+
+
+def test_evolucao_mensal_restrita_ao_usuario_e_inclui_zeros(monkeypatch):
+    from app.modules.agenda.tools import consultar_evolucao_treinamentos
+    rows = [(f"2026-{m:02d}", 2 if m == 5 else 0) for m in range(1, 13)]
+    cursor = FakeCursor(profile=(7,), rows=rows)
+    setup_database(monkeypatch, cursor)
+    result = consultar_evolucao_treinamentos.invoke({}, config=tool_config())
+    assert result["status"] == "ok" and list(result["categorias"].items()) == rows
+    assert cursor.calls[0][1] == ["firebase-user"] and cursor.calls[1][1] == [7]
+    assert "participacao.usuario_id = %s" in cursor.calls[1][0]
+    assert "conclusao.status = 'CONCLUIDO'" in cursor.calls[1][0]
+    assert consultar_evolucao_treinamentos.invoke({}, config=tool_config(role="ADMIN"))["status"] == "nao_autorizado"
+
+
+def test_evolucao_rejeita_serie_invalida(monkeypatch):
+    from app.modules.agenda.tools import consultar_evolucao_treinamentos
+    setup_database(monkeypatch, FakeCursor(profile=(7,), rows=[("2026-01", 1)]))
+    assert consultar_evolucao_treinamentos.invoke({}, config=tool_config())["status"] == "indisponivel"

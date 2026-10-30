@@ -20,7 +20,7 @@ from app.modules.chat.pdf_delivery import asks_for_pdf_link
 from app.modules.chat.schemas import (
     ChatRequest,
     ChatResponse,
-    BlocoTexto, BlocoGrafico, PontoGrafico,
+    BlocoTexto, BlocoGrafico, BlocoGraficoSetores, BlocoGraficoLinhas, PontoGrafico,
     SessionMessage,
     SessionMessagesResponse,
     SessionResponse,
@@ -290,11 +290,17 @@ class ChatService:
                 blocks = []
                 chart_data = result.get("resultado_tool", {})
                 if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
-                        and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_grafico_treinamentos"
+                        and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") in {"consultar_grafico_treinamentos", "consultar_evolucao_treinamentos"}
                         and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):
                     counts = chart_data["categorias"]
-                    blocks = [BlocoTexto(conteudo="Veja a distribuição dos seus treinamentos atribuídos em eventos ativos:"),
-                              BlocoGrafico(titulo="Seus treinamentos por situação", fonte=chart_data["fonte"],
+                    kind = chart_data.get("tipo_grafico", "grafico_barras")
+                    graph_class = {"grafico_barras": BlocoGrafico, "grafico_setores": BlocoGraficoSetores, "grafico_linhas": BlocoGraficoLinhas}.get(kind)
+                    if graph_class is None:
+                        raise ChatError(502, "Tipo de gráfico inválido.")
+                    title = "Suas conclusões por mês" if kind == "grafico_linhas" else "Seus treinamentos por situação"
+                    introduction = "Veja a evolução mensal das suas conclusões em eventos ativos:" if kind == "grafico_linhas" else "Veja a distribuição dos seus treinamentos atribuídos em eventos ativos:"
+                    blocks = [BlocoTexto(conteudo=introduction),
+                              graph_class(titulo=title, fonte=chart_data["fonte"],
                                            dados=[PontoGrafico(categoria=k, valor=v) for k, v in counts.items()]),
                               BlocoTexto(conteudo=public_answer)]
                 response = ChatResponse(session_id=session_id, resposta=public_answer,

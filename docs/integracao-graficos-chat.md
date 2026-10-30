@@ -1,9 +1,8 @@
 # Gráficos no chat: contrato para o frontend
 
-A primeira versão entrega um **gráfico de barras das participações do próprio
-usuário em treinamentos de eventos ativos**, separado por situação. Não é um
-indicador da empresa, nem um painel de conformidade ou de treinamentos vencidos.
-Exemplo de pedido: “Mostre um gráfico dos meus treinamentos”.
+Os gráficos são pessoais e usam participações em treinamentos de eventos ativos.
+Barras e setores mostram a distribuição por situação; linhas mostra a evolução
+mensal das conclusões. Não são indicadores da empresa, conformidade ou vencimentos.
 
 `POST /chat/messages` mantém `session_id`, `resposta` e `agentes_chamados` e
 acrescenta `blocos`, uma lista ordenada. Quando vazia, renderize `resposta` como
@@ -26,7 +25,7 @@ atualizar os dados exige um novo pedido no chat.
 }
 ```
 
-Valores do exemplo são fictícios. Cada valor é inteiro não negativo; há até 10
+Valores do exemplo são fictícios. Cada valor é inteiro não negativo; há até 12
 pontos e 10 blocos. O texto pode conter Markdown conforme o parâmetro existente
 `markdown`. O frontend escolhe sua biblioteca visual e trata texto como conteúdo,
 não como HTML executável. Para tipo ou versão desconhecidos, renderize o fallback
@@ -44,8 +43,39 @@ dados e a resposta final corresponde à candidata com Juiz aprovado. Sem dados,
 falha ou acesso indisponível, retorna texto e `blocos: []`. O fluxo existente tem
 fallback do Juiz para respostas determinísticas quando o provedor falha.
 
-Escopo atual: um gráfico de barras pessoal. Filtros por unidade, empresa, período,
-status e outros tipos de gráfico ainda não foram implementados. Não invente essas
+Escopo atual: três tipos de gráfico pessoal. Filtros por unidade, empresa, período
+personalizado e status ainda não foram implementados. Não invente essas
 opções no frontend. A API de dashboards da organização usa agregações Databricks e
 regras próprias de workspace; este gráfico consulta PostgreSQL operacional e os
 números não devem ser comparados como se tivessem a mesma definição.
+
+
+## Tipos de gráficos
+
+- `grafico_barras`: pedidos como “Mostre um gráfico dos meus treinamentos”. Mostra
+  contagens por situação: Pendentes, Concluídos e Rejeitados.
+- `grafico_setores`: pedidos como “Mostre um gráfico de setores dos meus treinamentos”
+  ou “gráfico de pizza dos meus treinamentos”. Usa os mesmos pontos das barras;
+  o frontend calcula as proporções pelo total e pode apresentá-las em porcentagem.
+  Se não houver participações, o backend envia apenas texto e lista de blocos vazia.
+- `grafico_linhas`: pedidos como “Mostre um gráfico de linhas dos meus treinamentos
+  concluídos”. Mostra a quantidade de conclusões por mês nos **últimos 12 meses
+  civis**, incluindo o mês atual. A data considerada é `data_conclusao`, com status
+  `CONCLUIDO`, e a participação precisa pertencer ao usuário e a um evento ativo.
+  Meses sem conclusões aparecem com valor zero. Conclusões sem data não entram.
+
+Cada tipo preserva a mesma estrutura do exemplo acima, mudando `tipo`, título,
+fonte e dados. Em linhas, a `categoria` é `AAAA-MM`, em ordem cronológica, e o
+`valor` é a quantidade de participações concluídas naquele mês. Exemplo de bloco:
+
+```json
+{"tipo":"grafico_linhas","versao":1,"titulo":"Suas conclusões por mês",
+ "dados":[{"categoria":"2026-01","valor":0},{"categoria":"2026-02","valor":2}],
+ "unidade":"participações","fonte":"Conclusões pessoais de treinamentos em eventos ativos"}
+```
+
+O exemplo acima abrevia a série; uma resposta efetiva contém 12 pontos. Para
+setores, use `"tipo":"grafico_setores"` com os mesmos campos e categorias do
+gráfico de barras. O cliente deve apresentar uma tabela ou descrição acessível
+para todos os tipos. A fonte e o escopo explicitam que não há comparação direta
+com os gráficos organizacionais da API de dashboards.

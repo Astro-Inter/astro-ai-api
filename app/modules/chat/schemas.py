@@ -31,12 +31,20 @@ class BlocoGrafico(BaseModel):
     tipo: Literal["grafico_barras"] = "grafico_barras"
     versao: Literal[1] = 1
     titulo: str = Field(min_length=1, max_length=200)
-    dados: list[PontoGrafico] = Field(min_length=1, max_length=10)
+    dados: list[PontoGrafico] = Field(min_length=1, max_length=12)
     unidade: Literal["participações"] = "participações"
     fonte: str = Field(min_length=1, max_length=200)
 
 
-BlocoResposta = Annotated[BlocoTexto | BlocoGrafico, Field(discriminator="tipo")]
+class BlocoGraficoSetores(BlocoGrafico):
+    tipo: Literal["grafico_setores"] = "grafico_setores"
+
+
+class BlocoGraficoLinhas(BlocoGrafico):
+    tipo: Literal["grafico_linhas"] = "grafico_linhas"
+
+
+BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoLinhas, Field(discriminator="tipo")]
 
 
 class ChatResponse(BaseModel):
