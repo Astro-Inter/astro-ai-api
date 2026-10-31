@@ -12,6 +12,8 @@ from app.core.security import CurrentUser
 from app.infrastructure.database.connections import read_only_connection
 from app.infrastructure.astro_queries import read_api
 
+from app.modules.operational.insights import InsightArgs, ACTIONS as INSIGHT_ACTIONS, TOOLS as INSIGHT_TOOLS, is_insight_request
+
 MANAGERS = {"GESTOR", "GESTOR_WORKSPACE"}
 
 
@@ -42,15 +44,18 @@ class ApiArgs(BaseModel):
 
 class OperationalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    acao: Literal["consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos", "consultar_vencimentos_conformidades", "consultar_pendencias_equipe", "consultar_conformidade_unidade", "consultar_formularios_pendentes", "consultar_respostas_formulario", "consultar_detalhes_evento", "consultar_candidatos_treinamento"]
-    filtros: TeamArgs | ApiArgs
+    acao: Literal["consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos", "consultar_vencimentos_conformidades", "consultar_pendencias_equipe", "consultar_conformidade_unidade", "consultar_formularios_pendentes", "consultar_respostas_formulario", "consultar_detalhes_evento", "consultar_candidatos_treinamento", "consultar_matriz_conformidade_equipe", "consultar_cobertura_treinamentos", "consultar_evidencias_pendentes_validacao", "consultar_resultados_treinamento", "consultar_evolucao_conclusoes_equipe", "consultar_conflitos_agenda", "simular_impacto_exigencia_nr", "consultar_origem_conformidade"]
+    filtros: TeamArgs | ApiArgs | InsightArgs
 
     @model_validator(mode="before")
     @classmethod
     def filters_for_action(cls, data):
         if isinstance(data, dict):
-            schema = TeamArgs if data.get("acao") in TEAM_ACTIONS else ApiArgs
-            return {**data, "filtros": schema.model_validate(data.get("filtros", {}))}
+            schema = InsightArgs if data.get("acao") in INSIGHT_ACTIONS else TeamArgs if data.get("acao") in TEAM_ACTIONS else ApiArgs
+            filters = data.get("filtros", {})
+            if data.get("acao") == "consultar_evolucao_conclusoes_equipe" and isinstance(filters, dict):
+                filters = {"tipo_grafico": "grafico_linhas", **filters}
+            return {**data, "filtros": schema.model_validate(filters)}
         return data
 
 
@@ -393,11 +398,14 @@ async def consultar_candidatos_treinamento(config: RunnableConfig = None, **kwar
 
 
 TOOLS = [consultar_grafico_pendencias_nr, consultar_grafico_vencimentos, consultar_indicadores_equipe, consultar_vencimentos_conformidades, consultar_pendencias_equipe, consultar_conformidade_unidade, consultar_formularios_pendentes, consultar_respostas_formulario, consultar_detalhes_evento, consultar_candidatos_treinamento]
+TOOLS += INSIGHT_TOOLS
 REGISTRY = {item.name:item for item in TOOLS}
-DOMAINS = {name:("rh" if name == "consultar_indicadores_equipe" else "agenda" if name in {"consultar_detalhes_evento","consultar_candidatos_treinamento"} else "sst") for name in REGISTRY}
+DOMAINS = {name:("rh" if name == "consultar_indicadores_equipe" else "agenda" if name in {"consultar_detalhes_evento","consultar_candidatos_treinamento","consultar_cobertura_treinamentos","consultar_evidencias_pendentes_validacao","consultar_resultados_treinamento","consultar_evolucao_conclusoes_equipe","consultar_conflitos_agenda"} else "sst") for name in REGISTRY}
 
 
 def is_operational_request(message, last_route=""):
+    if is_insight_request(message):
+        return True
     import re
     import unicodedata
     text = "".join(c for c in unicodedata.normalize("NFKD", message.casefold()) if not unicodedata.combining(c))

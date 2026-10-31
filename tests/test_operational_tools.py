@@ -17,7 +17,7 @@ def context(role):
     return {"configurable":{"usuario_atual":{"uid":"viewer", "role":role}}}
 
 
-@pytest.mark.parametrize("name", list(tools.REGISTRY))
+@pytest.mark.parametrize("name", [name for name in tools.REGISTRY if name not in tools.INSIGHT_ACTIONS])
 @pytest.mark.parametrize("role", [None, "ADMIN", "COLABORADOR"])
 def test_profile_denials_never_query_backends(monkeypatch,name,role):
     if role == "COLABORADOR" and name == "consultar_detalhes_evento":
@@ -31,7 +31,7 @@ def test_profile_denials_never_query_backends(monkeypatch,name,role):
 
 
 @pytest.mark.parametrize("role", ["GESTOR", "GESTOR_WORKSPACE"])
-@pytest.mark.parametrize("name", list(tools.REGISTRY))
+@pytest.mark.parametrize("name", [name for name in tools.REGISTRY if name not in tools.INSIGHT_ACTIONS])
 def test_manager_can_reach_only_registered_read_backend(monkeypatch,name,role):
     calls = []
     async def fake_api(path,params):

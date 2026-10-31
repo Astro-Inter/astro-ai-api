@@ -19,6 +19,7 @@ from app.infrastructure.vectorstore.memory import SummaryVectors
 from app.modules.chat.errors import ChatError
 from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import build_chat_graph, _pedido_pdf
+from app.modules.operational.insights import TOOLS as INSIGHT_TOOLS
 from app.modules.chat.pdf_delivery import asks_for_pdf_link
 from app.modules.chat.schemas import (
     ChatRequest,
@@ -260,6 +261,7 @@ class ChatService:
                             "consultar_treinamentos",
                             "consultar_eventos",
                             "gerar_pdf",
+                            *[item.name for item in INSIGHT_TOOLS],
                         ],
                         "fontes_disponiveis": [
                             "faq_chunks", "nrs", "portal_oficial_mte_via_mcp_fetch",
@@ -401,7 +403,7 @@ class ChatService:
                         colunas=chart_data["colunas"], linhas=chart_data["linhas"],
                         pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]))
                     if chart_data.get("grafico"):
-                        chart_class = BlocoGraficoSetores if chart_data.get("tipo_grafico") == "grafico_setores" else BlocoGrafico
+                        chart_class = {"grafico_setores": BlocoGraficoSetores, "grafico_linhas": BlocoGraficoLinhas}.get(chart_data.get("tipo_grafico"), BlocoGrafico)
                         blocks.append(chart_class(titulo=chart_data["titulo"], dados=chart_data["grafico"],
                                                   unidade=chart_data.get("unidade_grafico", "pessoas"), fonte=chart_data["fonte"]))
                     summary = f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} registro(s)."

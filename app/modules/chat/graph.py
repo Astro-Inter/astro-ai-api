@@ -555,7 +555,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 decision = OperationalDecision.model_validate(values)
             except (ValidationError, TypeError, KeyError):
                 return {"rota":"direta", "candidato":"Não consegui continuar esta consulta. Informe os filtros novamente.", "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
-            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(),
+            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(mode="json"),
                     "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
         if is_operational_request(state["mensagem"], state["contexto"].get("ultima_rota", "")):
             try:
@@ -574,7 +574,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 if values["filtros"].get("tipos") is None and re.search(r"\b(funcionarios?|colaboradores)\b", normalized):
                     values["filtros"]["tipos"] = ["COLABORADOR"]
                 decision = OperationalDecision.model_validate(values)
-            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(),
+            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(mode="json"),
                     "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
         employee_filters = _continuacao_rh(state)
         if employee_filters is not None or _contagem_funcionarios(state["mensagem"]):
@@ -695,7 +695,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 decision = OperationalDecision.model_validate_json(query_match.group(1))
             except ValidationError:
                 raise InvalidAgentResponse("roteador") from None
-            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(),
+            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(mode="json"),
                     "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
         memory_match = re.fullmatch(r"MEMORY\s*=\s*(\{.*\})", command, re.DOTALL)
         if memory_match:
