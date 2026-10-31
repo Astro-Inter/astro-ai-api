@@ -27,9 +27,9 @@ class ChatState(TypedDict, total=False):
     sst_route: str
     agenda_decision: object
     agenda_route: str
+    operational_decision: dict | None
     roteador_decision: object
     acao_pendente: dict | None
-    confirmacao_explicita: bool
     candidato: str
     avaliacao_juiz: dict
     resposta: str

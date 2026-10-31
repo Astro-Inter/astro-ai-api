@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from app.api.auth import CurrentUserDependency
+from app.infrastructure.astro_queries import request_token
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.schemas import ChatRequest, ChatResponse
 from app.api.chat_contracts import SESSION_ERRORS, session_error
@@ -30,6 +31,8 @@ async def chat_message(
     exigem POST /sessions/{session_id}/iniciar antes do envio (caso contrário 409).
     """
     response.headers["Cache-Control"] = "no-store"
+    credentials = request.headers.get("authorization", "")
+    token_handle = request_token.set(credentials[7:] if credentials.lower().startswith("bearer ") else None)
     try:
         return await request.app.state.chat_service.chat(body, user, markdown=markdown)
     except ChatError as error:
@@ -37,3 +40,6 @@ async def chat_message(
             logger.warning("Resposta invalida no estagio do chat: %s", error.stage)
         headers = {"Retry-After": str(error.retry_after)} if error.retry_after else None
         raise HTTPException(error.status_code, detail=error.detail, headers=headers) from None
+
+    finally:
+        request_token.reset(token_handle)

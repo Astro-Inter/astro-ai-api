@@ -149,3 +149,6 @@ def validar_config() -> list[str]:
             problemas.append("Variavel ausente no .env: LANGSMITH_PROJECT")
 
     return problemas
+
+# Backend-to-backend reads; no token is persisted.
+ASTRO_API_BASE_URL = os.getenv("ASTRO_API_BASE_URL", "https://api.astro-app.solutions").rstrip("/")

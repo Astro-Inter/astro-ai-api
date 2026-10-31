@@ -1,3 +1,4 @@
+from test_chat import texto_resposta
 """Regressions reproduced from the exported conversations (synthetic data only)."""
 import json
 from datetime import timedelta
@@ -27,7 +28,7 @@ def test_public_capabilities_work_without_a_provider(chat_client, question):
     model.replies['juiz'] = 'malformed'
     response = client.post('/chat/messages', json={'message': question})
     assert response.status_code == 200
-    assert 'Agente do Astro' in response.json()['resposta']
+    assert 'Agente do Astro' in texto_resposta(response.json())
     assert model.calls == []
 
 
@@ -58,8 +59,8 @@ def test_recent_memory_is_queried_even_if_input_model_would_clarify(chat_client)
     })
     assert response.status_code == 200
     assert 'buscar_historico' in response.json()['agentes_chamados']
-    assert 'Conversamos sobre treinamentos.' in response.json()['resposta']
-    assert 'Private summary' not in response.json()['resposta']
+    assert 'Conversamos sobre treinamentos.' in texto_resposta(response.json())
+    assert 'Private summary' not in texto_resposta(response.json())
     assert model.calls == []
 
 
@@ -94,8 +95,8 @@ def test_employee_next_pages_keep_backend_filters_and_do_not_repeat(chat_client,
     assert second.status_code == third.status_code == 200
     assert [args['pagina'] for args in calls] == [1, 2, 3]
     assert all(args['tipos'] == ['COLABORADOR'] for args in calls)
-    assert 'Pessoa 20' in second.json()['resposta']
-    assert 'Pessoa 40' in third.json()['resposta']
+    assert 'Pessoa 20' in str(second.json()['blocos'])
+    assert 'Pessoa 40' in str(third.json()['blocos'])
 
 
 def test_pagination_does_not_accept_injected_commands_or_untrusted_history():
@@ -119,7 +120,7 @@ def test_reviewer_cannot_invent_enrollment_after_empty_training_query(chat_clien
     })
     response = client.post('/chat/messages', json={'message': 'Tenho algum treinamento a realizar?'})
     assert response.status_code == 200
-    assert response.json()['resposta'] == 'Não encontrei treinamentos ativos pendentes atribuídos a você.'
+    assert texto_resposta(response.json()) == 'Não encontrei treinamentos ativos pendentes atribuídos a você.'
     assert 'guardrail_saida' not in [call[0] for call in model.calls]
 
 
@@ -137,7 +138,7 @@ def test_real_tool_result_survives_reviewer_quota(chat_client, monkeypatch):
     model.complete = exhausted
     response = client.post('/chat/messages', json={'message': 'Qual é meu nome?'})
     assert response.status_code == 200
-    assert 'Pessoa Teste' in response.json()['resposta']
+    assert 'Pessoa Teste' in texto_resposta(response.json())
 
 
 def test_quota_header_reaches_api_without_returning_provider_payload(chat_client):
@@ -175,9 +176,9 @@ def test_internal_events_do_not_require_google_connection(chat_client):
         'message': 'Preciso conectar o Google Calendar para consultar meus eventos internos?',
     })
     assert response.status_code == 200
-    assert response.json()['resposta'].startswith('Não.')
-    assert 'não possui integração' in response.json()['resposta']
-    assert 'google-calendar-conectar' not in response.json()['resposta']
+    assert texto_resposta(response.json()).startswith('Não.')
+    assert 'não possui integração' in texto_resposta(response.json())
+    assert 'google-calendar-conectar' not in texto_resposta(response.json())
     assert model.calls == []
 
 
@@ -189,8 +190,8 @@ def test_access_granularity_is_explained_without_guessing(chat_client):
     })
     assert response.status_code == 200
     assert 'consultar_acessos' in response.json()['agentes_chamados']
-    assert 'dias' in response.json()['resposta'].lower()
-    assert 'login' in response.json()['resposta'].lower()
+    assert 'dias' in texto_resposta(response.json()).lower()
+    assert 'login' in texto_resposta(response.json()).lower()
 
 
 def test_pdf_corrected_after_judge_review_is_generated_and_link_can_be_recovered(chat_client, monkeypatch):
@@ -214,12 +215,12 @@ def test_pdf_corrected_after_judge_review_is_generated_and_link_can_be_recovered
     first = client.post('/chat/messages', json={'message': 'Consegue fazer um PDF para mim explicando o que é o Astro?'})
     assert first.status_code == 200
     assert len(uploads) == 1
-    assert 'Baixar PDF' in first.json()['resposta'] and 'Vou gerar' not in first.json()['resposta']
+    assert 'Baixar PDF' in texto_resposta(first.json()) and 'Vou gerar' not in texto_resposta(first.json())
     sid = first.json()['session_id']
     model.replies['guardrail_entrada'] = 'malformed'
     recovered = client.post('/chat/messages', json={'message': 'Cadê o arquivo?', 'session_id': sid})
-    assert 'https://r2.example/arquivo.pdf?assinatura=teste' in recovered.json()['resposta']
-    assert 'prazo original não é renovado' in recovered.json()['resposta']
+    assert 'https://r2.example/arquivo.pdf?assinatura=teste' in texto_resposta(recovered.json())
+    assert 'prazo original não é renovado' in texto_resposta(recovered.json())
     assert len(uploads) == 1
     doc = application.state.chat_service.repository.docs[sid]
     assert 'assinatura=teste' not in str(doc['mensagens'])
@@ -230,8 +231,8 @@ def test_pdf_corrected_after_judge_review_is_generated_and_link_can_be_recovered
     assert all('assinatura=teste' not in str(messages) for _, messages, _ in model.calls)
     doc['ultimo_pdf']['expira_em'] = utc_now() - timedelta(seconds=1)
     expired = client.post('/chat/messages', json={'message': 'Cadê o PDF?', 'session_id': sid})
-    assert 'expirou' in expired.json()['resposta']
-    assert 'assinatura=teste' not in expired.json()['resposta']
+    assert 'expirou' in texto_resposta(expired.json())
+    assert 'assinatura=teste' not in texto_resposta(expired.json())
 
 
 def test_failed_pdf_delivery_does_not_promise_future_file(chat_client, monkeypatch):
@@ -247,8 +248,8 @@ def test_failed_pdf_delivery_does_not_promise_future_file(chat_client, monkeypat
     first = client.post('/chat/messages', json={'message': 'Gere um PDF explicando o Astro.'}).json()
     response = client.post('/chat/messages', json={'message': 'Cadê o arquivo?', 'session_id': first['session_id']})
     assert response.status_code == 200
-    assert 'Nenhum PDF foi gerado' in response.json()['resposta']
-    assert 'em breve' not in response.json()['resposta']
+    assert 'Nenhum PDF foi gerado' in texto_resposta(response.json())
+    assert 'em breve' not in texto_resposta(response.json())
 
 
 def test_contact_question_queries_documents_instead_of_claiming_no_access(chat_client):
@@ -262,9 +263,9 @@ def test_nr_definition_does_not_invent_a_count_or_universal_applicability(chat_c
     client, model, _ = chat_client
     response = client.post('/chat/messages', json={'message': 'O que são Normas Regulamentadoras?'})
     assert response.status_code == 200
-    assert 'campo de aplicação' in response.json()['resposta']
-    assert 'Ministério do Trabalho e Emprego' in response.json()['resposta']
-    assert '28 normas' not in response.json()['resposta']
+    assert 'campo de aplicação' in texto_resposta(response.json())
+    assert 'Ministério do Trabalho e Emprego' in texto_resposta(response.json())
+    assert '28 normas' not in texto_resposta(response.json())
     assert model.calls == []
 
 
@@ -292,8 +293,8 @@ def test_empty_model_output_becomes_clarification_not_a_502_or_fake_success(chat
     model.replies[agent] = '   '
     response = client.post('/chat/messages', json={'message': 'Preciso de uma orientação interna.'})
     assert response.status_code == 200
-    assert 'reformular' in response.json()['resposta']
-    assert 'criado' not in response.json()['resposta']
+    assert 'reformular' in texto_resposta(response.json())
+    assert 'criado' not in texto_resposta(response.json())
     assert 'gerar_pdf' not in response.json()['agentes_chamados']
 
 
@@ -344,6 +345,6 @@ def test_legacy_pdf_promise_does_not_promise_a_file_again(chat_client):
     }
     response = client.post('/chat/messages', json={'message': 'Cadê o arquivo?', 'session_id': sid})
     assert response.status_code == 200
-    assert 'Não há um link de PDF disponível' in response.json()['resposta']
-    assert 'em breve' not in response.json()['resposta']
+    assert 'Não há um link de PDF disponível' in texto_resposta(response.json())
+    assert 'em breve' not in texto_resposta(response.json())
     assert model.calls == []

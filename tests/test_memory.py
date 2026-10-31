@@ -188,7 +188,7 @@ def test_router_memory_lookup_and_owner_filter():
             "guardrail_saida",
         ]
         vectors.search.assert_awaited_once_with("owner", str(result.session_id), "RH")
-        assert result.resposta == "Conversamos sobre RH, sem consulta de registros."
+        assert "\n\n".join(block.conteudo for block in result.blocos if block.tipo == "texto") == "Conversamos sobre RH, sem consulta de registros."
     asyncio.run(scenario())
 
 
@@ -225,11 +225,11 @@ def test_explicit_memory_request_retrieves_before_router_answer(message):
             repo.docs[sid].update(status="encerrada", resumo=summary)
         result = await service.chat(ChatRequest(message=message), user)
         if message.startswith("Busque o resumo"):
-            assert result.resposta.endswith("Consultou notificações; nenhum evento criado.")
+            assert "\n\n".join(block.conteudo for block in result.blocos if block.tipo == "texto").endswith("Consultou notificações; nenhum evento criado.")
             assert result.agentes_chamados == ["guardrail_entrada", "roteador", "buscar_historico", "roteador"]
             assert model.calls == [] and not vectors.calls
             return
-        assert result.resposta == "Você consultou notificações; não criou um evento."
+        assert "\n\n".join(block.conteudo for block in result.blocos if block.tipo == "texto") == "Você consultou notificações; não criou um evento."
         assert result.agentes_chamados == [
             "guardrail_entrada", "roteador", "buscar_historico", "roteador", "juiz", "guardrail_saida",
         ]
@@ -267,7 +267,7 @@ def test_explicit_memory_request_without_closed_sessions():
             message="Busque o resumo da minha última conversa encerrada com o Astro.",
         ), CurrentUser(uid="owner", role="COLABORADOR"))
         assert "buscar_historico" in result.agentes_chamados
-        assert result.resposta == "Não encontrei um resumo de conversa encerrada para sua conta."
+        assert "\n\n".join(block.conteudo for block in result.blocos if block.tipo == "texto") == "Não encontrei um resumo de conversa encerrada para sua conta."
         repo.previous.assert_awaited_once_with("owner", str(result.session_id))
         assert not vectors.calls
     asyncio.run(scenario())
@@ -301,7 +301,7 @@ def test_router_rejects_untrusted_memory_arguments(reply):
         response = await service.chat(ChatRequest(message="Lembre RH"), CurrentUser(
             uid="owner", role="COLABORADOR",
         ))
-        assert "Pode reformular" in response.resposta
+        assert "Pode reformular" in "\n\n".join(block.conteudo for block in response.blocos if block.tipo == "texto")
         assert response.agentes_chamados == ["guardrail_entrada", "roteador"]
         assert not vectors.calls
     asyncio.run(scenario())
@@ -400,7 +400,7 @@ def test_load_session_messages_for_authenticated_owner():
         "total": 2,
         "mensagens": [
             {"role": "user", "content": "Oi", "blocos": []},
-            {"role": "assistant", "content": sent.json()["resposta"], "blocos": []},
+            {"role": "assistant", "content": sent.json()["blocos"][0]["conteudo"], "blocos": []},
         ],
     }
 

@@ -193,13 +193,13 @@ def _pedido_nrs_obrigatorias(message: str) -> bool:
 
 def _pedido_conformidade_terceiro(message: str) -> bool:
     normalized = "".join(c for c in unicodedata.normalize("NFKD", message.casefold()) if not unicodedata.combining(c))
-    return bool(re.search(r"\bconformidade\b", normalized) and not re.search(r"\b(?:minha|meu|para mim)\b", normalized))
+    return bool(re.search(r"\b(?:conformidade|ficha)\b", normalized) and not re.search(r"\b(?:minha|meu|para mim)\b", normalized))
 
 
 def _filtros_conformidade(message: str, history: list[dict] | None = None) -> ConsultarConformidadeUsuarioArgs | None:
     if not _pedido_conformidade_terceiro(message):
         return None
-    match = re.search(r"\bconformidade\s+(?:de|do|da)\s+(?:(?:funcion[aá]ri[oa]|pessoa)\s+)?(.+?)[?!.,]*$", message, re.IGNORECASE)
+    match = re.search(r"\b(?:conformidade|ficha)\s+(?:de|do|da)\s+(?:(?:funcion[aá]ri[oa]|usu[aá]ri[oa]|pessoa)\s+)?(.+?)[?!.,]*$", message, re.IGNORECASE)
     person = match.group(1).strip() if match else None
     if person is None or person.casefold() in {"ela", "ele", "dela", "dele", "essa pessoa", "esta pessoa"}:
         # Só resolve automaticamente uma referência ao último resultado de RH

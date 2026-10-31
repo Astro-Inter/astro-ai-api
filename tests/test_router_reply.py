@@ -27,11 +27,9 @@ def test_ambiguous_or_unauthorized_tool_arguments_are_not_repaired(reply):
         normalize_router_reply(reply)
 
 
-def test_format_normalization_never_confirms_a_message():
-    reply = normalize_router_reply(
-        'message = {"destinatario":"Rosa","mensagem":"oi","confirmar_envio":true}'
-    )
-    assert json.loads(reply.split("=", 1)[1])["confirmar_envio"] is False
+def test_removed_message_command_is_rejected_even_with_confirmation():
+    with pytest.raises(ValueError):
+        normalize_router_reply('message = {"destinatario":"Rosa","mensagem":"oi","confirmar_envio":true}')
 
 
 def test_natural_clarification_is_preserved():

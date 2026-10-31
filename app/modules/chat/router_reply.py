@@ -3,9 +3,9 @@
 import re
 
 from app.modules.chat.schemas import MemorySearch
+from app.modules.operational.tools import OperationalDecision
 from app.modules.roteador.tools import (
     ConsultarAcessosArgs, ConsultarConversasArgs, ConsultarNotificacoesArgs,
-    EnviarMensagemArgs,
 )
 
 
@@ -13,11 +13,11 @@ ROUTER_CLARIFICATION = (
     "Não consegui identificar com segurança o que você quer fazer. "
     "Pode reformular o pedido? Nenhuma ação foi executada nesta tentativa."
 )
-_PREFIXES = "ROUTE|MEMORY|MESSAGE|CONVERSATION|NOTIFICATIONS|ACCESSES"
+_PREFIXES = "ROUTE|MEMORY|MESSAGE|CONVERSATION|NOTIFICATIONS|ACCESSES|QUERY"
 _COMMAND = re.compile(rf"\b(?:{_PREFIXES})\s*=", re.IGNORECASE)
 _TOOLS = {
     "MEMORY": MemorySearch,
-    "MESSAGE": EnviarMensagemArgs,
+    "QUERY": OperationalDecision,
     "CONVERSATION": ConsultarConversasArgs,
     "NOTIFICATIONS": ConsultarNotificacoesArgs,
     "ACCESSES": ConsultarAcessosArgs,
@@ -42,8 +42,6 @@ def normalize_router_reply(text: str) -> str:
     if tool and tool.group(1).upper() in _TOOLS:
         prefix = tool.group(1).upper()
         args = _TOOLS[prefix].model_validate_json(tool.group(2))
-        if prefix == "MESSAGE":
-            args.confirmar_envio = False
         return prefix + "=" + args.model_dump_json()
     if not value or _COMMAND.search(value) or re.match(rf"^(?:{_PREFIXES})\b", value, re.I):
         raise ValueError("Decisao de roteamento invalida.")

@@ -32,7 +32,7 @@ class BlocoGrafico(BaseModel):
     versao: Literal[1] = 1
     titulo: str = Field(min_length=1, max_length=200)
     dados: list[PontoGrafico] = Field(min_length=1, max_length=12)
-    unidade: Literal["participações"] = "participações"
+    unidade: Literal["participações", "pessoas", "pendências", "registros"] = "participações"
     fonte: str = Field(min_length=1, max_length=200)
 
 
@@ -50,13 +50,20 @@ class ColunaTabela(BaseModel):
     titulo: str = Field(min_length=1, max_length=100)
 
 
+class CelulaImagem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["imagem"] = "imagem"
+    url: str | None = Field(default=None, max_length=4096)
+    descricao: str = Field(min_length=1, max_length=280)
+
+
 class BlocoTabela(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tipo: Literal["tabela"] = "tabela"
     versao: Literal[1] = 1
     titulo: str = Field(min_length=1, max_length=200)
     colunas: list[ColunaTabela] = Field(min_length=1, max_length=10)
-    linhas: list[dict[str, str | int | float | None]] = Field(min_length=1, max_length=50)
+    linhas: list[dict[str, str | int | float | CelulaImagem | None]] = Field(min_length=1, max_length=50)
     pagina: int = Field(ge=1)
     total_paginas: int = Field(ge=1)
     total: int = Field(ge=0)
@@ -73,6 +80,7 @@ class BlocoTabela(BaseModel):
 
 class ImagemUsuario(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    tipo: Literal["imagem"] = "imagem"
     nome: str = Field(min_length=1, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     url: str | None = Field(default=None, max_length=4096)
@@ -86,14 +94,44 @@ class BlocoGaleriaUsuarios(BaseModel):
     imagens: list[ImagemUsuario] = Field(min_length=1, max_length=50)
 
 
-BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoLinhas | BlocoTabela | BlocoGaleriaUsuarios, Field(discriminator="tipo")]
+class ConformidadeFicha(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    percentual: float | None = Field(default=None, ge=0, le=100)
+    vigentes: int = Field(ge=0)
+    total: int = Field(ge=0)
+    data_referencia: str | None = Field(default=None, max_length=30)
+    criterio: Literal["NRs vigentes / NRs aplicáveis retornadas"] = "NRs vigentes / NRs aplicáveis retornadas"
+
+    @model_validator(mode="after")
+    def validar_percentual(self):
+        expected = round(100 * self.vigentes / self.total, 2) if self.total else None
+        if self.vigentes > self.total or self.percentual != expected:
+            raise ValueError("Percentual deve corresponder às contagens verificadas.")
+        return self
+
+
+class BlocoFichaUsuario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["ficha_usuario"] = "ficha_usuario"
+    versao: Literal[1] = 1
+    titulo: str = Field(default="Ficha do usuário", max_length=200)
+    nome: str = Field(min_length=1, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
+    cargo: str | None = Field(default=None, max_length=255)
+    unidade: str | None = Field(default=None, max_length=255)
+    perfil: str | None = Field(default=None, max_length=80)
+    situacao: str | None = Field(default=None, max_length=80)
+    foto: CelulaImagem
+    conformidade: ConformidadeFicha | None = None
+
+
+BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoLinhas | BlocoTabela | BlocoGaleriaUsuarios | BlocoFichaUsuario, Field(discriminator="tipo")]
 
 
 class ChatResponse(BaseModel):
     session_id: UUID
-    resposta: str
     agentes_chamados: list[str]
-    blocos: list[BlocoResposta] = Field(default_factory=list, max_length=10)
+    blocos: list[BlocoResposta] = Field(min_length=1, max_length=10)
 
 
 class SessionResponse(BaseModel):
