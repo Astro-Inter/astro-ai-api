@@ -298,11 +298,11 @@ def test_empty_model_output_becomes_clarification_not_a_502_or_fake_success(chat
     assert 'gerar_pdf' not in response.json()['agentes_chamados']
 
 
-def test_count_followup_starts_first_employee_page_instead_of_skipping_it():
+def test_count_followup_does_not_request_server_pages():
     state = {'contexto': {'ultima_rota': 'rh'}, 'consulta_rh': {
         'pagina': 1, 'limite': 20, 'consulta': 'contagem', 'tipos': ['COLABORADOR'],
     }, 'mensagem': 'Próxima página'}
-    assert _continuacao_rh(state).pagina == 1
+    assert _continuacao_rh(state) is None
 
 
 def test_agenda_date_followup_passes_to_specialist_without_input_asking_confirmation(chat_client):
