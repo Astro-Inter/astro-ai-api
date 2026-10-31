@@ -394,15 +394,26 @@ class ChatService:
                 if (structured_ready
                         and result.get("rota") == "consulta_operacional" and chart_data.get("status") == "ok"
                         and chart_data.get("linhas")):
-                    blocks = [BlocoTexto(conteudo=chart_data["titulo"]),
-                              BlocoTabela(titulo=chart_data["titulo"], colunas=chart_data["colunas"],
-                                          linhas=chart_data["linhas"], pagina=chart_data["pagina"],
-                                          total_paginas=chart_data["total_paginas"], total=chart_data["total"])]
+                    compact_expiry = result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_grafico_vencimentos"
+                    blocks = [] if compact_expiry else [BlocoTexto(conteudo=chart_data["titulo"])]
+                    blocks.append(BlocoTabela(
+                        titulo="Detalhamento por faixa de prazo" if compact_expiry else chart_data["titulo"],
+                        colunas=chart_data["colunas"], linhas=chart_data["linhas"],
+                        pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]))
                     if chart_data.get("grafico"):
                         chart_class = BlocoGraficoSetores if chart_data.get("tipo_grafico") == "grafico_setores" else BlocoGrafico
                         blocks.append(chart_class(titulo=chart_data["titulo"], dados=chart_data["grafico"],
                                                   unidade=chart_data.get("unidade_grafico", "pessoas"), fonte=chart_data["fonte"]))
                     summary = f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} registro(s)."
+                    if compact_expiry:
+                        summary = (f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. "
+                                   f"{chart_data['total']} faixas. Fonte: {chart_data['fonte']}. "
+                                   f"Unidade: {chart_data.get('unidade_grafico', 'registros')}.")
+                        dates = {row["data_referencia"] for row in chart_data["linhas"] if row.get("data_referencia")}
+                        if len(dates) == 1:
+                            summary += f" Referência: {next(iter(dates))}."
+                        elif dates:
+                            summary += " Referências disponíveis na tabela."
                     if chart_data.get("aviso"):
                         summary += " " + chart_data["aviso"]
                     blocks.append(BlocoTexto(conteudo=summary))

@@ -108,3 +108,28 @@ Operador da implantação deve conferir a presença das variáveis de avatar/com
 a referência ao Redis compartilhado e permissão de leitura no bucket, sem exibir
 valores. Se a ficha continuar nula, consultar os motivos `avatar_unavailable` e
 comparar novamente com Java. Promoção de produção depende de autorização explícita.
+
+
+## Complemento: títulos de vencimentos e estado de publicação
+
+A repetição também foi confirmada no código: o mesmo `titulo` era usado no texto
+introdutório, na tabela e no gráfico. A resposta de vencimentos agora omite esse
+texto inicial e diferencia o título do detalhamento, mantendo o título da consulta
+no gráfico. O rodapé preserva fonte, unidade, referência e avisos, inclusive quando
+o gráfico não estiver disponível. As contagens e os limites da consulta não mudam.
+Testes cobrem os dois cenários e a igualdade dos blocos no POST/histórico.
+
+Nesta nova conferência, a PR #31 ainda estava aberta e não mesclada; `/version`
+continuava retornando unknown. Portanto as correções anteriores não devem ser
+consideradas presentes na instância pública. Não repetimos as perguntas de IA
+reais apenas para reproduzir falhas já comprovadas: os JSONs de POST/histórico e
+a reprodução local antes/depois permanecem as evidências. Esta etapa não acrescentou
+consumo real de modelos.
+
+O suporte mobile a tabelas v2 com 200 linhas e paginação local de 10 foi informado
+como validado nos testes do cliente. Os JSONs reais examinados nem continham a
+tabela, portanto não havia bloco v2 para o parser rejeitar. As quatro pendências
+visuais relatadas (teclado/rolagem, rótulos de perfil, espaçamento e escala) continuam
+fora desta correção de backend e não motivaram alterações dos dados ou permissões.
+
+Validação do complemento: 829 testes simulados passaram (15 avisos de dependências), além de compileall e diff --check. Nenhuma chamada real de IA foi acrescentada nesta etapa.

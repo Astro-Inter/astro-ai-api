@@ -2521,8 +2521,10 @@ def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, mo
     response = client.post(f"/chat/messages?markdown={str(markdown).lower()}",json={"message":"Mostre a distribuição dos funcionários por cargo"},headers={"Authorization":"Bearer test-private-token"})
     assert response.status_code == 200
     body = response.json()
-    assert [b["tipo"] for b in body["blocos"]] == ["texto","tabela",chart_kind,"texto"]
-    assert body["blocos"][2]["unidade"] == unit
+    expected = ["tabela", chart_kind, "texto"] if tool_name == "consultar_grafico_vencimentos" else ["texto", "tabela", chart_kind, "texto"]
+    assert [b["tipo"] for b in body["blocos"]] == expected
+    graph = next(b for b in body["blocos"] if b["tipo"] == chart_kind)
+    assert graph["unidade"] == unit
     judge = next(call for call in model.calls if call[0] == "juiz")
     review = json.loads(judge[1][-1].content.split("\n", 1)[1])["resultado"]
     assert review["apresentacao"]["blocos"] == ["tabela", chart_kind]
@@ -2655,3 +2657,38 @@ def test_own_card_blank_fields_are_optional():
     card = BlocoFichaUsuario(nome=" ", modalidade="", foto=CelulaImagem(descricao="Foto"))
     assert card.nome is None and card.modalidade is None
     assert card.conformidade is None
+
+
+@pytest.mark.parametrize("has_graph", [True, False])
+def test_expiry_blocks_do_not_repeat_title_and_keep_context(chat_client, monkeypatch, has_graph):
+    from app.modules.operational.tools import REGISTRY
+    title = "Validades por faixa: registros de conformidade, não pessoas únicas"
+    warning = "Pessoas únicas por faixa não devem ser somadas."
+    class Tool:
+        async def ainvoke(self, args, config):
+            result = {"status": "ok", "titulo": title, "colunas": [
+                {"chave": "categoria", "titulo": "Faixa"},
+                {"chave": "quantidade", "titulo": "Registros"},
+                {"chave": "data_referencia", "titulo": "Referência"}],
+                "linhas": [{"categoria": "Vencidas", "quantidade": 7, "data_referencia": "2026-10-31"}],
+                "total": 1, "pagina": 1, "total_paginas": 1,
+                "fonte": "Cadastro autorizado", "unidade_grafico": "registros", "aviso": warning}
+            if has_graph:
+                result.update(grafico=[{"categoria": "Vencidas", "valor": 7}], tipo_grafico="grafico_barras")
+            return result
+    monkeypatch.setitem(REGISTRY, "consultar_grafico_vencimentos", Tool())
+    client, model, app = chat_client
+    model.replies["roteador"] = json.dumps({"acao": "consultar_grafico_vencimentos", "filtros": {}})
+    body = client.post("/chat/messages?markdown=false", json={"message": "Mostre vencimentos por faixa em barras"}).json()
+    assert [b["tipo"] for b in body["blocos"]] == (["tabela", "grafico_barras", "texto"] if has_graph else ["tabela", "texto"])
+    table = body["blocos"][0]
+    assert table["titulo"] == "Detalhamento por faixa de prazo"
+    assert table["linhas"][0]["quantidade"] == 7
+    footer = body["blocos"][-1]["conteudo"]
+    assert title not in footer and warning in footer
+    assert "Cadastro autorizado" in footer and "registros" in footer and "2026-10-31" in footer
+    if has_graph:
+        assert body["blocos"][1]["titulo"] == title
+        assert body["blocos"][1]["dados"][0]["valor"] == 7
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"] == body["blocos"]
