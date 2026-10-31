@@ -345,12 +345,14 @@ class ChatService:
                     rows = []
                     for item in chart_data["usuarios"]:
                         row = {key: item.get(key) for key, _ in columns if key != "foto"}
-                        row["foto"] = CelulaImagem(descricao=f"Foto de {item['nome']}")
+                        row["foto"] = CelulaImagem(descricao=f"Foto de {item['nome']}"[:280])
                         rows.append(row)
                     blocks = [BlocoTexto(conteudo="Veja os usuários encontrados no seu escopo:"),
-                              BlocoTabela(titulo="Usuários", colunas=[ColunaTabela(chave=key, titulo=label) for key, label in columns],
+                              BlocoTabela(titulo="Usuários", versao=2 if "retornada" in chart_data else 1,
+                                          paginacao="local" if "retornada" in chart_data else None,
+                                          **{key: chart_data.get(key) for key in ("solicitada", "retornada", "limitado", "tem_mais", "motivo_limite")}, colunas=[ColunaTabela(chave=key, titulo=label) for key, label in columns],
                                           linhas=rows, pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]),
-                              BlocoTexto(conteudo=f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} usuário(s).")]
+                              BlocoTexto(conteudo=public_answer)]
                 if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
                         and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_conformidade_usuario"
                         and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):

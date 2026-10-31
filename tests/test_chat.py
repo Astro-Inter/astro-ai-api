@@ -1079,7 +1079,8 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     assert [call[0] for call in model.calls].count("rh") == 1
     judge_call = next(call for call in model.calls if call[0] == "juiz")
     tool_result = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
-    assert tool_result["resultado"]["evidencia_tool"]["resultado"]["usuarios"][0]["email"].startswith("[ASTRO_PII_")
+    assert "usuarios" not in tool_result["resultado"]["evidencia_tool"]["resultado"]
+    assert tool_result["resultado"]["evidencia_tool"]["resultado"]["retornada"] == 1
     assert "ana@example.com" not in str(judge_call[1])
     assert response.json()["blocos"][1]["linhas"][0]["email"] == "ana@example.com"
     evidence = json.loads(judge_call[1][-1].content.split("\n", 1)[1])["resultado"]
@@ -2576,3 +2577,32 @@ def test_current_user_formatter_omits_status_and_registration_from_legacy_data()
     assert "ATIVO" not in answer
     assert "Cadastrado em" not in answer
     assert "2026-09-10" not in answer
+
+
+def test_user_table_v2_returns_requested_set_and_history(chat_client, monkeypatch):
+    from app.modules.chat import subgraphs
+    client, model, app = chat_client
+    class Tool:
+        async def ainvoke(self, args, config):
+            assert args["limite"] == 100
+            return {"status": "ok", "consulta": "listar", "total": 143,
+                    "pagina": 1, "total_paginas": 1, "quantidade": 100,
+                    "solicitada": 100, "retornada": 100, "limitado": False,
+                    "tem_mais": True, "motivo_limite": None,
+                    "usuarios": [{"nome": f"Pessoa {i}", "email": None, "cargo": "Cargo",
+                                  "unidade": "Unidade", "tipo": "COLABORADOR", "status": "ATIVO"}
+                                 for i in range(100)]}
+    monkeypatch.setitem(subgraphs.RH_TOOLS, "buscar_outros_usuarios", Tool())
+    model.replies["rh"] = json.dumps({"acao": "buscar_outros_usuarios", "filtros": {"limite": 100}, "resposta": None})
+    response = client.post("/chat/messages", json={"message": "Mostre 100 usuários em uma tabela"})
+    assert response.status_code == 200
+    body = response.json()
+    table = next(b for b in body["blocos"] if b["tipo"] == "tabela")
+    assert table["versao"] == 2 and table["paginacao"] == "local"
+    assert len(table["linhas"]) == table["retornada"] == 100
+    assert table["total"] == 143 and table["tem_mais"] and not table["limitado"]
+    assert "próxima página" not in texto_resposta(body)
+    judge = next(call for call in model.calls if call[0] == "juiz")
+    assert '"usuarios"' not in str(judge[1])
+    stored = app.state.chat_service.repository.docs[body["session_id"]]["mensagens"][-1]
+    assert next(b for b in stored["blocos"] if b["tipo"] == "tabela")["versao"] == 2

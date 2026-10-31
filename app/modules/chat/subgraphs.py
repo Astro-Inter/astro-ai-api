@@ -301,6 +301,14 @@ def _formatar_usuarios(result: dict) -> str:
     if result.get("status") != "ok":
         return result.get("mensagem", "Não foi possível consultar os usuários no momento.")
 
+    if "retornada" in result:
+        text = (f"Retornados {result['retornada']} usuário(s) de {result['total']} disponíveis "
+                f"no escopo autorizado; quantidade solicitada: {result['solicitada']}.")
+        if result.get("limitado"):
+            text += " Resultado limitado por segurança (" + result['motivo_limite'] + ")."
+        elif result.get("tem_mais"):
+            text += " O conjunto retornado é parcial, conforme a quantidade solicitada."
+        return text
     users = result["usuarios"]
     title = f"Encontrei {len(users)} usuário(s):"
     lines = []
@@ -315,7 +323,7 @@ def _formatar_usuarios(result: dict) -> str:
         if not users:
             lines.append("Nenhum usuário nesta página. Peça uma página anterior.")
         elif result['pagina'] < result['total_paginas']:
-            lines.append("Para ver mais, peça a próxima página de funcionários.")
+            lines.append("O conjunto retornado é parcial.")
     return "\n".join([title, *lines])
 
 
@@ -694,7 +702,7 @@ def build_rh_graph(model: AgentModel):
                 "rh_route": "tool",
                 "rh_decision": RhToolDecision(
                     acao="buscar_outros_usuarios",
-                    filtros=BuscarOutrosUsuariosArgs(limite=50),
+                    filtros=BuscarOutrosUsuariosArgs(limite=200),
                 ),
                 "agentes_chamados": state["agentes_chamados"] + ["rh"],
             }
@@ -766,7 +774,8 @@ def build_rh_graph(model: AgentModel):
             "recomendacao": "",
             "evidencia_tool": {
                 "nome": tool_name,
-                "resultado": result,
+                "resultado": ({key: value for key, value in result.items() if key != "usuarios"}
+                              if tool_name == "buscar_outros_usuarios" and "retornada" in result else result),
             },
         }
         return {

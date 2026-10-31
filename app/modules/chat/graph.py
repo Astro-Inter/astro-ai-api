@@ -132,24 +132,9 @@ def _consulta_propria_recente(message: str) -> bool:
 
 
 def _continuacao_rh(state: ChatState) -> BuscarOutrosUsuariosArgs | None:
-    if state["contexto"].get("ultima_rota") != "rh" or not isinstance(state.get("consulta_rh"), dict):
-        return None
-    normalized = _sem_acentos(state["mensagem"]).strip().rstrip('.!? ').strip()
-    next_page = re.fullmatch(
-        r"(?:nao tem mais|isso|(?:exatamente, )?(?:agora )?(?:gostaria de ver |mostre |quero ver )?"
-        r"(?:a )?proxima pagina(?: de funcionarios)?(?:, por favor)?|e os proximos (\d{1,2}))",
-        normalized,
-    )
-    if not next_page:
-        return None
-    try:
-        previous = BuscarOutrosUsuariosArgs.model_validate(state["consulta_rh"])
-        if next_page.group(1) and int(next_page.group(1)) != previous.limite:
-            return None  # Do not change page size and silently skip employees.
-        page = 1 if previous.consulta == "contagem" else previous.pagina + 1
-        return BuscarOutrosUsuariosArgs(**{**previous.model_dump(), "pagina": page, "consulta": "listar"})
-    except ValidationError:
-        return None
+    # A navegação visual de listas agora é local no cliente. Histórico legado
+    # nunca deve disparar consultas de novas páginas nem reutilizar seus offsets.
+    return None
 
 
 def _contagem_funcionarios(message: str) -> bool:

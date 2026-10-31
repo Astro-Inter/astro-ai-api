@@ -171,3 +171,6 @@ necessárias validação visual e publicação coordenada dos contratos.
 ### Dados do próprio usuário
 
 A ferramenta `buscar_meus_dados` e a resposta correspondente omitem o status cadastral e a data de cadastro (`criado_em`). Esses campos não são enviados ao modelo nessa consulta. As verificações internas de autorização e os filtros de situação das consultas de equipe permanecem preservados.
+
+
+Listagens de RH: quantidade solicitada e paginação visual foram separadas. Consulte o contrato v2 em [tabelas locais](integracao-graficos-chat.md#tabelas-de-usuários-com-paginação-local-versão-2). Gráficos continuam usando agregações SQL independentes do limite da tabela.

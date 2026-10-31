@@ -64,7 +64,7 @@ def test_recent_memory_is_queried_even_if_input_model_would_clarify(chat_client)
     assert model.calls == []
 
 
-def test_employee_next_pages_keep_backend_filters_and_do_not_repeat(chat_client, monkeypatch):
+def test_employee_old_page_requests_do_not_fetch_new_server_pages(chat_client, monkeypatch):
     client, model, application = chat_client
     application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(uid='user-a', role='GESTOR')
     calls = []
@@ -93,10 +93,10 @@ def test_employee_next_pages_keep_backend_filters_and_do_not_repeat(chat_client,
     second = client.post('/chat/messages', json={'message': 'Não tem mais?', 'session_id': first['session_id']})
     third = client.post('/chat/messages', json={'message': 'E os próximos 20?', 'session_id': first['session_id']})
     assert second.status_code == third.status_code == 200
-    assert [args['pagina'] for args in calls] == [1, 2, 3]
+    assert [args['pagina'] for args in calls] == [1]
     assert all(args['tipos'] == ['COLABORADOR'] for args in calls)
-    assert 'Pessoa 20' in str(second.json()['blocos'])
-    assert 'Pessoa 40' in str(third.json()['blocos'])
+    assert 'Pessoa 20' not in str(second.json()['blocos'])
+    assert 'Pessoa 40' not in str(third.json()['blocos'])
 
 
 def test_pagination_does_not_accept_injected_commands_or_untrusted_history():

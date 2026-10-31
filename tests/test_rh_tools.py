@@ -136,6 +136,7 @@ def test_manager_search_is_limited_to_own_unit_and_allowed_profiles(monkeypatch)
         "status": "ok",
         "quantidade": 1,
         "consulta": "listar", "total": 1, "pagina": 1, "limite": 15, "total_paginas": 1,
+        "solicitada": 15, "retornada": 1, "limitado": False, "tem_mais": False, "motivo_limite": None,
         "usuarios": [{
             "nome": "Ana Lima", "email": "ana@example.com", "tipo": "COLABORADOR",
             "cargo": "Soldador", "unidade": "Matriz", "modalidade": "PRESENCIAL",
@@ -250,7 +251,7 @@ def test_current_admin_tool_reads_admin_table(monkeypatch):
     {"status": ["BLOQUEADO"]},
     {"tipos": ["ADMIN"]},
     {"status": ["ATIVO", "ATIVO"]},
-    {"limite": 51},
+    {"limite": 1000001},
     {"campo_sql": "DROP TABLE usuarios"},
 ])
 def test_search_filters_reject_invalid_values(payload):
@@ -284,3 +285,50 @@ def test_database_failure_returns_safe_error(monkeypatch):
         "status": "indisponivel", "mensagem": "Consulta de usuarios indisponivel.",
     }
     assert "secret" not in str(result)
+
+
+@pytest.mark.parametrize("requested,available,expected,limited", [
+    (100, 143, 100, False), (500, 300, 200, True), (100, 23, 23, False),
+])
+def test_listing_collects_internal_batches(monkeypatch, requested, available, expected, limited):
+    rows = [(f"Pessoa {i:04}", f"p{i}@example.com", "COLABORADOR", "Cargo", "Unidade", "PRESENCIAL", "ATIVO")
+            for i in range(available)]
+    class Cursor(FakeCursor):
+        def __init__(self):
+            super().__init__(rows)
+            self.batches = []
+        def fetchall(self):
+            size, offset = self.parameters[-2:]
+            self.batches.append((size, offset))
+            assert size <= 50
+            assert self.parameters[0] == "owner"
+            assert "ORDER BY usuario.nome, usuario.email, usuario.id_usuario" in self.query
+            return rows[offset:offset + size]
+    connection = FakeConnection(rows)
+    cursor = connection.db_cursor = Cursor()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(rh_tools, "get_conn", lambda: connection)
+    result = buscar_outros_usuarios.invoke({"limite": requested}, config={"configurable": {
+        "usuario_atual": {"uid": "owner", "role": "GESTOR"}}})
+    assert result["retornada"] == expected
+    assert result["total"] == available
+    assert result["limitado"] is limited
+    assert result["tem_mais"] == (expected < available)
+    assert len({u["email"] for u in result["usuarios"]}) == expected
+    assert cursor.batches[0][1] == 0
+
+
+def test_listing_stops_at_response_budget(monkeypatch):
+    monkeypatch.setattr(rh_tools, "MAX_USER_TABLE_BYTES", 25000)
+    result, _ = run_search(monkeypatch, "GESTOR", BuscarOutrosUsuariosArgs(limite=100), rows=[
+        ("Pessoa", "p@example.com", "COLABORADOR", "Cargo", "Unidade", "PRESENCIAL", "ATIVO")
+    ] * 3)
+    assert result["retornada"] == 1
+    assert result["total"] == 3
+    assert result["limitado"] is True
+    assert result["motivo_limite"] == "tamanho_resposta"
+
+
+def test_listing_rejects_chat_page_navigation():
+    with pytest.raises(ValidationError):
+        BuscarOutrosUsuariosArgs(pagina=2)

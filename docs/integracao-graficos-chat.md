@@ -95,7 +95,7 @@ A tabela real inclui também cargo, unidade, perfil e situação. A URL é HTTPS
 assinada e temporária, ou `null` quando a foto não está disponível ou autorizada.
 O frontend deve renderizar a célula `imagem` visualmente, usar sua descrição
 para acessibilidade e apresentar uma alternativa quando faltar a foto. Não
-registre a URL nem a persista em cache local. Há no máximo 50 linhas por página.
+registre a URL nem a persista em cache local. Na versão 1 há no máximo 50 linhas por página do servidor; novas listagens de usuários usam a versão 2 descrita abaixo.
 O histórico conserva `content` para compatibilidade com mensagens antigas;
 o POST não retorna `resposta`.
 As URLs não são armazenadas no histórico nem enviadas aos modelos. Ao abrir o
@@ -185,3 +185,62 @@ categoria e a data de referência; essas contagens não devem ser somadas como
 pessoas únicas globais. Regras e faixas estão em [Tools operacionais](tools-operacionais.md).
 Não há série mensal nesses gráficos. Linhas permanecem disponíveis para as
 conclusões pessoais de treinamentos, com a definição já documentada.
+
+
+## Tabelas de usuários com paginação local (versão 2)
+
+`buscar_outros_usuarios.limite` agora expressa a quantidade solicitada: por exemplo,
+100. O contrato aceita quantidades entre 1 e 1.000.000 para registrar pedidos acima do teto e informar o corte. O padrão é 20; o máximo efetivamente devolvido é 200. `pagina` é legado e
+somente aceita 1. A API reúne lotes SQL internos de até 50, com os mesmos filtros,
+autorização e ordenação por nome, email e ID único. Contagem e lotes usam uma
+transação somente leitura com snapshot REPEATABLE READ. Não há chamadas adicionais
+a modelos por lote. Falhas SQL abortam a consulta, sem sucesso parcial.
+
+O bloco `tabela` de usuários usa `versao: 2` e `paginacao: "local"`:
+
+```json
+{
+  "tipo": "tabela", "versao": 2, "titulo": "Usuários",
+  "colunas": [{"chave": "nome", "titulo": "Nome"}],
+  "linhas": [{"nome": "Pessoa autorizada"}],
+  "pagina": 1, "total_paginas": 1, "total": 143,
+  "solicitada": 1, "retornada": 1, "limitado": false,
+  "tem_mais": true, "motivo_limite": null, "paginacao": "local"
+}
+```
+
+`total` é a contagem autorizada pelos filtros; `retornada` é o número de linhas.
+`tem_mais` indica que existem registros fora do conjunto recebido. `limitado`
+indica que um limite de segurança impediu atender a quantidade solicitada e
+disponível; seu motivo é `maximo_resultados` ou `tamanho_resposta`. Pedir 100 e
+receber os 23 disponíveis não é corte de segurança. Pedir 100 e receber 100 de
+143 é um conjunto parcial por escolha do solicitante, com `tem_mais: true`.
+Os campos legados pagina/total_paginas valem 1 e não descrevem páginas visuais.
+
+O orçamento da resposta de listagem é 2 MiB de JSON, incluindo reserva conservadora para fotos e
+metadados. Cada célula textual tem até 500 caracteres e a URL de foto até 4096.
+Se o próximo registro exceder o orçamento, a coleta para e informa o corte.
+A resposta de listagem contém essa única tabela e textos curtos de resumo; não
+repete todos os registros em texto, evitando duplicação e excesso de contexto.
+As fotos continuam resolvidas no backend e não são persistidas no histórico.
+
+Os gráficos agregados continuam em tools próprias: agregam todo o escopo filtrado
+antes da paginação e não usam a amostra da tabela como população. O frontend não
+deve calcular um gráfico global a partir dessas linhas.
+
+### Publicação coordenada e histórico
+
+DEPENDÊNCIA: os clientes web #70 e mobile #79 inspecionados validam até 50 linhas e ainda
+não oferecem paginação local. Antes de publicar a API, atualizar ambos para ler
+versões 1 e 2, validar até 200 linhas na v2 e mostrar, por exemplo, 10 ou 20 linhas
+por página, sem nova chamada ao chatbot. Exibir contagem recebida/total e avisos
+de corte; não renderizar todas as linhas de uma vez. Testar também imagens,
+rolagem e troca de página. Esta alteração de backend não publica esses clientes.
+
+Persistir o bloco completo recebido, incluindo versão e metadados. Ao reabrir a
+conversa, reconstruir as páginas locais do conjunto salvo. Blocos v1 antigos
+mantêm a semântica original de páginas do servidor e até 50 linhas; não migrar
+suas contagens nem buscar automaticamente registros adicionais. Nenhuma consulta
+ou foto histórica concede acesso novo: a autorização continua no backend.
+
+O Juiz recebe metadados da consulta v2 e revisa o resumo; os registros não são enviados ao modelo nessa etapa. A aplicação valida o contrato e monta as linhas autorizadas diretamente, reduzindo custo e latência.

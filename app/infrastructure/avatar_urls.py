@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 def _valid_url(url: str, path: str) -> bool:
     try:
+        if not isinstance(url, str) or not url.isascii() or len(url) > 4096:
+            return False
         parsed, endpoint = urlparse(url), urlparse(config.AVATAR_R2_ENDPOINT or "")
         if parsed.scheme != "https" or not endpoint.hostname or parsed.username or parsed.password:
             return False
@@ -56,7 +58,7 @@ def _authorized_photos(user: CurrentUser, emails: list[str]):
 
 def resolve_avatar_urls(user: CurrentUser, emails: list[str]) -> dict[str, str]:
     """Sem URLs ou conteúdo pessoal em logs; falha no avatar não quebra o chat."""
-    emails = list(dict.fromkeys(email for email in emails if isinstance(email, str) and 0 < len(email) <= 255))[:50]
+    emails = list(dict.fromkeys(email for email in emails if isinstance(email, str) and 0 < len(email) <= 255))[:200]
     endpoint = urlparse(config.AVATAR_R2_ENDPOINT or "")
     if (not emails or not config.R2_BUCKET_AVATARS or endpoint.scheme != "https" or
             not endpoint.hostname or not endpoint.hostname.endswith(".r2.cloudflarestorage.com") or

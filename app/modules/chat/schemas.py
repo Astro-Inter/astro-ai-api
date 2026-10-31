@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 from uuid import UUID
@@ -60,16 +61,35 @@ class CelulaImagem(BaseModel):
 class BlocoTabela(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tipo: Literal["tabela"] = "tabela"
-    versao: Literal[1] = 1
+    versao: Literal[1, 2] = 1
     titulo: str = Field(min_length=1, max_length=200)
     colunas: list[ColunaTabela] = Field(min_length=1, max_length=10)
-    linhas: list[dict[str, str | int | float | CelulaImagem | None]] = Field(min_length=1, max_length=50)
+    linhas: list[dict[str, str | int | float | CelulaImagem | None]] = Field(min_length=1, max_length=200)
     pagina: int = Field(ge=1)
     total_paginas: int = Field(ge=1)
     total: int = Field(ge=0)
 
+    solicitada: int | None = Field(default=None, ge=1)
+    retornada: int | None = Field(default=None, ge=0, le=200)
+    limitado: bool | None = None
+    tem_mais: bool | None = None
+    motivo_limite: Literal["maximo_resultados", "tamanho_resposta"] | None = None
+    paginacao: Literal["local"] | None = None
+
     @model_validator(mode="after")
     def validar_colunas(self):
+        if self.versao == 1 and len(self.linhas) > 50:
+            raise ValueError("Tabela legada limitada a 50 linhas.")
+        if self.versao == 2:
+            if (self.paginacao != "local" or self.retornada != len(self.linhas)
+                    or self.solicitada is None or self.limitado is None or self.tem_mais is None
+                    or self.total < len(self.linhas) or len(self.linhas) > self.solicitada
+                    or self.tem_mais != (len(self.linhas) < self.total)
+                    or self.limitado != (len(self.linhas) < min(self.solicitada, self.total))
+                    or self.limitado != (self.motivo_limite is not None)):
+                raise ValueError("Metadados inconsistentes na tabela local.")
+        if len(json.dumps(self.model_dump(), ensure_ascii=True).encode("utf-8")) > 2 * 1024 * 1024:
+            raise ValueError("Tabela excede 2 MiB.")
         keys = [column.chave for column in self.colunas]
         if len(keys) != len(set(keys)) or any(set(row) != set(keys) for row in self.linhas):
             raise ValueError("Linhas e colunas da tabela devem corresponder.")
