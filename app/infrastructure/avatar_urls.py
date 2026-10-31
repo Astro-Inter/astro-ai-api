@@ -78,6 +78,7 @@ def resolve_avatar_urls(user: CurrentUser, emails: list[str], *, own: bool = Fal
     if (not emails or not config.R2_BUCKET_AVATARS or endpoint.scheme != "https" or
             not endpoint.hostname or not endpoint.hostname.endswith(".r2.cloudflarestorage.com") or
             endpoint.username or endpoint.password or endpoint.path not in ("", "/") or endpoint.query or endpoint.fragment):
+        logger.info("avatar_unavailable reason=configuration")
         return {}
     try:
         photos = _authorized_own_photos(user) if own else _authorized_photos(user, emails)
@@ -85,6 +86,7 @@ def resolve_avatar_urls(user: CurrentUser, emails: list[str], *, own: bool = Fal
         logger.warning("Autorização de avatares indisponível")
         return {}
     if not photos:
+        logger.info("avatar_unavailable reason=no_authorized_photo")
         return {}
     cache = None
     if config.AVATAR_REDIS_URL:
@@ -111,6 +113,7 @@ def resolve_avatar_urls(user: CurrentUser, emails: list[str], *, own: bool = Fal
                     cache = None
             if not url or not _valid_url(url, path):
                 if not config.AVATAR_R2_ACCESS_KEY_ID or not config.AVATAR_R2_SECRET_ACCESS_KEY:
+                    logger.info("avatar_unavailable reason=signer_configuration")
                     continue
                 try:
                     if client is None:

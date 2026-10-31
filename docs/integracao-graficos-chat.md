@@ -292,3 +292,8 @@ Web/mobile: aceitar nome nulo, renderizar modalidade quando disponível, ignorar
 `origem` na UI e omitir campos nulos. Manter iniciais/fallback de erro para fotos,
 URLs temporárias sem cache durável e a ordem dos blocos. Os parsers atuais que
 exigem nome precisam ser atualizados antes da publicação deste contrato estendido.
+
+
+## Revisão e diagnóstico dos blocos
+
+O Juiz recebe o plano de apresentação gerado pela aplicação junto da evidência, para avaliar o resumo e os blocos que serão anexados. A aprovação continua necessária; conversão para texto simples não remove tabelas ou gráficos aprovados. Veja [diagnóstico dos testes mobile](diagnostico-mobile-pr30.md) para causas confirmadas, fotos e publicação da revisão.

@@ -2505,7 +2505,8 @@ def test_old_message_draft_is_invalidated_without_sending(chat_client):
 
 @pytest.mark.parametrize("chart_kind", ["grafico_barras", "grafico_setores"])
 @pytest.mark.parametrize("tool_name,unit", [("consultar_indicadores_equipe","pessoas"),("consultar_grafico_pendencias_nr","pendências"),("consultar_grafico_vencimentos","registros")])
-def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, monkeypatch, chart_kind, tool_name, unit):
+@pytest.mark.parametrize("markdown", [True, False])
+def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, monkeypatch, chart_kind, tool_name, unit, markdown):
     from langchain_core.tools import tool
     from app.modules.operational.tools import REGISTRY, TeamArgs
     from app.infrastructure.astro_queries import request_token
@@ -2513,15 +2514,20 @@ def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, mo
     async def fake_indicators(config=None, **kwargs) -> dict:
         """Indicadores simulados do escopo autorizado."""
         assert request_token.get() == "test-private-token"
-        return {"status":"ok","titulo":"Equipe por cargo","colunas":[{"chave":"categoria","titulo":"Cargo"},{"chave":"quantidade","titulo":"Quantidade"}],"linhas":[{"categoria":"Técnica","quantidade":7}],"total":1,"pagina":1,"total_paginas":1,"completo":True,"fonte":"Cadastro autorizado","tipo_grafico":chart_kind,"unidade_grafico":unit,"grafico":[{"categoria":"Técnica","valor":7}]}
+        return {"status":"ok","titulo":"**Equipe por cargo**","colunas":[{"chave":"categoria","titulo":"Cargo"},{"chave":"quantidade","titulo":"Quantidade"}],"linhas":[{"categoria":"Técnica","quantidade":7}],"total":1,"pagina":1,"total_paginas":1,"completo":True,"fonte":"Cadastro autorizado","tipo_grafico":chart_kind,"unidade_grafico":unit,"grafico":[{"categoria":"Técnica","valor":7}]}
     monkeypatch.setitem(REGISTRY,tool_name,fake_indicators)
     client, model, application = chat_client
     model.replies["roteador"] = json.dumps({"acao":tool_name,"filtros":{"agrupar_por":"cargo","tipo_grafico":chart_kind}})
-    response = client.post("/chat/messages",json={"message":"Mostre a distribuição dos funcionários por cargo"},headers={"Authorization":"Bearer test-private-token"})
+    response = client.post(f"/chat/messages?markdown={str(markdown).lower()}",json={"message":"Mostre a distribuição dos funcionários por cargo"},headers={"Authorization":"Bearer test-private-token"})
     assert response.status_code == 200
     body = response.json()
     assert [b["tipo"] for b in body["blocos"]] == ["texto","tabela",chart_kind,"texto"]
     assert body["blocos"][2]["unidade"] == unit
+    judge = next(call for call in model.calls if call[0] == "juiz")
+    review = json.loads(judge[1][-1].content.split("\n", 1)[1])["resultado"]
+    assert review["apresentacao"]["blocos"] == ["tabela", chart_kind]
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"] == body["blocos"]
     assert "juiz" in body["agentes_chamados"] and "guardrail_saida" in body["agentes_chamados"]
     assert next(call for call in model.calls if call[0] == "roteador")[2] is True
     assert "test-private-token" not in str(model.calls)
@@ -2613,6 +2619,9 @@ def test_user_table_v2_returns_requested_set_and_history(chat_client, monkeypatc
     assert "próxima página" not in texto_resposta(body)
     judge = next(call for call in model.calls if call[0] == "juiz")
     assert '"usuarios"' not in str(judge[1])
+    review = json.loads(judge[1][-1].content.split("\n", 1)[1])["resultado"]
+    assert review["apresentacao"]["linhas_validadas"] == 100
+    assert review["apresentacao"]["blocos"] == ["tabela"]
     stored = app.state.chat_service.repository.docs[body["session_id"]]["mensagens"][-1]
     assert next(b for b in stored["blocos"] if b["tipo"] == "tabela")["versao"] == 2
 

@@ -415,4 +415,4 @@ def is_operational_request(message, last_route=""):
         return True
     if re.search(r"\b(ficha|detalhes|turmas)\b", text) and re.search(r"\b(treinamentos?|eventos?)\b", text):
         return True
-    return bool(re.search(r"\b(graficos?|distribuicao|indicadores)\b", text) and (re.search(r"\b(equipe|funcionarios?|usuarios?|colaboradores|cargos?|perfis)\b", text) or (last_route == "rh" and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", text) and not re.search(r"\b(treinamentos?|eventos?)\b", text))))
+    return bool(re.search(r"\b(graficos?|barras|setores|pizza|distribuicao|indicadores)\b", text) and (re.search(r"\b(equipe|funcionarios?|usuarios?|colaboradores|cargos?|perfil|perfis)\b", text) or (last_route == "rh" and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", text) and not re.search(r"\b(treinamentos?|eventos?)\b", text))))

@@ -16,5 +16,8 @@ def health_check() -> dict[str, str]:
 def deployed_version(response: Response) -> dict[str, str]:
     """Permite conferir se o Render executa o commit esperado, sem expor configuração."""
     response.headers["Cache-Control"] = "no-store"
-    revision = os.getenv("RENDER_GIT_COMMIT", "")
-    return {"commit": revision if re.fullmatch(r"[0-9a-fA-F]{7,64}", revision) else "unknown"}
+    for name in ("APP_COMMIT_SHA", "RENDER_GIT_COMMIT"):
+        revision = os.getenv(name, "")
+        if re.fullmatch(r"[0-9a-fA-F]{7,64}", revision):
+            return {"commit": revision}
+    return {"commit": "unknown"}

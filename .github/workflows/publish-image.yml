@@ -68,10 +68,11 @@ jobs:
         run: |
           IMAGE="ghcr.io/astro-inter/astro-ai-api:sha-${COMMIT_SHA}"
           docker build \
+            --build-arg APP_COMMIT_SHA="$COMMIT_SHA" \
             --label org.opencontainers.image.source=https://github.com/Astro-Inter/astro-ai-api \
             --tag "$IMAGE" .
           docker run --rm --entrypoint python "$IMAGE" \
-            -c "from app.main import app; assert app.title == 'Astro AI API'"
+            -c "from app.main import app; assert app.title == 'Astro AI API'; from app.api.health import deployed_version; from fastapi import Response; assert deployed_version(Response())['commit'] == '${COMMIT_SHA}'"
           docker push "$IMAGE"
 
   update-gitops:

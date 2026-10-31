@@ -874,7 +874,7 @@ def consultar_conformidade_usuario(pessoa: str, config: RunnableConfig = None) -
     user = _usuario_do_contexto(config)
     if user is None or user.role not in {"GESTOR", "GESTOR_WORKSPACE"}:
         return {"status": "nao_autorizado", "mensagem": "Somente gestores podem consultar a conformidade de outras pessoas no seu escopo."}
-    person = pessoa.strip()
+    person = " ".join(pessoa.split())
     if not person or person.casefold() in {"ela", "ele", "dela", "dele", "essa pessoa", "esta pessoa"}:
         return {"status": "esclarecer", "mensagem": "Informe o nome ou e-mail da pessoa cuja conformidade deseja consultar."}
     if not app_config.DATABASE_URL:
@@ -887,6 +887,12 @@ def consultar_conformidade_usuario(pessoa: str, config: RunnableConfig = None) -
             with connection.cursor() as cursor:
                 cursor.execute(query, [person, *scope_parameters])
                 people = cursor.fetchall()
+                if not people and "@" not in person:
+                    # Literal partial name, always inside the same permission scope.
+                    escaped = person.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    partial = query.replace(selector, "usuario.nome ILIKE %s ESCAPE E'\\\\'")
+                    cursor.execute(partial, ["%" + escaped + "%", *scope_parameters])
+                    people = cursor.fetchall()
     except Exception:
         return {"status": "indisponivel", "mensagem": "Consulta de conformidade indisponivel."}
     if not people:
