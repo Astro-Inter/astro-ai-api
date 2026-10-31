@@ -135,14 +135,21 @@ class BlocoFichaUsuario(BaseModel):
     tipo: Literal["ficha_usuario"] = "ficha_usuario"
     versao: Literal[1] = 1
     titulo: str = Field(default="Ficha do usuário", max_length=200)
-    nome: str = Field(min_length=1, max_length=255)
+    nome: str | None = Field(default=None, min_length=1, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     cargo: str | None = Field(default=None, max_length=255)
     unidade: str | None = Field(default=None, max_length=255)
     perfil: str | None = Field(default=None, max_length=80)
+    modalidade: str | None = Field(default=None, max_length=80)
+    origem: Literal["usuario_autenticado"] | None = None
     situacao: str | None = Field(default=None, max_length=80)
     foto: CelulaImagem
     conformidade: ConformidadeFicha | None = None
+
+    @field_validator("nome", "email", "cargo", "unidade", "perfil", "modalidade", mode="before")
+    @classmethod
+    def campos_vazios_opcionais(cls, value):
+        return value.strip() or None if isinstance(value, str) else value
 
 
 BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoLinhas | BlocoTabela | BlocoGaleriaUsuarios | BlocoFichaUsuario, Field(discriminator="tipo")]

@@ -308,8 +308,8 @@ def buscar_meus_dados(config: RunnableConfig = None) -> dict:
                    unidade.nome AS unidade,
                    usuario.modalidade AS modalidade
               FROM usuario
-              JOIN cargo ON cargo.id_cargo = usuario.cargo_id
-              JOIN unidade ON unidade.id_unidade = usuario.unidade_id
+              LEFT JOIN cargo ON cargo.id_cargo = usuario.cargo_id
+              LEFT JOIN unidade ON unidade.id_unidade = usuario.unidade_id
              WHERE usuario.firebase_uid = %s
              LIMIT 1
         """

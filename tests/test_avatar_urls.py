@@ -87,3 +87,40 @@ def test_authorization_query_limits_manager_to_own_scope(monkeypatch):
     count = len(calls)
     assert avatar_urls._authorized_photos(CurrentUser(uid="owner", role="COLABORADOR"), ["ana@example.com"]) == []
     assert len(calls) == count
+
+
+def test_own_photo_uses_authenticated_uid_before_cache(monkeypatch):
+    configure(monkeypatch)
+    seen = []
+    def own(user):
+        seen.append(user.uid)
+        return [("__self__", 7, "avatar/7.png")]
+    monkeypatch.setattr(avatar_urls, "_authorized_own_photos", own)
+    monkeypatch.setattr(avatar_urls, "_authorized_photos", lambda *args: (_ for _ in ()).throw(AssertionError("other user lookup")))
+    class Cache:
+        def get(self, key):
+            assert seen == ["owner"]
+            assert key == "user:avatar:7"
+            return signed()
+        def close(self): pass
+    with patch("redis.Redis.from_url", return_value=Cache()):
+        result = avatar_urls.resolve_avatar_urls(CurrentUser(uid="owner", role="COLABORADOR"), ["__self__"], own=True)
+    assert avatar_urls._valid_url(result["__self__"], "avatar/7.png")
+
+
+def test_own_photo_query_has_no_external_selector(monkeypatch):
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test")
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def execute(self, query, params):
+            assert "usuario.firebase_uid = %s" in query
+            assert "usuario.tipo = %s" in query
+            assert params == ["owner", "COLABORADOR"]
+        def fetchall(self): return []
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def cursor(self): return Cursor()
+    monkeypatch.setattr(avatar_urls, "read_only_connection", lambda *args: Connection())
+    assert avatar_urls._authorized_own_photos(CurrentUser(uid="owner", role="COLABORADOR")) == []

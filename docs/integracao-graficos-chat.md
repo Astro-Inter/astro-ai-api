@@ -244,3 +244,51 @@ suas contagens nem buscar automaticamente registros adicionais. Nenhuma consulta
 ou foto histórica concede acesso novo: a autorização continua no backend.
 
 O Juiz recebe metadados da consulta v2 e revisa o resumo; os registros não são enviados ao modelo nessa etapa. A aplicação valida o contrato e monta as linhas autorizadas diretamente, reduzindo custo e latência.
+
+
+## Cartão do usuário autenticado (`buscar_meus_dados`)
+
+Pedidos completos como “Meus dados” retornam, nesta ordem, um bloco de texto de
+apresentação e um `ficha_usuario` v1. A consulta SQL identifica o usuário somente
+pelo UID do contexto autenticado. ADMIN usa o próprio cadastro administrativo;
+associações de cargo/unidade ausentes não escondem o cadastro funcional.
+
+Extensões aditivas de v1: `modalidade` opcional e `origem` opcional com valor
+`usuario_autenticado`. `nome` agora também pode ser nulo. Clientes devem aceitar
+esses campos adicionais e não exigir nome; exibir “Meu perfil” e um avatar neutro
+quando não houver nome para extrair iniciais. Os demais campos ausentes são nulos.
+
+```json
+[
+  {"tipo":"texto","conteudo":"Estes são os seus dados:"},
+  {"tipo":"ficha_usuario","versao":1,"titulo":"Meu perfil",
+   "origem":"usuario_autenticado","nome":"Pessoa Exemplo",
+   "email":"pessoa@example.com","perfil":"COLABORADOR",
+   "cargo":"Analista","unidade":"Matriz","modalidade":"HIBRIDO",
+   "foto":{"tipo":"imagem","url":null,"descricao":"Foto do usuário autenticado"},
+   "situacao":null,"conformidade":null}
+]
+```
+
+Não são expostos status cadastral, data de cadastro ou CPF nesse cartão. Não há
+consulta automática de conformidade; o campo permanece nulo. Campos nulos não
+produzem rótulos vazios ou percentual zero na UI. Pedidos específicos (“Qual é meu
+cargo?”, nome, e-mail, unidade, perfil e modalidade) continuam somente em texto,
+limitados ao campo solicitado; campo ausente recebe a indicação de indisponibilidade.
+
+`origem` permite ao backend revalidar a foto pelo UID atual, sem usar nome/e-mail do
+bloco como seletor de identidade. Para os perfis funcionais, foto própria exige
+cadastro ativo com papel correspondente; ADMIN sem fonte de foto suportada recebe
+URL nula. Reutiliza `user:avatar:<id>` no Redis após autorização e as mesmas URLs
+assinadas/validação de host/objeto/validade. Foto ausente, cache/R2 indisponível ou
+falha de autorização deixa URL nula: frontend mostra iniciais, se houver nome.
+Não há chamadas extras de IA para foto ou conformidade.
+
+O histórico conserva a ordem, a origem e os campos opcionais, sem persistir URL.
+Ao carregar a conversa, o backend resolve novamente a foto autorizada. Fichas
+antigas sem `origem` mantêm a resolução autorizada de terceiros existente.
+
+Web/mobile: aceitar nome nulo, renderizar modalidade quando disponível, ignorar
+`origem` na UI e omitir campos nulos. Manter iniciais/fallback de erro para fotos,
+URLs temporárias sem cache durável e a ordem dos blocos. Os parsers atuais que
+exigem nome precisam ser atualizados antes da publicação deste contrato estendido.

@@ -174,3 +174,6 @@ A ferramenta `buscar_meus_dados` e a resposta correspondente omitem o status cad
 
 
 Listagens de RH: quantidade solicitada e paginação visual foram separadas. Consulte o contrato v2 em [tabelas locais](integracao-graficos-chat.md#tabelas-de-usuários-com-paginação-local-versão-2). Gráficos continuam usando agregações SQL independentes do limite da tabela.
+
+
+`buscar_meus_dados`: consulta completa gera cartão `ficha_usuario` do autenticado, sem status/data de cadastro/CPF ou conformidade automática. Perguntas por campo permanecem em texto. Foto própria é reautorizada pelo UID, inclusive no histórico. Consulte [contrato do cartão](integracao-graficos-chat.md#cartão-do-usuário-autenticado-buscar_meus_dados) para campos opcionais e ajustes web/mobile.
