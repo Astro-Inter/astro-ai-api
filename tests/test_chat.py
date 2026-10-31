@@ -682,7 +682,7 @@ def test_router_previews_and_sends_message_only_after_confirmation(chat_client, 
     assert collection.documents == {}
     session = application.state.chat_service.repository.docs[preview_body["session_id"]]
     pending = session["acao_pendente"]
-    assert pending["id_envia"] == 7 and pending["id_recebe"] == 21
+    assert pending["remetente_id"] == 7 and pending["destinatario_id"] == 21
     assert preview_body["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "enviar_mensagem", "juiz", "guardrail_saida",
     ]
@@ -699,8 +699,8 @@ def test_router_previews_and_sends_message_only_after_confirmation(chat_client, 
         "guardrail_entrada", "roteador", "enviar_mensagem", "juiz", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == ["juiz"]
-    document = collection.documents[pending["id_mensagem"]]
-    assert document["id_envia"] == 7 and document["id_recebe"] == 21
+    document = collection.documents[pending["mensagem_id"]]
+    assert document["remetente_id"] == 7 and document["destinatario_id"] == 21
     assert document["mensagem"] == "Olá! Podemos conversar amanhã?"
     assert session["acao_pendente"] is None
 
@@ -733,7 +733,7 @@ def test_router_consults_conversation_with_specific_person(
             return self
         def __iter__(self):
             return iter([{
-                "id_envia": 21, "id_recebe": 7,
+                "remetente_id": 21, "destinatario_id": 7,
                 "mensagem": "Oi Lucas", "data": datetime(2026, 9, 12, tzinfo=timezone.utc),
             }])
 
@@ -773,8 +773,8 @@ def test_router_consults_conversation_with_specific_person(
     ]
     assert [call[0] for call in model.calls] == expected_model_calls
     assert collection.query == {"$or": [
-        {"id_envia": 7, "id_recebe": 21},
-        {"id_envia": 21, "id_recebe": 7},
+        {"remetente_id": 7, "destinatario_id": 21},
+        {"remetente_id": 21, "destinatario_id": 7},
     ]}
 
 
@@ -851,7 +851,7 @@ def test_router_consults_only_authenticated_users_notifications(
         "guardrail_entrada", "roteador", "consultar_notificacoes", "juiz", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == expected_model_calls
-    assert collection.query == {"id_usuario": 7}
+    assert collection.query == {"usuario_id": 7}
 
 
 def test_simple_notification_request_never_targets_someone_else():
@@ -1116,7 +1116,7 @@ def test_simple_message_previews_immediately_and_accepts_natural_confirmation(
 
     assert sent.status_code == 200
     assert sent.json()["resposta"] == "Mensagem enviada para Rosa Maduda (rosa@empresa.com)."
-    assert collection.documents[pending["id_mensagem"]]["mensagem"] == "Oi"
+    assert collection.documents[pending["mensagem_id"]]["mensagem"] == "Oi"
     assert application.state.chat_service.repository.docs[session_id]["acao_pendente"] is None
 
 
