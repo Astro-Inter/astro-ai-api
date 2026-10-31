@@ -140,7 +140,7 @@ def test_consultar_conformidade_missing_or_ambiguous_person(monkeypatch, rows, s
     monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
     result = sst_tools.consultar_conformidade_usuario.invoke({"pessoa": "Maria"}, config={"configurable": {"usuario_atual": {"uid": "manager", "role": "GESTOR"}}})
     assert result["status"] == status and "nrs" not in result
-    assert connection.db_cursor.parameters[0] == "Maria"
+    assert connection.db_cursor.parameters[0] == ("%Maria%" if not rows else "Maria")
     assert "LIMIT 2" in connection.db_cursor.query
 
 
@@ -593,3 +593,46 @@ def test_consultar_situacao_nrs_does_not_apply_to_admin(monkeypatch):
         }},
     )
     assert result["status"] == "nao_aplicavel"
+
+
+@pytest.mark.parametrize("partial,status", [([], "sem_dados"),
+    ([("a", "Maria Silva", "a@example.com"), ("b", "Maria Souza", "b@example.com")], "esclarecer"),
+    ([("a", "Maria Silva", "a@example.com")], "ok")])
+def test_partial_person_name_reuses_scope_and_handles_ambiguity(monkeypatch, partial, status):
+    class Cursor(FakePostgresCursor):
+        def __init__(self):
+            super().__init__([])
+            self.calls = []
+        def execute(self, query, parameters):
+            super().execute(query, parameters)
+            self.calls.append((query, parameters))
+        def fetchall(self):
+            return [] if len(self.calls) == 1 else partial
+    resolver = FakePostgresConnection([])
+    resolver.db_cursor = cursor = Cursor()
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: resolver)
+    def details(condition, params):
+        assert params[0] == "a"
+        assert "usuario.unidade_id =" in condition
+        return {"status": "ok", "nrs": []}
+    monkeypatch.setattr(sst_tools, "_consultar_situacao_nrs_filtrada", details)
+    result = sst_tools.consultar_conformidade_usuario.invoke({"pessoa": "Maria"}, config={"configurable": {
+        "usuario_atual": {"uid": "manager", "role": "GESTOR"}}})
+    assert result["status"] == status
+    assert len(cursor.calls) == 2
+    for query, params in cursor.calls:
+        assert "usuario.tipo = ANY(%s)" in query
+        assert "usuario.unidade_id =" in query
+        assert "manager" in params
+    assert cursor.calls[1][1][0] == "%Maria%"
+
+
+def test_partial_name_wildcards_are_literal(monkeypatch):
+    connection = FakePostgresConnection([])
+    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: connection)
+    result = sst_tools.consultar_conformidade_usuario.invoke({"pessoa": "Ma%_"}, config={"configurable": {
+        "usuario_atual": {"uid": "manager", "role": "GESTOR"}}})
+    assert result["status"] == "sem_dados"
+    assert connection.db_cursor.parameters[0] == "%Ma\\%\\_%"

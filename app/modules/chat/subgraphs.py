@@ -12,6 +12,7 @@ from app.modules.chat.prompts.faq import FAQ_PROMPT_COMPLETO
 from app.modules.chat.prompts.rh import RH_DECISAO_PROMPT_COMPLETO
 from app.modules.chat.prompts.sst import SST_DECISAO_PROMPT_COMPLETO
 from app.modules.chat.state import ChatState
+from app.modules.chat.presentation import presentation_evidence
 from app.modules.agenda.tools import (
     AgendaToolDecision, ConsultarEventosArgs, ConsultarTreinamentosArgs, TOOLS_AGENDA,
 )
@@ -783,6 +784,9 @@ def build_rh_graph(model: AgentModel):
                               if tool_name == "buscar_outros_usuarios" and "retornada" in result else result),
             },
         }
+        presentation = presentation_evidence(tool_name, result) if not field else None
+        if presentation:
+            specialist_result["apresentacao"] = presentation
         return {
             "resultado_tool": result,
             "resultado": specialist_result,
@@ -941,6 +945,9 @@ def build_sst_graph(model: AgentModel):
                 else _evidencia_compacta_nrs(result)
             )},
         }
+        presentation = presentation_evidence(tool_name, result)
+        if presentation:
+            specialist_result["apresentacao"] = presentation
         return {
             "resultado_tool": result,
             "resultado": specialist_result,

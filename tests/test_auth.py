@@ -240,3 +240,13 @@ def test_database_role_is_required(client, monkeypatch, lookup, status_code, det
     result = client.get("/protected-for-tests", headers={"Authorization": f"Bearer {TOKEN}"})
     assert result.status_code == status_code
     assert result.json() == {"detail": detail}
+
+
+def test_version_uses_built_revision_without_render(client, monkeypatch):
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.setenv("APP_COMMIT_SHA", "b" * 40)
+    assert client.get("/version").json() == {"commit": "b" * 40}
+    monkeypatch.setenv("APP_COMMIT_SHA", "invalid\nsecret")
+    assert client.get("/version").json() == {"commit": "unknown"}
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    assert client.get("/version").json() == {"commit": "a" * 40}

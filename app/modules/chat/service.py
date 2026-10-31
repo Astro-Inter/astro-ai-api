@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -37,6 +38,8 @@ from app.modules.memory.service import ConversationMemory
 from app.modules.shared.tools import PDF_LINK_TTL_HOURS
 from app.observability.chat import ChatObservation, observe_chat
 
+
+logger = logging.getLogger(__name__)
 
 CHAT_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 MAX_MESSAGES = 200
@@ -326,11 +329,16 @@ class ChatService:
                             f"{validity.capitalize()}."
                         )
                     stored_answer += "\n\nPDF gerado e link temporário entregue."
+                # The graph has already released this authorized deterministic result.
+                # Transport conversion must not change eligibility for visual blocks.
+                structured_ready = (result.get("guardar_turno")
+                    and result.get("resposta") == result.get("candidato")
+                    and result.get("avaliacao_juiz", {}).get("status") == "aprovado")
                 blocks = []
                 chart_data = result.get("resultado_tool", {})
-                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                if (structured_ready
                         and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") in {"consultar_grafico_treinamentos", "consultar_evolucao_treinamentos"}
-                        and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):
+                        and chart_data.get("status") == "ok"):
                     counts = chart_data["categorias"]
                     kind = chart_data.get("tipo_grafico", "grafico_barras")
                     graph_class = {"grafico_barras": BlocoGrafico, "grafico_setores": BlocoGraficoSetores, "grafico_linhas": BlocoGraficoLinhas}.get(kind)
@@ -342,10 +350,10 @@ class ChatService:
                               graph_class(titulo=title, fonte=chart_data["fonte"],
                                            dados=[PontoGrafico(categoria=k, valor=v) for k, v in counts.items()]),
                               BlocoTexto(conteudo=public_answer)]
-                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                if (structured_ready
                         and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "buscar_outros_usuarios"
                         and chart_data.get("status") == "ok" and chart_data.get("consulta") == "listar"
-                        and chart_data.get("usuarios") and public_answer == result.get("candidato")):
+                        and chart_data.get("usuarios")):
                     columns = [("foto", "Foto"), ("nome", "Nome"), ("email", "E-mail"), ("cargo", "Cargo"),
                                ("unidade", "Unidade"), ("tipo", "Perfil"), ("status", "Situação")]
                     rows = []
@@ -359,9 +367,9 @@ class ChatService:
                                           **{key: chart_data.get(key) for key in ("solicitada", "retornada", "limitado", "tem_mais", "motivo_limite")}, colunas=[ColunaTabela(chave=key, titulo=label) for key, label in columns],
                                           linhas=rows, pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]),
                               BlocoTexto(conteudo=public_answer)]
-                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                if (structured_ready
                         and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "buscar_meus_dados"
-                        and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):
+                        and chart_data.get("status") == "ok"):
                     from app.modules.chat.subgraphs import _campo_dado_proprio
                     if _campo_dado_proprio(request.message) is None:
                         data = chart_data.get("dados", {})
@@ -370,9 +378,9 @@ class ChatService:
                                       nome=data.get("nome"), email=data.get("email"), perfil=data.get("tipo"),
                                       cargo=data.get("cargo"), unidade=data.get("unidade"), modalidade=data.get("modalidade"),
                                       foto=CelulaImagem(descricao="Foto do usuário autenticado"))]
-                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                if (structured_ready
                         and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_conformidade_usuario"
-                        and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):
+                        and chart_data.get("status") == "ok"):
                     nrs = chart_data.get("nrs", [])
                     total = len(nrs)
                     valid = sum(nr.get("situacao") == "VIGENTE" for nr in nrs)
@@ -383,21 +391,36 @@ class ChatService:
                         conformidade=ConformidadeFicha(percentual=round(100 * valid / total, 2) if total else None,
                                                        vigentes=valid, total=total, data_referencia=chart_data.get("data_referencia"))),
                               BlocoTexto(conteudo=public_answer)]
-                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                if (structured_ready
                         and result.get("rota") == "consulta_operacional" and chart_data.get("status") == "ok"
-                        and chart_data.get("linhas") and public_answer == result.get("candidato")):
-                    blocks = [BlocoTexto(conteudo=chart_data["titulo"]),
-                              BlocoTabela(titulo=chart_data["titulo"], colunas=chart_data["colunas"],
-                                          linhas=chart_data["linhas"], pagina=chart_data["pagina"],
-                                          total_paginas=chart_data["total_paginas"], total=chart_data["total"])]
+                        and chart_data.get("linhas")):
+                    compact_expiry = result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_grafico_vencimentos"
+                    blocks = [] if compact_expiry else [BlocoTexto(conteudo=chart_data["titulo"])]
+                    blocks.append(BlocoTabela(
+                        titulo="Detalhamento por faixa de prazo" if compact_expiry else chart_data["titulo"],
+                        colunas=chart_data["colunas"], linhas=chart_data["linhas"],
+                        pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]))
                     if chart_data.get("grafico"):
                         chart_class = BlocoGraficoSetores if chart_data.get("tipo_grafico") == "grafico_setores" else BlocoGrafico
                         blocks.append(chart_class(titulo=chart_data["titulo"], dados=chart_data["grafico"],
                                                   unidade=chart_data.get("unidade_grafico", "pessoas"), fonte=chart_data["fonte"]))
                     summary = f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} registro(s)."
+                    if compact_expiry:
+                        summary = (f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. "
+                                   f"{chart_data['total']} faixas. Fonte: {chart_data['fonte']}. "
+                                   f"Unidade: {chart_data.get('unidade_grafico', 'registros')}.")
+                        dates = {row["data_referencia"] for row in chart_data["linhas"] if row.get("data_referencia")}
+                        if len(dates) == 1:
+                            summary += f" Referência: {next(iter(dates))}."
+                        elif dates:
+                            summary += " Referências disponíveis na tabela."
                     if chart_data.get("aviso"):
                         summary += " " + chart_data["aviso"]
                     blocks.append(BlocoTexto(conteudo=summary))
+                logger.info("chat_blocks_ready tool=%s judge=%s types=%s",
+                            result.get("resultado", {}).get("evidencia_tool", {}).get("nome", "none"),
+                            result.get("avaliacao_juiz", {}).get("status", "none"),
+                            ",".join(block.tipo for block in blocks) or "texto")
                 response = ChatResponse(session_id=session_id,
                                         agentes_chamados=result["agentes_chamados"],
                                         blocos=blocks or [BlocoTexto(conteudo=public_answer[i:i + 6000])

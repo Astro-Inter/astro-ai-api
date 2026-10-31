@@ -27,6 +27,7 @@ from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch,
 from app.modules.chat.state import ChatState
 from app.modules.operational.tools import REGISTRY as OPERATIONAL_TOOLS, DOMAINS, OperationalDecision, is_operational_request
 from app.modules.operational.prompt import OPERATIONAL_PROMPT
+from app.modules.chat.presentation import presentation_evidence
 from app.modules.chat.subgraphs import (
     _filtros_treinamentos,
     pedido_grafico_treinamentos,
@@ -818,7 +819,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         else:
             candidate = result.get("mensagem", "Nenhum registro nesta página; isso não comprova ausência em outras páginas.")
         return {"resultado_tool":result, "candidato":candidate,"resposta_deterministica":True,
-                "resultado":{"dominio":DOMAINS[name],"intencao":"consultar","status":result.get("status"),
+                "resultado":{"dominio":DOMAINS[name],"intencao":"consultar",
+                             "status":"concluido" if result.get("status") == "ok" else result.get("status"),
+                             "apresentacao":presentation_evidence(name, result),
                              "evidencia_tool":{"nome":name,"resultado":result}},
                 "agentes_chamados":state["agentes_chamados"] + [DOMAINS[name],name]}
 

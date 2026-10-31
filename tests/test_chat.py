@@ -2505,7 +2505,8 @@ def test_old_message_draft_is_invalidated_without_sending(chat_client):
 
 @pytest.mark.parametrize("chart_kind", ["grafico_barras", "grafico_setores"])
 @pytest.mark.parametrize("tool_name,unit", [("consultar_indicadores_equipe","pessoas"),("consultar_grafico_pendencias_nr","pendências"),("consultar_grafico_vencimentos","registros")])
-def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, monkeypatch, chart_kind, tool_name, unit):
+@pytest.mark.parametrize("markdown", [True, False])
+def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, monkeypatch, chart_kind, tool_name, unit, markdown):
     from langchain_core.tools import tool
     from app.modules.operational.tools import REGISTRY, TeamArgs
     from app.infrastructure.astro_queries import request_token
@@ -2513,15 +2514,22 @@ def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, mo
     async def fake_indicators(config=None, **kwargs) -> dict:
         """Indicadores simulados do escopo autorizado."""
         assert request_token.get() == "test-private-token"
-        return {"status":"ok","titulo":"Equipe por cargo","colunas":[{"chave":"categoria","titulo":"Cargo"},{"chave":"quantidade","titulo":"Quantidade"}],"linhas":[{"categoria":"Técnica","quantidade":7}],"total":1,"pagina":1,"total_paginas":1,"completo":True,"fonte":"Cadastro autorizado","tipo_grafico":chart_kind,"unidade_grafico":unit,"grafico":[{"categoria":"Técnica","valor":7}]}
+        return {"status":"ok","titulo":"**Equipe por cargo**","colunas":[{"chave":"categoria","titulo":"Cargo"},{"chave":"quantidade","titulo":"Quantidade"}],"linhas":[{"categoria":"Técnica","quantidade":7}],"total":1,"pagina":1,"total_paginas":1,"completo":True,"fonte":"Cadastro autorizado","tipo_grafico":chart_kind,"unidade_grafico":unit,"grafico":[{"categoria":"Técnica","valor":7}]}
     monkeypatch.setitem(REGISTRY,tool_name,fake_indicators)
     client, model, application = chat_client
     model.replies["roteador"] = json.dumps({"acao":tool_name,"filtros":{"agrupar_por":"cargo","tipo_grafico":chart_kind}})
-    response = client.post("/chat/messages",json={"message":"Mostre a distribuição dos funcionários por cargo"},headers={"Authorization":"Bearer test-private-token"})
+    response = client.post(f"/chat/messages?markdown={str(markdown).lower()}",json={"message":"Mostre a distribuição dos funcionários por cargo"},headers={"Authorization":"Bearer test-private-token"})
     assert response.status_code == 200
     body = response.json()
-    assert [b["tipo"] for b in body["blocos"]] == ["texto","tabela",chart_kind,"texto"]
-    assert body["blocos"][2]["unidade"] == unit
+    expected = ["tabela", chart_kind, "texto"] if tool_name == "consultar_grafico_vencimentos" else ["texto", "tabela", chart_kind, "texto"]
+    assert [b["tipo"] for b in body["blocos"]] == expected
+    graph = next(b for b in body["blocos"] if b["tipo"] == chart_kind)
+    assert graph["unidade"] == unit
+    judge = next(call for call in model.calls if call[0] == "juiz")
+    review = json.loads(judge[1][-1].content.split("\n", 1)[1])["resultado"]
+    assert review["apresentacao"]["blocos"] == ["tabela", chart_kind]
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"] == body["blocos"]
     assert "juiz" in body["agentes_chamados"] and "guardrail_saida" in body["agentes_chamados"]
     assert next(call for call in model.calls if call[0] == "roteador")[2] is True
     assert "test-private-token" not in str(model.calls)
@@ -2613,6 +2621,9 @@ def test_user_table_v2_returns_requested_set_and_history(chat_client, monkeypatc
     assert "próxima página" not in texto_resposta(body)
     judge = next(call for call in model.calls if call[0] == "juiz")
     assert '"usuarios"' not in str(judge[1])
+    review = json.loads(judge[1][-1].content.split("\n", 1)[1])["resultado"]
+    assert review["apresentacao"]["linhas_validadas"] == 100
+    assert review["apresentacao"]["blocos"] == ["tabela"]
     stored = app.state.chat_service.repository.docs[body["session_id"]]["mensagens"][-1]
     assert next(b for b in stored["blocos"] if b["tipo"] == "tabela")["versao"] == 2
 
@@ -2646,3 +2657,38 @@ def test_own_card_blank_fields_are_optional():
     card = BlocoFichaUsuario(nome=" ", modalidade="", foto=CelulaImagem(descricao="Foto"))
     assert card.nome is None and card.modalidade is None
     assert card.conformidade is None
+
+
+@pytest.mark.parametrize("has_graph", [True, False])
+def test_expiry_blocks_do_not_repeat_title_and_keep_context(chat_client, monkeypatch, has_graph):
+    from app.modules.operational.tools import REGISTRY
+    title = "Validades por faixa: registros de conformidade, não pessoas únicas"
+    warning = "Pessoas únicas por faixa não devem ser somadas."
+    class Tool:
+        async def ainvoke(self, args, config):
+            result = {"status": "ok", "titulo": title, "colunas": [
+                {"chave": "categoria", "titulo": "Faixa"},
+                {"chave": "quantidade", "titulo": "Registros"},
+                {"chave": "data_referencia", "titulo": "Referência"}],
+                "linhas": [{"categoria": "Vencidas", "quantidade": 7, "data_referencia": "2026-10-31"}],
+                "total": 1, "pagina": 1, "total_paginas": 1,
+                "fonte": "Cadastro autorizado", "unidade_grafico": "registros", "aviso": warning}
+            if has_graph:
+                result.update(grafico=[{"categoria": "Vencidas", "valor": 7}], tipo_grafico="grafico_barras")
+            return result
+    monkeypatch.setitem(REGISTRY, "consultar_grafico_vencimentos", Tool())
+    client, model, app = chat_client
+    model.replies["roteador"] = json.dumps({"acao": "consultar_grafico_vencimentos", "filtros": {}})
+    body = client.post("/chat/messages?markdown=false", json={"message": "Mostre vencimentos por faixa em barras"}).json()
+    assert [b["tipo"] for b in body["blocos"]] == (["tabela", "grafico_barras", "texto"] if has_graph else ["tabela", "texto"])
+    table = body["blocos"][0]
+    assert table["titulo"] == "Detalhamento por faixa de prazo"
+    assert table["linhas"][0]["quantidade"] == 7
+    footer = body["blocos"][-1]["conteudo"]
+    assert title not in footer and warning in footer
+    assert "Cadastro autorizado" in footer and "registros" in footer and "2026-10-31" in footer
+    if has_graph:
+        assert body["blocos"][1]["titulo"] == title
+        assert body["blocos"][1]["dados"][0]["valor"] == 7
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"] == body["blocos"]

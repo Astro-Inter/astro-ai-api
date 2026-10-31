@@ -16,6 +16,10 @@ RUN python -m pip install --upgrade pip \
 
 FROM python:3.12-slim AS runtime
 
+ARG APP_COMMIT_SHA=unknown
+ENV APP_COMMIT_SHA=${APP_COMMIT_SHA}
+LABEL org.opencontainers.image.revision=${APP_COMMIT_SHA}
+
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

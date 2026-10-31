@@ -292,3 +292,30 @@ Web/mobile: aceitar nome nulo, renderizar modalidade quando disponível, ignorar
 `origem` na UI e omitir campos nulos. Manter iniciais/fallback de erro para fotos,
 URLs temporárias sem cache durável e a ordem dos blocos. Os parsers atuais que
 exigem nome precisam ser atualizados antes da publicação deste contrato estendido.
+
+
+## Revisão e diagnóstico dos blocos
+
+O Juiz recebe o plano de apresentação gerado pela aplicação junto da evidência, para avaliar o resumo e os blocos que serão anexados. A aprovação continua necessária; conversão para texto simples não remove tabelas ou gráficos aprovados. Veja [diagnóstico dos testes mobile](diagnostico-mobile-pr30.md) para causas confirmadas, fotos e publicação da revisão.
+
+
+## Vencimentos: apresentação concisa
+
+Nas novas respostas aprovadas de `consultar_grafico_vencimentos`, a ordem é
+`tabela`, gráfico (quando disponível) e `texto` com contexto. Não há bloco de
+introdução repetindo o título. A tabela usa “Detalhamento por faixa de prazo”;
+o gráfico conserva o título da consulta. O rodapé informa fonte, unidade,
+referência disponível, paginação/quantidade de faixas e os avisos interpretativos.
+As colunas, valores e categorias permanecem iguais, inclusive pessoas únicas por
+faixa e data de referência. Não some pessoas únicas entre faixas.
+
+Se o conjunto estiver parcial ou não permitir gráfico, a resposta contém tabela e
+rodapé, com fonte e aviso mesmo sem gráfico. Nenhuma data é inventada quando não
+houver referência. A ordem dos blocos recebidos deve ser respeitada pelo cliente;
+a presença de um texto introdutório não é requisito do contrato. O histórico de
+novas respostas mantém exatamente esses blocos. Mensagens antigas não são reescritas.
+
+Rolagem com teclado, rótulos amigáveis de perfis, espaçamento da ficha e escala
+visual dos gráficos são responsabilidades de apresentação nos clientes. A API
+preserva códigos como `GESTOR_WORKSPACE`, valores e regras de acesso; não altera
+dados para compensar esses problemas visuais.
