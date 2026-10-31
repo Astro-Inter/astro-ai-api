@@ -118,11 +118,11 @@ def get_messages_collection():
             app_config.MONGODB_DATABASE
         ][COLLECTION_MESSAGES]
         _messages_collection.create_index(
-            [("id_envia", 1), ("id_recebe", 1), ("data", -1)],
+            [("remetente_id", 1), ("destinatario_id", 1), ("data", -1)],
             name="mensagens_participantes_data",
         )
         _messages_collection.create_index(
-            [("id_recebe", 1), ("id_envia", 1), ("data", -1)],
+            [("destinatario_id", 1), ("remetente_id", 1), ("data", -1)],
             name="mensagens_participantes_inverso_data",
         )
     return _messages_collection
@@ -179,8 +179,8 @@ def _resolver_destinatarios(firebase_uid: str, destinatario: str):
                AND usuario.status = 'ATIVO'
              LIMIT 1
         )
-        SELECT remetente.id_usuario AS id_envia,
-               destinatario.id_usuario AS id_recebe,
+        SELECT remetente.id_usuario AS remetente_id,
+               destinatario.id_usuario AS destinatario_id,
                destinatario.nome,
                destinatario.email
           FROM remetente
@@ -213,15 +213,15 @@ def _resolver_id_usuario(firebase_uid: str) -> int | None:
 
 
 def _rascunho_pendente(
-    *, session_id: str, id_envia: int, id_recebe: int,
+    *, session_id: str, remetente_id: int, destinatario_id: int,
     nome: str, email: str, mensagem: str,
 ) -> dict:
     return {
         "tipo": "enviar_mensagem",
-        "id_mensagem": str(uuid4()),
-        "session_id": session_id,
-        "id_envia": id_envia,
-        "id_recebe": id_recebe,
+        "mensagem_id": str(uuid4()),
+        "sessao_id": session_id,
+        "remetente_id": remetente_id,
+        "destinatario_id": destinatario_id,
         "destinatario_nome": nome,
         "destinatario_email": email,
         "mensagem": mensagem,
@@ -230,16 +230,16 @@ def _rascunho_pendente(
 
 def _confirmacao_valida(
     configurable: dict, pending: dict, *, session_id: str,
-    id_envia: int, id_recebe: int, mensagem: str,
+    remetente_id: int, destinatario_id: int, mensagem: str,
 ) -> bool:
     return (
         configurable.get("confirmacao_explicita") is True
         and pending.get("tipo") == "enviar_mensagem"
-        and pending.get("session_id") == session_id
-        and pending.get("id_envia") == id_envia
-        and pending.get("id_recebe") == id_recebe
+        and pending.get("sessao_id") == session_id
+        and pending.get("remetente_id") == remetente_id
+        and pending.get("destinatario_id") == destinatario_id
         and pending.get("mensagem") == mensagem
-        and isinstance(pending.get("id_mensagem"), str)
+        and isinstance(pending.get("mensagem_id"), str)
     )
 
 
@@ -287,7 +287,7 @@ def enviar_mensagem(
             ],
         }
 
-    id_envia, id_recebe, recipient_name, recipient_email = matches[0]
+    remetente_id, destinatario_id, recipient_name, recipient_email = matches[0]
     configurable = (config or {}).get("configurable", {})
     session_id = configurable.get("session_id")
     if not isinstance(session_id, str) or not session_id:
@@ -296,8 +296,8 @@ def enviar_mensagem(
     if not confirmar_envio:
         pending = _rascunho_pendente(
             session_id=session_id,
-            id_envia=id_envia,
-            id_recebe=id_recebe,
+            remetente_id=remetente_id,
+            destinatario_id=destinatario_id,
             nome=recipient_name,
             email=recipient_email,
             mensagem=mensagem,
@@ -317,8 +317,8 @@ def enviar_mensagem(
         configurable,
         pending,
         session_id=session_id,
-        id_envia=id_envia,
-        id_recebe=id_recebe,
+        remetente_id=remetente_id,
+        destinatario_id=destinatario_id,
         mensagem=mensagem,
     ):
         return {
@@ -330,9 +330,9 @@ def enviar_mensagem(
 
     sent_at = datetime.now(timezone.utc)
     document = {
-        "_id": pending["id_mensagem"],
-        "id_envia": id_envia,
-        "id_recebe": id_recebe,
+        "_id": pending["mensagem_id"],
+        "remetente_id": remetente_id,
+        "destinatario_id": destinatario_id,
         "mensagem": mensagem,
         "data": sent_at,
     }
@@ -343,9 +343,9 @@ def enviar_mensagem(
     except DuplicateKeyError:
         try:
             existing = collection.find_one({
-                "_id": pending["id_mensagem"],
-                "id_envia": id_envia,
-                "id_recebe": id_recebe,
+                "_id": pending["mensagem_id"],
+                "remetente_id": remetente_id,
+                "destinatario_id": destinatario_id,
                 "mensagem": mensagem,
             })
         except PyMongoError:
@@ -359,7 +359,7 @@ def enviar_mensagem(
 
     return {
         "status": "ok",
-        "id_mensagem": pending["id_mensagem"],
+        "mensagem_id": pending["mensagem_id"],
         "destinatario": {"nome": recipient_name, "email": recipient_email},
         "mensagem": mensagem,
         "data": sent_at.isoformat(),
@@ -410,8 +410,8 @@ def consultar_conversas(
 
     my_id, other_id, name, email = matches[0]
     filter_messages = {"$or": [
-        {"id_envia": my_id, "id_recebe": other_id},
-        {"id_envia": other_id, "id_recebe": my_id},
+        {"remetente_id": my_id, "destinatario_id": other_id},
+        {"remetente_id": other_id, "destinatario_id": my_id},
     ]}
     try:
         collection = get_messages_collection()
@@ -419,7 +419,7 @@ def consultar_conversas(
         documents = list(
             collection.find(
                 filter_messages,
-                {"_id": 0, "id_envia": 1, "id_recebe": 1, "mensagem": 1, "data": 1},
+                {"_id": 0, "remetente_id": 1, "destinatario_id": 1, "mensagem": 1, "data": 1},
             ).sort([("data", -1), ("_id", -1)]).skip((pagina - 1) * limite).limit(limite)
         ) if total else []
     except PyMongoError:
@@ -435,7 +435,7 @@ def consultar_conversas(
             # O PyMongo devolve UTC sem tzinfo por padrão.
             sent_at = sent_at.replace(tzinfo=timezone.utc)
         messages.append({
-            "direcao": "enviada" if document["id_envia"] == my_id else "recebida",
+            "direcao": "enviada" if document["remetente_id"] == my_id else "recebida",
             "mensagem": content[:500],
             "trecho": len(content) > 500,
             "data": sent_at.isoformat(),
@@ -460,7 +460,7 @@ def consultar_notificacoes(
 ) -> dict:
     """Lista as notificações mais recentes do usuário autenticado.
 
-    A collection usa `id_usuario` do PostgreSQL. Não existe filtro de lida ou
+    A collection usa `usuario_id` do PostgreSQL. Não existe filtro de lida ou
     vencimento no esquema atual; a consulta somente ordena por criação.
     """
     user = _usuario_do_contexto(config)
@@ -481,7 +481,7 @@ def consultar_notificacoes(
             "mensagem": "Seu perfil de usuario nao foi encontrado para consultar notificacoes.",
         }
 
-    notification_filter = {"id_usuario": user_id}
+    notification_filter = {"usuario_id": user_id}
     try:
         collection = get_notifications_collection()
         total = collection.count_documents(notification_filter)

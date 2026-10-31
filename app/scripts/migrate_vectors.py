@@ -44,12 +44,12 @@ async def collect_sources(client, sessions, faq_source="faq_chunks"):
         records["faq"].append((point.id, text, {**payload, "modelo_embedding": EMBEDDING_MODEL}))
     # MongoDB é a fonte canônica: inclui resumos ainda não presentes no índice legado.
     async for doc in sessions.find({"resumo": {"$type": "string", "$ne": ""}},
-                                   {"_id": 1, "id_user": 1, "resumo": 1, "iniciada_em": 1}):
+                                   {"_id": 1, "usuario_id": 1, "resumo": 1, "iniciada_em": 1}):
         try:
             sid = str(UUID(str(doc["_id"])))
-            if not isinstance(doc["id_user"], str) or not doc["id_user"] or not doc["resumo"].strip():
+            if not isinstance(doc["usuario_id"], str) or not doc["usuario_id"] or not doc["resumo"].strip():
                 raise ValueError()
-            payload = {"id_user": doc["id_user"], "session_id": sid, "resumo": doc["resumo"],
+            payload = {"id_user": doc["usuario_id"], "session_id": sid, "resumo": doc["resumo"],
                        "iniciada_em": doc["iniciada_em"].isoformat(), "modelo_embedding": EMBEDDING_MODEL}
             records["memory"].append((sid, doc["resumo"], payload))
         except (KeyError, TypeError, ValueError, AttributeError):

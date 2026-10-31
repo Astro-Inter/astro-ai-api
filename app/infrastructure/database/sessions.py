@@ -11,6 +11,41 @@ from app.modules.chat.errors import ChatError
 
 
 COLLECTION_SESSIONS = "sessoes"
+
+def stored_message(message):
+    names = {"role": "papel", "content": "conteudo"}
+    return {names.get(key, key): value for key, value in message.items()}
+
+
+def stored_pending(value):
+    if not isinstance(value, dict):
+        return value
+    names = {"session_id": "sessao_id", "id_evento": "evento_id", "id_mensagem": "mensagem_id",
+             "id_envia": "remetente_id", "id_recebe": "destinatario_id"}
+    return {names.get(key, key): item for key, item in value.items()}
+
+
+def runtime_message(value):
+    if not isinstance(value, dict):
+        return value
+    names = {"papel": "role", "conteudo": "content"}
+    return {names.get(key, key): item for key, item in value.items()}
+
+
+def runtime_document(value):
+    if not isinstance(value, dict):
+        return value
+    result = dict(value)
+    if "usuario_id" in result:
+        result["id_user"] = result.pop("usuario_id")
+    if isinstance(result.get("mensagens"), list):
+        result["mensagens"] = [runtime_message(message) for message in result["mensagens"]]
+    for field in ("primeira_pergunta", "ultima_mensagem"):
+        if field in result:
+            result[field] = runtime_message(result[field])
+    return result
+
+
 LEASE_SECONDS = 180  # Maior que o timeout total de uma requisição (120s).
 
 
@@ -52,11 +87,11 @@ class MongoSessions:
                     )
                     self.collection = self.client[config.MONGODB_DATABASE][COLLECTION_SESSIONS]
                 await self.collection.create_index(
-                    [("id_user", 1), ("status", 1), ("atualizada_em", -1)],
+                    [("usuario_id", 1), ("status", 1), ("atualizada_em", -1)],
                     name="historico_usuario",
                 )
                 await self.collection.create_index(
-                    [("id_user", 1), ("atualizada_em", -1), ("_id", -1)],
+                    [("usuario_id", 1), ("atualizada_em", -1), ("_id", -1)],
                     name="sessoes_usuario_atualizacao",
                 )
                 await self.collection.create_index(
@@ -76,7 +111,7 @@ class MongoSessions:
         now = utc_now()
         try:
             # Filtrar também pelo dono impede reutilizar IDs de outro usuário.
-            await collection.update_one({"_id": session_id, "id_user": uid}, {"$setOnInsert": {
+            await collection.update_one({"_id": session_id, "usuario_id": uid}, {"$setOnInsert": {
                 "iniciada_em": now, "atualizada_em": now, "ultima_mensagem_em": now, "resumo": "",
                 "mensagens": [], "status": "ativa", "resumo_indexado": False,
                 "acao_pendente": None,
@@ -89,15 +124,15 @@ class MongoSessions:
     @mongo_errors
     async def get(self, session_id: str, uid: str):
         collection = await self.connect()
-        doc = await collection.find_one({"_id": session_id, "id_user": uid})
+        doc = await collection.find_one({"_id": session_id, "usuario_id": uid})
         if doc is None:
             raise ChatError(404, "Conversa nao encontrada.")
-        return doc
+        return runtime_document(doc)
 
     @mongo_errors
     async def list_sessions(self, uid: str, limit: int, before: tuple[datetime, str] | None = None):
         collection = await self.connect()
-        query = {"id_user": uid}
+        query = {"usuario_id": uid}
         if before is not None:
             updated_at, session_id = before
             query["$or"] = [
@@ -107,8 +142,8 @@ class MongoSessions:
         valid_messages = {"$filter": {
             "input": {"$ifNull": ["$mensagens", []]}, "as": "message",
             "cond": {"$and": [
-                {"$in": ["$$message.role", ["human", "assistant"]]},
-                {"$eq": [{"$type": "$$message.content"}, "string"]},
+                {"$in": ["$$message.papel", ["human", "assistant"]]},
+                {"$eq": [{"$type": "$$message.conteudo"}, "string"]},
             ]},
         }}
         # O índice atende filtro/ordem; a projeção evita carregar o histórico inteiro.
@@ -122,46 +157,49 @@ class MongoSessions:
                 "primeira_pergunta": {"$arrayElemAt": [{"$filter": {
                     "input": {"$ifNull": ["$mensagens", []]}, "as": "message",
                     "cond": {"$and": [
-                        {"$eq": ["$$message.role", "human"]},
-                        {"$eq": [{"$type": "$$message.content"}, "string"]},
+                        {"$eq": ["$$message.papel", "human"]},
+                        {"$eq": [{"$type": "$$message.conteudo"}, "string"]},
                     ]},
                 }}, 0]},
                 "ultima_mensagem": {"$arrayElemAt": [valid_messages, -1]},
             }},
         ])
-        return [doc async for doc in cursor]
+        return [runtime_document(doc) async for doc in cursor]
 
     @mongo_errors
     async def acquire(self, session_id: str, uid: str):
         collection = await self.connect()
         now, token = utc_now(), str(uuid4())
         doc = await collection.find_one_and_update({
-            "_id": session_id, "id_user": uid,
-            "$or": [{"lock_ate": {"$exists": False}}, {"lock_ate": {"$lte": now}}],
-        }, {"$set": {"lock_token": token, "lock_ate": now + timedelta(seconds=LEASE_SECONDS)}},
+            "_id": session_id, "usuario_id": uid,
+            "$or": [{"reserva_ate": {"$exists": False}}, {"reserva_ate": {"$lte": now}}],
+        }, {"$set": {"reserva_token": token, "reserva_ate": now + timedelta(seconds=LEASE_SECONDS)}},
             return_document=ReturnDocument.AFTER)
         if doc is None:
             await self.get(session_id, uid)
             raise ChatError(409, "Aguarde a operacao anterior desta conversa.")
-        return doc, token
+        return runtime_document(doc), token
 
     @mongo_errors
     async def update(self, session_id: str, uid: str, token: str, fields: dict, messages=None):
         collection = await self.connect()
         now = utc_now()
-        update = {"$set": {**fields, "atualizada_em": now}}
+        stored_fields = dict(fields)
+        if "acao_pendente" in stored_fields:
+            stored_fields["acao_pendente"] = stored_pending(stored_fields["acao_pendente"])
+        update = {"$set": {**stored_fields, "atualizada_em": now}}
         if messages:
             # O par humano/assistente é gravado atomicamente; nunca meio turno.
-            update["$push"] = {"mensagens": {"$each": messages}}
+            update["$push"] = {"mensagens": {"$each": [stored_message(message) for message in messages]}}
             # Só uma nova troca de mensagens reinicia as 24h de inatividade.
             # Um resumo anterior permanece salvo, mas deixa de ser memória atual.
             update["$set"].update({
                 "ultima_mensagem_em": now, "resumo_indexado": False,
-                "resumo_job_proxima_tentativa": datetime.fromtimestamp(0, timezone.utc),
-                "resumo_job_tentativas": 0,
+                "resumo_tarefa_proxima_tentativa": datetime.fromtimestamp(0, timezone.utc),
+                "resumo_tarefa_tentativas": 0,
             })
         result = await collection.update_one({
-            "_id": session_id, "id_user": uid, "lock_token": token, "lock_ate": {"$gt": now},
+            "_id": session_id, "usuario_id": uid, "reserva_token": token, "reserva_ate": {"$gt": now},
         }, update)
         if not result.matched_count:
             raise ChatError(409, "A reserva da conversa expirou. Tente novamente.")
@@ -170,15 +208,15 @@ class MongoSessions:
     async def release(self, session_id: str, uid: str, token: str):
         collection = await self.connect()
         await collection.update_one(
-            {"_id": session_id, "id_user": uid, "lock_token": token},
-            {"$unset": {"lock_token": "", "lock_ate": ""}},
+            {"_id": session_id, "usuario_id": uid, "reserva_token": token},
+            {"$unset": {"reserva_token": "", "reserva_ate": ""}},
         )
 
     @mongo_errors
     async def previous(self, uid: str, exclude: str, ids: list[str] | None = None, *, automatic_unindexed=False):
         collection = await self.connect()
         query = {
-            "id_user": uid, "_id": {"$ne": exclude}, "status": {"$in": ["ativa", "encerrada"]},
+            "usuario_id": uid, "_id": {"$ne": exclude}, "status": {"$in": ["ativa", "encerrada"]},
             "resumo": {"$type": "string", "$ne": ""},
             "$or": [
                 # Compatibilidade com resumos manuais antigos sem versão.
@@ -199,7 +237,7 @@ class MongoSessions:
         cursor = collection.find(query, {
             "resumo": 1, "iniciada_em": 1, "mensagens": {"$slice": -6},
         }).sort("atualizada_em", -1).limit(3)
-        return [doc async for doc in cursor]
+        return [runtime_document(doc) async for doc in cursor]
 
     async def close(self):
         if self.client is not None:

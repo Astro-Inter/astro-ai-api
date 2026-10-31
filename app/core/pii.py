@@ -25,7 +25,7 @@ _SECRET = re.compile(
 )
 _JSON_SECRET = re.compile(r'(?i)("(?:senha|password|api_key|access_token|refresh_token|secret|authorization)"\s*:\s*)"(?:\\.|[^"\\])*"')
 _CREDENTIAL = re.compile(r"\b(?:gsk_[A-Za-z0-9]{12,}|sk-[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b")
-_PRIVATE_IDS = {"uid", "firebase_uid", "id_user", "id_usuario", "session_id", "workspace_id", "id_envia", "id_recebe"}
+_PRIVATE_IDS = {"uid", "firebase_uid", "id_user", "id_usuario", "session_id", "workspace_id", "id_envia", "id_recebe", "usuario_id", "sessao_id", "remetente_id", "destinatario_id", "mensagem_id"}
 _PERSON_FIELDS = {"nome", "nome_completo", "destinatario_nome", "remetente_nome", "nome_usuario"}
 _PERSONAL_KINDS = {"endereco_residencial": "ENDERECO", "endereço_residencial": "ENDERECO",
                    "cpf": "CPF", "cnpj": "CNPJ", "telefone": "TELEFONE", "celular": "TELEFONE",
@@ -60,7 +60,7 @@ class PiiTokenizer:
     def seed(self, value: Any, *, person: bool = False):
         """Nomes só são reconhecidos em registros pessoais, nunca por todo 'nome'."""
         if isinstance(value, dict):
-            person = person or any(str(key).lower() in {"cpf", "email", "firebase_uid", "id_usuario"} for key in value)
+            person = person or any(str(key).lower() in {"cpf", "email", "firebase_uid", "id_usuario", "usuario_id"} for key in value)
             for key, item in value.items():
                 if key in _PERSON_FIELDS and (person or key != "nome") and isinstance(item, str) and 3 <= len(item) <= 200:
                     self._known_names.add(item)

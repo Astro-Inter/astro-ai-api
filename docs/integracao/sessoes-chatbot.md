@@ -521,3 +521,7 @@ Para executar os testes específicos no repositório da API:
 O OpenAPI em `/openapi.json` e a interface `/docs` incluem autenticação Bearer,
 parâmetros, modelos, exemplos e respostas de erro. Renomear e excluir conversas
 não fazem parte desta tarefa.
+
+## Persistência Mongo
+
+Os exemplos acima descrevem o contrato HTTP. No Mongo, o proprietário usa `usuario_id` e as mensagens usam `papel` e `conteudo`; o repositório traduz os nomes ao carregar e gravar. Reservas usam `reserva_token`/`reserva_ate`; tarefas de resumo usam `resumo_tarefa_*`. Consulte [a migração coordenada](../mongo-padronizacao.md) antes de publicar esta versão.

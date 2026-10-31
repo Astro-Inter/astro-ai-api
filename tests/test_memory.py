@@ -95,7 +95,7 @@ def test_qdrant_failure_keeps_summary_for_retry():
         doc = repo.docs[str(first.session_id)]
         assert doc["status"] == "encerrando" and doc["resumo"]
         assert not doc["resumo_indexado"] and len(doc["mensagens"]) == 2
-        assert "lock_token" not in doc
+        assert "reserva_token" not in doc
         count = len(model.calls)
         restarted = ChatService(model, repository=repo, vectors=vectors)
         vectors.failure = False
@@ -434,27 +434,27 @@ def test_mongo_filters_and_atomic_updates():
         repo = MongoSessions()
         collection = SimpleNamespace(
             update_one=AsyncMock(return_value=SimpleNamespace(matched_count=1)),
-            find_one=AsyncMock(return_value={"_id": "session", "id_user": "owner"}),
-            find_one_and_update=AsyncMock(return_value={"_id": "session", "id_user": "owner"}),
+            find_one=AsyncMock(return_value={"_id": "session", "usuario_id": "owner"}),
+            find_one_and_update=AsyncMock(return_value={"_id": "session", "usuario_id": "owner"}),
         )
         repo.collection, repo.ready = collection, True
         await repo.ensure("session", "owner")
         args = collection.update_one.call_args
-        assert args.args[0] == {"_id": "session", "id_user": "owner"}
+        assert args.args[0] == {"_id": "session", "usuario_id": "owner"}
         assert args.kwargs["upsert"]
         assert "$setOnInsert" in args.args[1]
         doc, token = await repo.acquire("session", "owner")
         query = collection.find_one_and_update.call_args.args[0]
-        assert query["id_user"] == "owner" and query["_id"] == "session" and "$or" in query
+        assert query["usuario_id"] == "owner" and query["_id"] == "session" and "$or" in query
         pair = [{"role": "human", "content": "Oi"}, {"role": "assistant", "content": "Olá"}]
         await repo.update("session", "owner", token, {"ultima_rota": "rh"}, messages=pair)
         args = collection.update_one.call_args.args
-        assert args[0]["id_user"] == "owner" and args[0]["lock_token"] == token
-        assert "$gt" in args[0]["lock_ate"]
-        assert args[1]["$push"]["mensagens"]["$each"] == pair
+        assert args[0]["usuario_id"] == "owner" and args[0]["reserva_token"] == token
+        assert "$gt" in args[0]["reserva_ate"]
+        assert args[1]["$push"]["mensagens"]["$each"] == [{"papel": "human", "conteudo": "Oi"}, {"papel": "assistant", "conteudo": "Olá"}]
         await repo.release("session", "owner", token)
         assert collection.update_one.call_args.args[0] == {
-            "_id": "session", "id_user": "owner", "lock_token": token,
+            "_id": "session", "usuario_id": "owner", "reserva_token": token,
         }
         collection.update_one.side_effect = DuplicateKeyError("duplicate")
         collection.find_one.return_value = None
@@ -545,7 +545,7 @@ def test_invalid_summary_never_reaches_qdrant():
         assert error.value.status_code == 502
         doc = repo.docs[str(first.session_id)]
         assert doc["status"] == "encerrando" and not doc["resumo"]
-        assert "lock_token" not in doc and not vectors.calls
+        assert "reserva_token" not in doc and not vectors.calls
     asyncio.run(scenario())
 
 
@@ -592,7 +592,7 @@ def test_mongo_previous_revalidates_tenant_and_closed_status():
         async def __anext__(self):
             raise StopAsyncIteration
     def find(query, projection):
-        assert query["id_user"] == "owner"
+        assert query["usuario_id"] == "owner"
         assert query["status"] == {"$in": ["ativa", "encerrada"]}
         assert "$or" in query
         assert query["_id"] == {"$ne": "current", "$in": ["candidate"]}
@@ -619,3 +619,23 @@ def test_memory_does_not_mix_models_even_with_equal_dimension(monkeypatch):
         assert await store.search("owner", current, "pergunta") == [valid]
         await store.close()
     asyncio.run(scenario())
+
+
+def test_mongo_message_mapping_keeps_blocks_and_runtime_contract():
+    from app.infrastructure.database.sessions import stored_message, runtime_document
+    original = {"role": "assistant", "content": "Resposta", "blocos": [{"tipo": "texto", "conteudo": "Texto"}]}
+    stored = stored_message(original)
+    assert stored == {"papel": "assistant", "conteudo": "Resposta", "blocos": original["blocos"]}
+    loaded = runtime_document({"_id": "session", "usuario_id": "owner", "mensagens": [stored],
+                               "primeira_pergunta": stored, "ultima_mensagem": stored})
+    assert loaded["id_user"] == "owner"
+    assert loaded["mensagens"] == [original]
+    assert loaded["primeira_pergunta"] == original and loaded["ultima_mensagem"] == original
+    assert "usuario_id" not in loaded
+
+
+def test_pending_action_storage_uses_portuguese_references():
+    from app.infrastructure.database.sessions import stored_pending
+    assert stored_pending({"session_id": "s", "id_evento": "e", "tipo": "criar_evento"}) == {
+        "sessao_id": "s", "evento_id": "e", "tipo": "criar_evento"}
+    assert stored_pending(None) is None
