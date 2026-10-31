@@ -565,6 +565,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             if decision.acao in {"consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"}:
                 values = decision.model_dump()
                 normalized = _sem_acentos(state["mensagem"])
+                if re.search(r"\b(rosca|donut)\b", normalized):
+                    values["filtros"]["tipo_grafico"] = "grafico_rosca"
                 previous = state.get("consulta_rh")
                 if (state["contexto"].get("ultima_rota") == "rh" and isinstance(previous, dict)
                         and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", normalized)):
