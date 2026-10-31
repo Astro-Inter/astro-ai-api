@@ -78,7 +78,7 @@ class FakeNotificationsCollection(FakeCollection):
     def _matching(self, query):
         return [
             document for document in self.documents.values()
-            if document.get("id_usuario") == query["id_usuario"]
+            if document.get("usuario_id") == query["usuario_id"]
         ]
 
 
@@ -152,7 +152,7 @@ def test_conversation_reads_both_directions_only_for_authenticated_pair(monkeypa
         ("4", 7, 99, "Outro contato"),
     ]:
         collection.insert_one({
-            "_id": identifier, "id_envia": sender, "id_recebe": recipient,
+            "_id": identifier, "remetente_id": sender, "destinatario_id": recipient,
             "mensagem": body, "data": timestamp,
         })
 
@@ -181,7 +181,7 @@ def test_conversation_is_paginated_and_marks_long_excerpts(monkeypatch):
     )
     for index in range(4):
         collection.insert_one({
-            "_id": str(index), "id_envia": 7, "id_recebe": 21,
+            "_id": str(index), "remetente_id": 7, "destinatario_id": 21,
             "mensagem": "x" * 600 if index == 1 else f"Mensagem {index}",
             "data": datetime(2026, 9, 12, index, tzinfo=timezone.utc),
         })
@@ -230,7 +230,7 @@ def test_conversation_marks_naive_mongo_datetime_as_utc(monkeypatch):
         monkeypatch, [(7, 21, "Rosa Maduda", "rosa@empresa.com")],
     )
     collection.insert_one({
-        "_id": "1", "id_envia": 21, "id_recebe": 7,
+        "_id": "1", "remetente_id": 21, "destinatario_id": 7,
         "mensagem": "Oi", "data": datetime(2026, 9, 12, 12, 0),
     })
 
@@ -266,7 +266,7 @@ def test_notifications_use_authenticated_postgres_id_and_latest_creation_first(m
         ("new", 7, 10, "Segunda notificação"),
     ]:
         collection.insert_one({
-            "_id": identifier, "id_usuario": user_id, "mensagem": text,
+            "_id": identifier, "usuario_id": user_id, "mensagem": text,
             "data_criacao": datetime(2026, 9, 13, hour, tzinfo=timezone.utc),
         })
 
@@ -289,7 +289,7 @@ def test_notifications_are_paginated_and_mark_long_excerpts(monkeypatch):
     monkeypatch.setattr(router_tools, "get_notifications_collection", lambda: collection)
     for index in range(4):
         collection.insert_one({
-            "_id": str(index), "id_usuario": 7,
+            "_id": str(index), "usuario_id": 7,
             "mensagem": "x" * 600 if index == 1 else f"Notificação {index}",
             "data_criacao": datetime(2026, 9, 13, index, tzinfo=timezone.utc),
         })
@@ -329,7 +329,7 @@ def test_notifications_interpret_naive_mongo_timestamp_as_utc(monkeypatch):
     collection = FakeNotificationsCollection()
     monkeypatch.setattr(router_tools, "get_notifications_collection", lambda: collection)
     collection.insert_one({
-        "_id": "one", "id_usuario": 7, "mensagem": "Olá",
+        "_id": "one", "usuario_id": 7, "mensagem": "Olá",
         "data_criacao": datetime(2026, 9, 13, 12),
     })
 

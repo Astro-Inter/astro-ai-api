@@ -127,7 +127,7 @@ def test_read_sources_uses_canonical_summaries_and_reports_missing_text():
     class Sessions:
         def find(self, *args):
             async def rows():
-                yield {"_id": str(uuid4()), "id_user": "owner", "resumo": "Resumo canônico", "iniciada_em": datetime.now(timezone.utc)}
+                yield {"_id": str(uuid4()), "usuario_id": "owner", "resumo": "Resumo canônico", "iniciada_em": datetime.now(timezone.utc)}
                 yield {"_id": "invalid", "resumo": "Resumo sem dono"}
             return rows()
     async def scenario():

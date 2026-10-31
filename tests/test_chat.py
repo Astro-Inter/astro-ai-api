@@ -684,7 +684,7 @@ def test_router_consults_conversation_with_specific_person(
             return self
         def __iter__(self):
             return iter([{
-                "id_envia": 21, "id_recebe": 7,
+                "remetente_id": 21, "destinatario_id": 7,
                 "mensagem": "Oi Lucas", "data": datetime(2026, 9, 12, tzinfo=timezone.utc),
             }])
 
@@ -724,8 +724,8 @@ def test_router_consults_conversation_with_specific_person(
     ]
     assert [call[0] for call in model.calls] == expected_model_calls
     assert collection.query == {"$or": [
-        {"id_envia": 7, "id_recebe": 21},
-        {"id_envia": 21, "id_recebe": 7},
+        {"remetente_id": 7, "destinatario_id": 21},
+        {"remetente_id": 21, "destinatario_id": 7},
     ]}
 
 
@@ -802,7 +802,7 @@ def test_router_consults_only_authenticated_users_notifications(
         "guardrail_entrada", "roteador", "consultar_notificacoes", "juiz", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == expected_model_calls
-    assert collection.query == {"id_usuario": 7}
+    assert collection.query == {"usuario_id": 7}
 
 
 def test_simple_notification_request_never_targets_someone_else():

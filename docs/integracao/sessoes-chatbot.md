@@ -525,3 +525,7 @@ não fazem parte desta tarefa.
 Os blocos de texto, gráficos, tabela e ficha estão documentados em
 [Contrato de blocos](../integracao-graficos-chat.md). Mensagens antigas do histórico
 podem não ter blocos; nesses casos, use `content`.
+
+## Persistência Mongo
+
+Os exemplos acima descrevem o contrato HTTP. No Mongo, o proprietário usa `usuario_id` e as mensagens usam `papel` e `conteudo`; o repositório traduz os nomes ao carregar e gravar. Reservas usam `reserva_token`/`reserva_ate`; tarefas de resumo usam `resumo_tarefa_*`. Consulte [a migração coordenada](../mongo-padronizacao.md) antes de publicar esta versão.
