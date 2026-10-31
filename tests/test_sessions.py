@@ -326,7 +326,7 @@ def test_mongo_listing_uses_owner_keyset_order_and_bounded_projection():
         date, sid = utc_now(), str(uuid4())
         assert await repo.list_sessions("owner", 20, (date, sid)) == []
         pipeline = collection.aggregate.call_args.args[0]
-        assert pipeline[0] == {"$match": {"id_user": "owner", "$or": [
+        assert pipeline[0] == {"$match": {"usuario_id": "owner", "$or": [
             {"atualizada_em": {"$lt": date}}, {"atualizada_em": date, "_id": {"$lt": sid}},
         ]}}
         assert pipeline[1] == {"$sort": {"atualizada_em": -1, "_id": -1}}
@@ -334,7 +334,7 @@ def test_mongo_listing_uses_owner_keyset_order_and_bounded_projection():
         projection = pipeline[3]["$project"]
         assert "mensagens" not in projection and "primeira_pergunta" in projection and "ultima_mensagem" in projection
         await repo.list_sessions("owner", 100)
-        assert collection.aggregate.call_args.args[0][0] == {"$match": {"id_user": "owner"}}
+        assert collection.aggregate.call_args.args[0][0] == {"$match": {"usuario_id": "owner"}}
         assert collection.aggregate.call_args.args[0][2] == {"$limit": 101}
         collection.aggregate.side_effect = ConnectionFailure("private-mongo-uri")
         with pytest.raises(ChatError) as error:
@@ -351,6 +351,6 @@ def test_mongo_initializes_listing_index(monkeypatch):
         repo.client = SimpleNamespace()
         repo.collection = SimpleNamespace(create_index=AsyncMock())
         await repo.connect()
-        assert any(call.args[0] == [("id_user", 1), ("atualizada_em", -1), ("_id", -1)]
+        assert any(call.args[0] == [("usuario_id", 1), ("atualizada_em", -1), ("_id", -1)]
                    for call in repo.collection.create_index.call_args_list)
     asyncio.run(scenario())
