@@ -64,7 +64,7 @@ def test_recent_memory_is_queried_even_if_input_model_would_clarify(chat_client)
     assert model.calls == []
 
 
-def test_employee_next_pages_keep_backend_filters_and_do_not_repeat(chat_client, monkeypatch):
+def test_employee_old_page_requests_do_not_fetch_new_server_pages(chat_client, monkeypatch):
     client, model, application = chat_client
     application.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(uid='user-a', role='GESTOR')
     calls = []
@@ -93,10 +93,10 @@ def test_employee_next_pages_keep_backend_filters_and_do_not_repeat(chat_client,
     second = client.post('/chat/messages', json={'message': 'Não tem mais?', 'session_id': first['session_id']})
     third = client.post('/chat/messages', json={'message': 'E os próximos 20?', 'session_id': first['session_id']})
     assert second.status_code == third.status_code == 200
-    assert [args['pagina'] for args in calls] == [1, 2, 3]
+    assert [args['pagina'] for args in calls] == [1]
     assert all(args['tipos'] == ['COLABORADOR'] for args in calls)
-    assert 'Pessoa 20' in str(second.json()['blocos'])
-    assert 'Pessoa 40' in str(third.json()['blocos'])
+    assert 'Pessoa 20' not in str(second.json()['blocos'])
+    assert 'Pessoa 40' not in str(third.json()['blocos'])
 
 
 def test_pagination_does_not_accept_injected_commands_or_untrusted_history():
@@ -298,11 +298,11 @@ def test_empty_model_output_becomes_clarification_not_a_502_or_fake_success(chat
     assert 'gerar_pdf' not in response.json()['agentes_chamados']
 
 
-def test_count_followup_starts_first_employee_page_instead_of_skipping_it():
+def test_count_followup_does_not_request_server_pages():
     state = {'contexto': {'ultima_rota': 'rh'}, 'consulta_rh': {
         'pagina': 1, 'limite': 20, 'consulta': 'contagem', 'tipos': ['COLABORADOR'],
     }, 'mensagem': 'Próxima página'}
-    assert _continuacao_rh(state).pagina == 1
+    assert _continuacao_rh(state) is None
 
 
 def test_agenda_date_followup_passes_to_specialist_without_input_asking_confirmation(chat_client):

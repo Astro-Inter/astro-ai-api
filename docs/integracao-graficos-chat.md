@@ -95,7 +95,7 @@ A tabela real inclui também cargo, unidade, perfil e situação. A URL é HTTPS
 assinada e temporária, ou `null` quando a foto não está disponível ou autorizada.
 O frontend deve renderizar a célula `imagem` visualmente, usar sua descrição
 para acessibilidade e apresentar uma alternativa quando faltar a foto. Não
-registre a URL nem a persista em cache local. Há no máximo 50 linhas por página.
+registre a URL nem a persista em cache local. Na versão 1 há no máximo 50 linhas por página do servidor; novas listagens de usuários usam a versão 2 descrita abaixo.
 O histórico conserva `content` para compatibilidade com mensagens antigas;
 o POST não retorna `resposta`.
 As URLs não são armazenadas no histórico nem enviadas aos modelos. Ao abrir o
@@ -185,3 +185,110 @@ categoria e a data de referência; essas contagens não devem ser somadas como
 pessoas únicas globais. Regras e faixas estão em [Tools operacionais](tools-operacionais.md).
 Não há série mensal nesses gráficos. Linhas permanecem disponíveis para as
 conclusões pessoais de treinamentos, com a definição já documentada.
+
+
+## Tabelas de usuários com paginação local (versão 2)
+
+`buscar_outros_usuarios.limite` agora expressa a quantidade solicitada: por exemplo,
+100. O contrato aceita quantidades entre 1 e 1.000.000 para registrar pedidos acima do teto e informar o corte. O padrão é 20; o máximo efetivamente devolvido é 200. `pagina` é legado e
+somente aceita 1. A API reúne lotes SQL internos de até 50, com os mesmos filtros,
+autorização e ordenação por nome, email e ID único. Contagem e lotes usam uma
+transação somente leitura com snapshot REPEATABLE READ. Não há chamadas adicionais
+a modelos por lote. Falhas SQL abortam a consulta, sem sucesso parcial.
+
+O bloco `tabela` de usuários usa `versao: 2` e `paginacao: "local"`:
+
+```json
+{
+  "tipo": "tabela", "versao": 2, "titulo": "Usuários",
+  "colunas": [{"chave": "nome", "titulo": "Nome"}],
+  "linhas": [{"nome": "Pessoa autorizada"}],
+  "pagina": 1, "total_paginas": 1, "total": 143,
+  "solicitada": 1, "retornada": 1, "limitado": false,
+  "tem_mais": true, "motivo_limite": null, "paginacao": "local"
+}
+```
+
+`total` é a contagem autorizada pelos filtros; `retornada` é o número de linhas.
+`tem_mais` indica que existem registros fora do conjunto recebido. `limitado`
+indica que um limite de segurança impediu atender a quantidade solicitada e
+disponível; seu motivo é `maximo_resultados` ou `tamanho_resposta`. Pedir 100 e
+receber os 23 disponíveis não é corte de segurança. Pedir 100 e receber 100 de
+143 é um conjunto parcial por escolha do solicitante, com `tem_mais: true`.
+Os campos legados pagina/total_paginas valem 1 e não descrevem páginas visuais.
+
+O orçamento da resposta de listagem é 2 MiB de JSON, incluindo reserva conservadora para fotos e
+metadados. Cada célula textual tem até 500 caracteres e a URL de foto até 4096.
+Se o próximo registro exceder o orçamento, a coleta para e informa o corte.
+A resposta de listagem contém essa única tabela e textos curtos de resumo; não
+repete todos os registros em texto, evitando duplicação e excesso de contexto.
+As fotos continuam resolvidas no backend e não são persistidas no histórico.
+
+Os gráficos agregados continuam em tools próprias: agregam todo o escopo filtrado
+antes da paginação e não usam a amostra da tabela como população. O frontend não
+deve calcular um gráfico global a partir dessas linhas.
+
+### Publicação coordenada e histórico
+
+DEPENDÊNCIA: os clientes web #70 e mobile #79 inspecionados validam até 50 linhas e ainda
+não oferecem paginação local. Antes de publicar a API, atualizar ambos para ler
+versões 1 e 2, validar até 200 linhas na v2 e mostrar, por exemplo, 10 ou 20 linhas
+por página, sem nova chamada ao chatbot. Exibir contagem recebida/total e avisos
+de corte; não renderizar todas as linhas de uma vez. Testar também imagens,
+rolagem e troca de página. Esta alteração de backend não publica esses clientes.
+
+Persistir o bloco completo recebido, incluindo versão e metadados. Ao reabrir a
+conversa, reconstruir as páginas locais do conjunto salvo. Blocos v1 antigos
+mantêm a semântica original de páginas do servidor e até 50 linhas; não migrar
+suas contagens nem buscar automaticamente registros adicionais. Nenhuma consulta
+ou foto histórica concede acesso novo: a autorização continua no backend.
+
+O Juiz recebe metadados da consulta v2 e revisa o resumo; os registros não são enviados ao modelo nessa etapa. A aplicação valida o contrato e monta as linhas autorizadas diretamente, reduzindo custo e latência.
+
+
+## Cartão do usuário autenticado (`buscar_meus_dados`)
+
+Pedidos completos como “Meus dados” retornam, nesta ordem, um bloco de texto de
+apresentação e um `ficha_usuario` v1. A consulta SQL identifica o usuário somente
+pelo UID do contexto autenticado. ADMIN usa o próprio cadastro administrativo;
+associações de cargo/unidade ausentes não escondem o cadastro funcional.
+
+Extensões aditivas de v1: `modalidade` opcional e `origem` opcional com valor
+`usuario_autenticado`. `nome` agora também pode ser nulo. Clientes devem aceitar
+esses campos adicionais e não exigir nome; exibir “Meu perfil” e um avatar neutro
+quando não houver nome para extrair iniciais. Os demais campos ausentes são nulos.
+
+```json
+[
+  {"tipo":"texto","conteudo":"Estes são os seus dados:"},
+  {"tipo":"ficha_usuario","versao":1,"titulo":"Meu perfil",
+   "origem":"usuario_autenticado","nome":"Pessoa Exemplo",
+   "email":"pessoa@example.com","perfil":"COLABORADOR",
+   "cargo":"Analista","unidade":"Matriz","modalidade":"HIBRIDO",
+   "foto":{"tipo":"imagem","url":null,"descricao":"Foto do usuário autenticado"},
+   "situacao":null,"conformidade":null}
+]
+```
+
+Não são expostos status cadastral, data de cadastro ou CPF nesse cartão. Não há
+consulta automática de conformidade; o campo permanece nulo. Campos nulos não
+produzem rótulos vazios ou percentual zero na UI. Pedidos específicos (“Qual é meu
+cargo?”, nome, e-mail, unidade, perfil e modalidade) continuam somente em texto,
+limitados ao campo solicitado; campo ausente recebe a indicação de indisponibilidade.
+
+`origem` permite ao backend revalidar a foto pelo UID atual, sem usar nome/e-mail do
+bloco como seletor de identidade. Para os perfis funcionais, foto própria exige
+cadastro ativo com papel correspondente; ADMIN sem fonte de foto suportada recebe
+URL nula. Reutiliza `user:avatar:<id>` no Redis após autorização e as mesmas URLs
+assinadas/validação de host/objeto/validade. Foto ausente, cache/R2 indisponível ou
+falha de autorização deixa URL nula: frontend mostra iniciais, se houver nome.
+Não há chamadas extras de IA para foto ou conformidade.
+
+O histórico conserva a ordem, a origem e os campos opcionais, sem persistir URL.
+Ao carregar a conversa, o backend resolve novamente a foto autorizada. Fichas
+antigas sem `origem` mantêm a resolução autorizada de terceiros existente.
+
+Web/mobile: aceitar nome nulo, renderizar modalidade quando disponível, ignorar
+`origem` na UI e omitir campos nulos. Manter iniciais/fallback de erro para fotos,
+URLs temporárias sem cache durável e a ordem dos blocos. Os parsers atuais que
+exigem nome precisam ser atualizados antes da publicação deste contrato estendido.

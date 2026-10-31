@@ -1,3 +1,4 @@
+import json
 from typing import Literal
 
 import psycopg
@@ -15,6 +16,10 @@ UserStatus = Literal["ATIVO", "PRE_CADASTRADO", "DESATIVADO"]
 UserType = Literal["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]
 MANAGER_VISIBLE_TYPES = ["GESTOR", "COLABORADOR"]
 WORKSPACE_MANAGER_VISIBLE_TYPES = ["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]
+
+MAX_USER_RESULTS = 200
+USER_QUERY_BATCH = 50
+MAX_USER_TABLE_BYTES = 2 * 1024 * 1024
 
 OTHER_USER_COLUMNS = ("nome", "email", "tipo", "cargo", "unidade", "modalidade", "status")
 CURRENT_USER_COLUMNS = (
@@ -46,10 +51,10 @@ class BuscarOutrosUsuariosArgs(BaseModel):
         description="Trecho do nome do cargo, sem curingas SQL.",
     )
     limite: int = Field(
-        default=20, ge=1, le=50,
-        description="Quantidade máxima de usuários retornados, entre 1 e 50.",
+        default=20, ge=1, le=1000000,
+        description="Quantidade solicitada pelo usuário; o backend aplica o teto de 200 resultados.",
     )
-    pagina: int = Field(default=1, ge=1, le=1000)
+    pagina: int = Field(default=1, ge=1, le=1, description="Legado: somente 1; paginação visual é local.")
     consulta: Literal["listar", "contagem"] = "listar"
 
     @field_validator("status", "tipos")
@@ -217,17 +222,40 @@ def buscar_outros_usuarios(
         parameters.append(_filtro_ilike(cargo))
 
     count_query = "SELECT COUNT(*) " + query[query.index("FROM usuario"):]
-    list_query = query + " ORDER BY usuario.nome, usuario.email, usuario.firebase_uid LIMIT %s OFFSET %s"
+    list_query = query + " ORDER BY usuario.nome, usuario.email, usuario.id_usuario LIMIT %s OFFSET %s"
 
     try:
         with get_conn() as connection:
             with connection.cursor() as cursor:
+                cursor.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", [])
+                size_limited = False
                 cursor.execute(count_query, parameters)
                 total = cursor.fetchone()[0]
                 rows = []
                 if consulta == "listar":
-                    cursor.execute(list_query, [*parameters, limite, (pagina - 1) * limite])
-                    rows = cursor.fetchall()
+                    # Um snapshot mantém contagem e lotes consistentes durante a consulta.
+                    target = min(limite, MAX_USER_RESULTS)
+                    used_bytes = 16384  # metadados, colunas e estrutura do bloco
+                    while len(rows) < target:
+                        batch_size = min(USER_QUERY_BATCH, target - len(rows))
+                        cursor.execute(list_query, [*parameters, batch_size, len(rows)])
+                        batch = cursor.fetchall()
+                        if not batch:
+                            break
+                        for row in batch:
+                            record = dict(zip(OTHER_USER_COLUMNS, row))
+                            if any(isinstance(value, str) and len(value) > 500 for value in record.values()):
+                                size_limited = True
+                                break
+                            # Reserva por foto: URL assinada (4096 caracteres), escapes e descrições.
+                            cost = len(json.dumps(record, ensure_ascii=True).encode("utf-8")) + 8192
+                            if used_bytes + cost > MAX_USER_TABLE_BYTES:
+                                size_limited = True
+                                break
+                            rows.append(row)
+                            used_bytes += cost
+                        if size_limited or len(batch) < batch_size:
+                            break
     except Exception:
         # Detalhes do driver, da URL e do SQL nunca são devolvidos ao modelo.
         return {"status": "indisponivel", "mensagem": "Consulta de usuarios indisponivel."}
@@ -237,9 +265,14 @@ def buscar_outros_usuarios(
         "status": "ok" if total else "sem_dados",
         "consulta": consulta,
         "total": total,
-        "pagina": pagina,
+        "pagina": 1,
         "limite": limite,
-        "total_paginas": (total + limite - 1) // limite,
+        "total_paginas": 1,
+        "solicitada": limite,
+        "retornada": len(usuarios),
+        "limitado": consulta == "listar" and len(usuarios) < min(limite, total),
+        "tem_mais": consulta == "listar" and len(usuarios) < total,
+        "motivo_limite": "tamanho_resposta" if size_limited else "maximo_resultados" if limite > MAX_USER_RESULTS and total > MAX_USER_RESULTS else None,
         "quantidade": len(usuarios),
         "usuarios": usuarios,
     }
@@ -275,8 +308,8 @@ def buscar_meus_dados(config: RunnableConfig = None) -> dict:
                    unidade.nome AS unidade,
                    usuario.modalidade AS modalidade
               FROM usuario
-              JOIN cargo ON cargo.id_cargo = usuario.cargo_id
-              JOIN unidade ON unidade.id_unidade = usuario.unidade_id
+              LEFT JOIN cargo ON cargo.id_cargo = usuario.cargo_id
+              LEFT JOIN unidade ON unidade.id_unidade = usuario.unidade_id
              WHERE usuario.firebase_uid = %s
              LIMIT 1
         """

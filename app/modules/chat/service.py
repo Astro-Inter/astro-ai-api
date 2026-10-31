@@ -158,7 +158,12 @@ class ChatService:
         galleries = [block for block in blocks if isinstance(block, BlocoGaleriaUsuarios)]
         tables = [block for block in blocks if isinstance(block, BlocoTabela)]
         cards = [block for block in blocks if isinstance(block, BlocoFichaUsuario)]
-        emails = [card.email for card in cards if card.email]
+        own_cards = [card for card in cards if card.origem == "usuario_autenticado"]
+        if own_cards:
+            own_urls = await asyncio.to_thread(resolve_avatar_urls, user, ["__self__"], own=True)
+            for card in own_cards:
+                card.foto.url = own_urls.get("__self__")
+        emails = [card.email for card in cards if card.email and card not in own_cards]
         emails += [item.email for gallery in galleries for item in gallery.imagens if item.email]
         emails += [row.get("email") for table in tables for row in table.linhas
                    if isinstance(row.get("foto"), CelulaImagem) and isinstance(row.get("email"), str)]
@@ -169,7 +174,8 @@ class ChatService:
             for item in gallery.imagens:
                 item.url = urls.get(item.email)
         for card in cards:
-            card.foto.url = urls.get(card.email)
+            if card not in own_cards:
+                card.foto.url = urls.get(card.email)
         for table in tables:
             for row in table.linhas:
                 photo, email = row.get("foto"), row.get("email")
@@ -345,12 +351,25 @@ class ChatService:
                     rows = []
                     for item in chart_data["usuarios"]:
                         row = {key: item.get(key) for key, _ in columns if key != "foto"}
-                        row["foto"] = CelulaImagem(descricao=f"Foto de {item['nome']}")
+                        row["foto"] = CelulaImagem(descricao=f"Foto de {item['nome']}"[:280])
                         rows.append(row)
                     blocks = [BlocoTexto(conteudo="Veja os usuários encontrados no seu escopo:"),
-                              BlocoTabela(titulo="Usuários", colunas=[ColunaTabela(chave=key, titulo=label) for key, label in columns],
+                              BlocoTabela(titulo="Usuários", versao=2 if "retornada" in chart_data else 1,
+                                          paginacao="local" if "retornada" in chart_data else None,
+                                          **{key: chart_data.get(key) for key in ("solicitada", "retornada", "limitado", "tem_mais", "motivo_limite")}, colunas=[ColunaTabela(chave=key, titulo=label) for key, label in columns],
                                           linhas=rows, pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]),
-                              BlocoTexto(conteudo=f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} usuário(s).")]
+                              BlocoTexto(conteudo=public_answer)]
+                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                        and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "buscar_meus_dados"
+                        and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):
+                    from app.modules.chat.subgraphs import _campo_dado_proprio
+                    if _campo_dado_proprio(request.message) is None:
+                        data = chart_data.get("dados", {})
+                        blocks = [BlocoTexto(conteudo="Estes são os seus dados:"),
+                                  BlocoFichaUsuario(titulo="Meu perfil", origem="usuario_autenticado",
+                                      nome=data.get("nome"), email=data.get("email"), perfil=data.get("tipo"),
+                                      cargo=data.get("cargo"), unidade=data.get("unidade"), modalidade=data.get("modalidade"),
+                                      foto=CelulaImagem(descricao="Foto do usuário autenticado"))]
                 if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
                         and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_conformidade_usuario"
                         and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):

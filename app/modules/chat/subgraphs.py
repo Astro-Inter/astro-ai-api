@@ -41,10 +41,10 @@ def _campo_dado_proprio(message: str) -> str | None:
         return "unidade"
     match = re.fullmatch(
         r"(?:qual (?:e |eh )?(?:o |a )?|(?:me diga|me fale|mostre|informe) (?:qual e )?(?:o |a )?)"
-        r"(?:meu|minha) (nome|e-?mail|cargo|unidade)(?: (?:cadastrad[oa]|no cadastro|no astro))?",
+        r"(?:meu|minha) (nome|e-?mail|cargo|unidade|perfil|modalidade)(?: (?:cadastrad[oa]|no cadastro|no astro))?",
         normalized,
     )
-    return {"email": "email", "e-mail": "email"}.get(match.group(1), match.group(1)) if match else None
+    return {"email": "email", "e-mail": "email", "perfil": "tipo"}.get(match.group(1), match.group(1)) if match else None
 
 
 def _pedido_dos_proprios_dados(message: str) -> bool:
@@ -301,6 +301,14 @@ def _formatar_usuarios(result: dict) -> str:
     if result.get("status") != "ok":
         return result.get("mensagem", "Não foi possível consultar os usuários no momento.")
 
+    if "retornada" in result:
+        text = (f"Retornados {result['retornada']} usuário(s) de {result['total']} disponíveis "
+                f"no escopo autorizado; quantidade solicitada: {result['solicitada']}.")
+        if result.get("limitado"):
+            text += " Resultado limitado por segurança (" + result['motivo_limite'] + ")."
+        elif result.get("tem_mais"):
+            text += " O conjunto retornado é parcial, conforme a quantidade solicitada."
+        return text
     users = result["usuarios"]
     title = f"Encontrei {len(users)} usuário(s):"
     lines = []
@@ -315,13 +323,13 @@ def _formatar_usuarios(result: dict) -> str:
         if not users:
             lines.append("Nenhum usuário nesta página. Peça uma página anterior.")
         elif result['pagina'] < result['total_paginas']:
-            lines.append("Para ver mais, peça a próxima página de funcionários.")
+            lines.append("O conjunto retornado é parcial.")
     return "\n".join([title, *lines])
 
 
 def _formatar_meus_dados(result: dict) -> str:
     if result.get("status") == "sem_dados":
-        return "Não encontrei seus dados cadastrais."
+        return result.get("mensagem", "Não encontrei seus dados cadastrais.")
     if result.get("status") != "ok":
         return result.get("mensagem", "Não foi possível consultar seus dados no momento.")
 
@@ -694,7 +702,7 @@ def build_rh_graph(model: AgentModel):
                 "rh_route": "tool",
                 "rh_decision": RhToolDecision(
                     acao="buscar_outros_usuarios",
-                    filtros=BuscarOutrosUsuariosArgs(limite=50),
+                    filtros=BuscarOutrosUsuariosArgs(limite=200),
                 ),
                 "agentes_chamados": state["agentes_chamados"] + ["rh"],
             }
@@ -731,6 +739,11 @@ def build_rh_graph(model: AgentModel):
             result = {**result, "dados": {field: result.get("dados", {}).get(field)}}
             if result["dados"][field] is None:
                 result = {**result, "status": "sem_dados", "mensagem": f"Não encontrei o campo {field} no seu cadastro."}
+        if tool_name == "buscar_meus_dados" and not field and result.get("status") == "ok":
+            # O cartão completo contém somente campos profissionais suportados.
+            allowed = {"nome", "email", "tipo", "cargo", "unidade", "modalidade"}
+            result = {**result, "dados": {key: value for key, value in result.get("dados", {}).items()
+                                         if key in allowed}}
         tool_status = result.get("status")
         statuses = {
             "ok": "concluido",
@@ -766,7 +779,8 @@ def build_rh_graph(model: AgentModel):
             "recomendacao": "",
             "evidencia_tool": {
                 "nome": tool_name,
-                "resultado": result,
+                "resultado": ({key: value for key, value in result.items() if key != "usuarios"}
+                              if tool_name == "buscar_outros_usuarios" and "retornada" in result else result),
             },
         }
         return {

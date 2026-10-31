@@ -1079,7 +1079,8 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     assert [call[0] for call in model.calls].count("rh") == 1
     judge_call = next(call for call in model.calls if call[0] == "juiz")
     tool_result = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
-    assert tool_result["resultado"]["evidencia_tool"]["resultado"]["usuarios"][0]["email"].startswith("[ASTRO_PII_")
+    assert "usuarios" not in tool_result["resultado"]["evidencia_tool"]["resultado"]
+    assert tool_result["resultado"]["evidencia_tool"]["resultado"]["retornada"] == 1
     assert "ana@example.com" not in str(judge_call[1])
     assert response.json()["blocos"][1]["linhas"][0]["email"] == "ana@example.com"
     evidence = json.loads(judge_call[1][-1].content.split("\n", 1)[1])["resultado"]
@@ -1095,6 +1096,8 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     ("Qual é meu e-mail?", "email"),
     ("Qual meu cargo cadastrado?", "cargo"),
     ("Qual minha unidade?", "unidade"),
+    ("Qual é meu perfil?", "tipo"),
+    ("Qual é minha modalidade?", "modalidade"),
 ])
 def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, field):
     client, model, _ = chat_client
@@ -1147,7 +1150,8 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, fiel
     data = evidence["evidencia_tool"]["resultado"]["dados"]
     if field:
         assert set(data) == {field}
-        expected = {"nome": "Lucas", "email": "lucas@example.com", "cargo": "Analista", "unidade": "Matriz"}[field]
+        assert all(b["tipo"] == "texto" for b in response.json()["blocos"])
+        expected = {"nome": "Lucas", "email": "lucas@example.com", "cargo": "Analista", "unidade": "Matriz", "tipo": "COLABORADOR", "modalidade": "HIBRIDO"}[field]
         assert expected in texto_resposta(response.json())
         if field in {"nome", "email"}:
             assert data[field].startswith("[ASTRO_PII_")
@@ -1157,9 +1161,15 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, fiel
         assert "12345678901" not in texto_resposta(response.json())
         assert "12345678901" not in str(judge_call[1])
     else:
-        assert data["cpf"].startswith("[ASTRO_PII_")
+        assert "cpf" not in data
         assert "12345678901" not in str(judge_call[1])
-        assert "12345678901" in texto_resposta(response.json())
+        blocks = response.json()["blocos"]
+        assert [b["tipo"] for b in blocks] == ["texto", "ficha_usuario"]
+        card = blocks[1]
+        assert card["nome"] == "Lucas" and card["perfil"] == "COLABORADOR"
+        assert card["modalidade"] == "HIBRIDO" and card["cargo"] == "Analista"
+        assert card["foto"]["url"] is None and card["conformidade"] is None
+        assert "status" not in card and "criado_em" not in card
 
 
 @pytest.mark.parametrize("message", [
@@ -2576,3 +2586,63 @@ def test_current_user_formatter_omits_status_and_registration_from_legacy_data()
     assert "ATIVO" not in answer
     assert "Cadastrado em" not in answer
     assert "2026-09-10" not in answer
+
+
+def test_user_table_v2_returns_requested_set_and_history(chat_client, monkeypatch):
+    from app.modules.chat import subgraphs
+    client, model, app = chat_client
+    class Tool:
+        async def ainvoke(self, args, config):
+            assert args["limite"] == 100
+            return {"status": "ok", "consulta": "listar", "total": 143,
+                    "pagina": 1, "total_paginas": 1, "quantidade": 100,
+                    "solicitada": 100, "retornada": 100, "limitado": False,
+                    "tem_mais": True, "motivo_limite": None,
+                    "usuarios": [{"nome": f"Pessoa {i}", "email": None, "cargo": "Cargo",
+                                  "unidade": "Unidade", "tipo": "COLABORADOR", "status": "ATIVO"}
+                                 for i in range(100)]}
+    monkeypatch.setitem(subgraphs.RH_TOOLS, "buscar_outros_usuarios", Tool())
+    model.replies["rh"] = json.dumps({"acao": "buscar_outros_usuarios", "filtros": {"limite": 100}, "resposta": None})
+    response = client.post("/chat/messages", json={"message": "Mostre 100 usuários em uma tabela"})
+    assert response.status_code == 200
+    body = response.json()
+    table = next(b for b in body["blocos"] if b["tipo"] == "tabela")
+    assert table["versao"] == 2 and table["paginacao"] == "local"
+    assert len(table["linhas"]) == table["retornada"] == 100
+    assert table["total"] == 143 and table["tem_mais"] and not table["limitado"]
+    assert "próxima página" not in texto_resposta(body)
+    judge = next(call for call in model.calls if call[0] == "juiz")
+    assert '"usuarios"' not in str(judge[1])
+    stored = app.state.chat_service.repository.docs[body["session_id"]]["mensagens"][-1]
+    assert next(b for b in stored["blocos"] if b["tipo"] == "tabela")["versao"] == 2
+
+
+@pytest.mark.parametrize("data", [{"nome": None, "email": None, "tipo": "COLABORADOR"},
+    {"nome": "Administrador", "email": "admin@example.com", "tipo": "ADMIN"}])
+def test_own_card_missing_fields_and_history(chat_client, monkeypatch, data):
+    from app.modules.chat import subgraphs
+    from app.modules.chat.schemas import BlocoFichaUsuario
+    client, model, app = chat_client
+    class Tool:
+        async def ainvoke(self, args, config):
+            assert args == {}
+            assert config["configurable"]["usuario_atual"]["uid"] == "user-a"
+            return {"status": "ok", "dados": data}
+    monkeypatch.setitem(subgraphs.RH_TOOLS, "buscar_meus_dados", Tool())
+    response = client.post("/chat/messages", json={"message": "Meus dados"})
+    assert response.status_code == 200
+    card = response.json()["blocos"][1]
+    assert card["nome"] == data["nome"]
+    assert card["cargo"] is None and card["modalidade"] is None
+    assert card["conformidade"] is None
+    stored = app.state.chat_service.repository.docs[response.json()["session_id"]]["mensagens"][-1]
+    saved = stored["blocos"][1]
+    assert saved["foto"]["url"] is None
+    assert BlocoFichaUsuario.model_validate(saved).origem == "usuario_autenticado"
+
+
+def test_own_card_blank_fields_are_optional():
+    from app.modules.chat.schemas import BlocoFichaUsuario, CelulaImagem
+    card = BlocoFichaUsuario(nome=" ", modalidade="", foto=CelulaImagem(descricao="Foto"))
+    assert card.nome is None and card.modalidade is None
+    assert card.conformidade is None

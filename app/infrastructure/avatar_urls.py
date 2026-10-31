@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 def _valid_url(url: str, path: str) -> bool:
     try:
+        if not isinstance(url, str) or not url.isascii() or len(url) > 4096:
+            return False
         parsed, endpoint = urlparse(url), urlparse(config.AVATAR_R2_ENDPOINT or "")
         if parsed.scheme != "https" or not endpoint.hostname or parsed.username or parsed.password:
             return False
@@ -54,16 +56,31 @@ def _authorized_photos(user: CurrentUser, emails: list[str]):
             return cur.fetchall()
 
 
-def resolve_avatar_urls(user: CurrentUser, emails: list[str]) -> dict[str, str]:
+def _authorized_own_photos(user: CurrentUser):
+    if user.role not in {"GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"} or not config.DATABASE_URL:
+        return []
+    with read_only_connection(config.DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT '__self__', usuario.id_usuario, photo.caminho_objeto
+                  FROM usuario
+                  JOIN usuario_foto_perfil photo ON photo.usuario_id = usuario.id_usuario
+                 WHERE usuario.firebase_uid = %s AND usuario.tipo = %s AND usuario.status = 'ATIVO'
+                 LIMIT 1
+            """, [user.uid, user.role])
+            return cur.fetchall()
+
+
+def resolve_avatar_urls(user: CurrentUser, emails: list[str], *, own: bool = False) -> dict[str, str]:
     """Sem URLs ou conteúdo pessoal em logs; falha no avatar não quebra o chat."""
-    emails = list(dict.fromkeys(email for email in emails if isinstance(email, str) and 0 < len(email) <= 255))[:50]
+    emails = list(dict.fromkeys(email for email in emails if isinstance(email, str) and 0 < len(email) <= 255))[:200]
     endpoint = urlparse(config.AVATAR_R2_ENDPOINT or "")
     if (not emails or not config.R2_BUCKET_AVATARS or endpoint.scheme != "https" or
             not endpoint.hostname or not endpoint.hostname.endswith(".r2.cloudflarestorage.com") or
             endpoint.username or endpoint.password or endpoint.path not in ("", "/") or endpoint.query or endpoint.fragment):
         return {}
     try:
-        photos = _authorized_photos(user, emails)
+        photos = _authorized_own_photos(user) if own else _authorized_photos(user, emails)
     except Exception:
         logger.warning("Autorização de avatares indisponível")
         return {}
