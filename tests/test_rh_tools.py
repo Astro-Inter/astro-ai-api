@@ -191,11 +191,9 @@ def test_admin_can_search_all_units_but_never_returns_itself(monkeypatch):
 
 
 def test_current_user_tool_returns_only_authenticated_user(monkeypatch):
-    from datetime import datetime
-
     row = (
         "Lucas Lima", "lucas@example.com", "12345678901", "COLABORADOR",
-        "Analista", "Matriz", "HIBRIDO", "ATIVO", datetime(2026, 9, 10, 10, 30),
+        "Analista", "Matriz", "HIBRIDO",
     )
     connection = FakeConnection([row])
     monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
@@ -216,6 +214,10 @@ def test_current_user_tool_returns_only_authenticated_user(monkeypatch):
     assert result["status"] == "ok"
     assert result["dados"]["cpf"] == "12345678901"
     assert result["dados"]["cargo"] == "Analista"
+    assert "status" not in result["dados"]
+    assert "criado_em" not in result["dados"]
+    assert "usuario.status" not in connection.db_cursor.query
+    assert "usuario.criado_em" not in connection.db_cursor.query
 
 
 def test_current_user_tool_returns_sem_dados(monkeypatch):

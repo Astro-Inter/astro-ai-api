@@ -166,3 +166,8 @@ A documentação pública do banco não estava acessível pela ferramenta durant
 a implementação. Os testes automatizados usam simulações. A validação real posterior está descrita
 em [Homologação das tools](homologacao-tools-operacionais.md). Permanecem
 necessárias validação visual e publicação coordenada dos contratos.
+
+
+### Dados do próprio usuário
+
+A ferramenta `buscar_meus_dados` e a resposta correspondente omitem o status cadastral e a data de cadastro (`criado_em`). Esses campos não são enviados ao modelo nessa consulta. As verificações internas de autorização e os filtros de situação das consultas de equipe permanecem preservados.

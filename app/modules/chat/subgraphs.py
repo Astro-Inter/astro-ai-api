@@ -329,9 +329,8 @@ def _formatar_meus_dados(result: dict) -> str:
     labels = {
         "nome": "Nome", "email": "E-mail", "cpf": "CPF", "tipo": "Perfil",
         "cargo": "Cargo", "unidade": "Unidade", "modalidade": "Modalidade",
-        "status": "Status", "criado_em": "Cadastrado em",
     }
-    lines = [f"- {labels[field]}: {value}" for field, value in data.items() if value is not None]
+    lines = [f"- {labels[field]}: {value}" for field, value in data.items() if field in labels and value is not None]
     return "\n".join(["Estes são os seus dados:", *lines])
 
 

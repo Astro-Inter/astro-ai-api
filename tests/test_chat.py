@@ -2561,3 +2561,18 @@ def test_contextual_chart_inherits_rh_filters(chat_client, monkeypatch):
     assert response.status_code == 200
     assert calls[0]["tipos"] == ["COLABORADOR"] and calls[0]["status"] == ["ATIVO"]
     assert calls[0]["cargo"] == "Técnica" and calls[0]["pagina"] == 1
+
+
+def test_current_user_formatter_omits_status_and_registration_from_legacy_data():
+    from app.modules.chat.subgraphs import _formatar_meus_dados
+
+    answer = _formatar_meus_dados({"status": "ok", "dados": {
+        "nome": "Pessoa Teste", "cargo": "Analista",
+        "status": "ATIVO", "criado_em": "2026-09-10T10:30:00",
+    }})
+    assert "Pessoa Teste" in answer
+    assert "Cargo: Analista" in answer
+    assert "Status" not in answer
+    assert "ATIVO" not in answer
+    assert "Cadastrado em" not in answer
+    assert "2026-09-10" not in answer
