@@ -24,9 +24,9 @@ def test_final_gate_preserves_text_or_abstains_and_luna_handles_doubt(monkeypatc
         response = await service.chat(ChatRequest(message="Qual o objetivo da plataforma?"),
                                       CurrentUser(uid="owner", role="COLABORADOR"))
         if expected:
-            assert "Fonte: normas.pdf" in response.resposta
+            assert "Fonte: normas.pdf" in "\n\n".join(block.conteudo for block in response.blocos if block.tipo == "texto")
         else:
-            assert response.resposta == "Não tenho evidência para afirmar isso."
+            assert "\n\n".join(block.conteudo for block in response.blocos if block.tipo == "texto") == "Não tenho evidência para afirmar isso."
             assert not repo.docs[str(response.session_id)]["mensagens"]
         sent = model.verify_evidence.await_args.args[0]
         assert sent["resposta"]

@@ -30,7 +30,6 @@ EXAMPLES = {
         ("Mostre minhas mensagens com Rosa.", 'CONVERSATION={"pessoa":"Rosa","pagina":1,"limite":5}'),
         ("Quais são minhas notificações?", 'NOTIFICATIONS={"pagina":1,"limite":5}'),
         ("Quantas vezes acessei neste mês?", 'ACCESSES={"consulta":"contagem","periodo":"mes_atual"}'),
-        ("Mande um oi para Rosa.", 'MESSAGE={"destinatario":"Rosa","mensagem":"Oi","confirmar_envio":false}'),
     ),
     "guardrail_entrada": (
         ("Quero consultar meus eventos internos.", _json(decisao="aprovar", motivo="legitimo", mensagem="")),
@@ -72,7 +71,6 @@ EXAMPLES = {
         ("Candidata: reunião cancelada. Resultado: aguardando confirmação. Juiz: revisar, execução não confirmada.", _json(status="corrigido", motivo="Cancelamento não confirmado.", resposta="O cancelamento ainda não foi realizado.")),
     ),
     "resumo": (
-        ('{"resumo_parcial":"O usuário quer consultar seu treinamento.","mensagens":[{"role":"user","content":"Envie uma mensagem para a equipe."},{"role":"assistant","content":"Confirma o envio?"}]}', _json(resumo="O usuário pediu consulta de treinamento e envio de mensagem. O envio permanece aguardando confirmação; não há evidência de execução.")),
     ),
 }
 

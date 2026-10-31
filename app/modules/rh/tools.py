@@ -18,8 +18,7 @@ WORKSPACE_MANAGER_VISIBLE_TYPES = ["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]
 
 OTHER_USER_COLUMNS = ("nome", "email", "tipo", "cargo", "unidade", "modalidade", "status")
 CURRENT_USER_COLUMNS = (
-    "nome", "email", "cpf", "tipo", "cargo", "unidade", "modalidade", "status",
-    "criado_em",
+    "nome", "email", "cpf", "tipo", "cargo", "unidade", "modalidade",
 )
 
 
@@ -274,9 +273,7 @@ def buscar_meus_dados(config: RunnableConfig = None) -> dict:
                    usuario.tipo AS tipo,
                    cargo.nome AS cargo,
                    unidade.nome AS unidade,
-                   usuario.modalidade AS modalidade,
-                   usuario.status AS status,
-                   usuario.criado_em AS criado_em
+                   usuario.modalidade AS modalidade
               FROM usuario
               JOIN cargo ON cargo.id_cargo = usuario.cargo_id
               JOIN unidade ON unidade.id_unidade = usuario.unidade_id
@@ -298,8 +295,6 @@ def buscar_meus_dados(config: RunnableConfig = None) -> dict:
         data.update({"nome": row[0], "email": row[1], "tipo": "ADMIN"})
     else:
         data = dict(zip(CURRENT_USER_COLUMNS, row))
-    if hasattr(data["criado_em"], "isoformat"):
-        data["criado_em"] = data["criado_em"].isoformat()
     return {"status": "ok", "dados": data}
 
 

@@ -76,10 +76,24 @@ def _history_for_agent(name: str, history: list[dict[str, str]]):
     if name not in limits:
         return []
     message_limit, character_limit = limits[name]
-    selected = history[-message_limit:]
-    while selected and sum(len(item["content"]) for item in selected) > character_limit:
-        selected = selected[2:]
-    return selected
+    # Preserve the latest turn even when a single listing exceeds the budget.
+    # Mark omissions explicitly: a shortened listing is never a complete dataset.
+    selected = []
+    remaining = character_limit
+    marker = "\n[trecho omitido por limite de contexto]\n"
+    for item in reversed(history[-message_limit:]):
+        if remaining <= len(marker) + 2:
+            break
+        content = item["content"]
+        budget = min(character_limit // 2, remaining)
+        if len(content) > budget:
+            visible = budget - len(marker)
+            head = visible // 2
+            content = content[:head] + marker + content[-(visible - head):]
+        selected.append({**item, "content": content})
+        remaining -= len(content)
+    return list(reversed(selected))
+
 
 
 async def _invoke_agent(

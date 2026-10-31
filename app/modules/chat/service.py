@@ -22,7 +22,7 @@ from app.modules.chat.pdf_delivery import asks_for_pdf_link
 from app.modules.chat.schemas import (
     ChatRequest,
     ChatResponse,
-    BlocoTexto, BlocoGrafico, BlocoGraficoSetores, BlocoGraficoLinhas, BlocoTabela, ColunaTabela, BlocoGaleriaUsuarios, ImagemUsuario, PontoGrafico,
+    BlocoTexto, BlocoGrafico, BlocoGraficoSetores, BlocoGraficoLinhas, BlocoTabela, ColunaTabela, BlocoGaleriaUsuarios, CelulaImagem, BlocoFichaUsuario, ConformidadeFicha, PontoGrafico,
     SessionMessage,
     SessionMessagesResponse,
     SessionResponse,
@@ -153,14 +153,28 @@ class ChatService:
 
     @staticmethod
     async def _populate_avatars(messages, user: CurrentUser):
-        galleries = [block for message in messages for block in message.blocos if isinstance(block, BlocoGaleriaUsuarios)]
-        emails = [item.email for gallery in galleries for item in gallery.imagens if item.email]
+        blocks = [block for message in messages for block in message.blocos]
+        # Galerias antigas continuam legíveis no histórico, com reautorização.
+        galleries = [block for block in blocks if isinstance(block, BlocoGaleriaUsuarios)]
+        tables = [block for block in blocks if isinstance(block, BlocoTabela)]
+        cards = [block for block in blocks if isinstance(block, BlocoFichaUsuario)]
+        emails = [card.email for card in cards if card.email]
+        emails += [item.email for gallery in galleries for item in gallery.imagens if item.email]
+        emails += [row.get("email") for table in tables for row in table.linhas
+                   if isinstance(row.get("foto"), CelulaImagem) and isinstance(row.get("email"), str)]
         if not emails:
             return
         urls = await asyncio.to_thread(resolve_avatar_urls, user, emails)
         for gallery in galleries:
             for item in gallery.imagens:
                 item.url = urls.get(item.email)
+        for card in cards:
+            card.foto.url = urls.get(card.email)
+        for table in tables:
+            for row in table.linhas:
+                photo, email = row.get("foto"), row.get("email")
+                if isinstance(photo, CelulaImagem) and isinstance(email, str):
+                    photo.url = urls.get(email)
 
     async def chat(
         self, request: ChatRequest, user: CurrentUser, *, markdown: bool = True,
@@ -193,7 +207,7 @@ class ChatService:
                 # Ignore drafts for operations removed from the chatbot, including
                 # those persisted by previous deployments.
                 pending = doc.get("acao_pendente")
-                if isinstance(pending, dict) and pending.get("tipo") != "enviar_mensagem":
+                if pending is not None:
                     doc["acao_pendente"] = None
                     await self.repository.update(session_id, user.uid, token, {"acao_pendente": None})
                 messages = doc.get("mensagens", [])
@@ -218,6 +232,8 @@ class ChatService:
                         "workspace_id": None, "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
                         "possui_acao_pendente": bool(doc.get("acao_pendente")),
+                        "consulta_operacional": doc.get("consulta_operacional"),
+                        "consulta_rh": doc.get("consulta_rh"),
                         "formato_resposta": "markdown" if markdown else "texto_simples",
                         "ferramentas_disponiveis": [
                             "buscar_historico", "consultar_normas",
@@ -225,8 +241,13 @@ class ChatService:
                             "consultar_nrs_obrigatorias", "consultar_situacao_nrs",
                             "consultar_nrs_organizacao",
                             "consultar_orientacoes_sst", "consultar_fontes_publicas",
-                            "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
-                            "consultar_acessos",
+                            "consultar_conversas", "consultar_notificacoes",
+                            "consultar_acessos", "consultar_indicadores_equipe",
+                            "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos",
+                            "consultar_vencimentos_conformidades", "consultar_pendencias_equipe",
+                            "consultar_conformidade_unidade", "consultar_formularios_pendentes",
+                            "consultar_respostas_formulario", "consultar_detalhes_evento",
+                            "consultar_candidatos_treinamento",
                             "consultar_treinamentos",
                             "consultar_eventos",
                             "gerar_pdf",
@@ -240,8 +261,7 @@ class ChatService:
                                    "autorizada; legislação e publicações externas usam somente "
                                    "catálogos oficiais previamente cadastrados. "
                                    "O agente de RH pode consultar somente os dados de usuarios "
-                                   "permitidos pelo perfil autenticado. O envio de mensagens exige "
-                                   "destinatario do mesmo workspace, previa e confirmacao explicita. "
+                                   "permitidos pelo perfil autenticado. O chatbot nao cria nem envia mensagens. "
                                    "A consulta de conversas acessa apenas mensagens entre o usuario "
                                    "autenticado e uma pessoa do mesmo workspace. "
                                    "Notificacoes podem ser consultadas somente para o usuario "
@@ -256,7 +276,7 @@ class ChatService:
                                    "explicitamente; a aplicacao fornece o link temporario. "
                                    "NRs da unidade ou empresa usam vínculos unidade_nr no PostgreSQL "
                                    "do workspace autenticado, não o catálogo público genérico. "
-                                   "Nao ha outras operacoes de escrita. NRs usam primeiro o portal "
+                                   "Nao ha operacoes de escrita. NRs usam primeiro o portal "
                                    "oficial do MTE via MCP Fetch; a collection MongoDB autorizada "
                                    "serve como contexto interno e fallback. "
                                    "Historico nao comprova direitos nem execucao. "
@@ -268,8 +288,7 @@ class ChatService:
                     "rota": "", "resultado": {}, "resultado_tool": {}, "rh_decision": None,
                     "rh_route": "", "sst_decision": None, "sst_route": "",
                     "agenda_decision": None, "agenda_route": "",
-                    "roteador_decision": None, "acao_pendente": doc.get("acao_pendente"),
-                    "confirmacao_explicita": False,
+                    "operational_decision": None, "roteador_decision": None, "acao_pendente": doc.get("acao_pendente"),
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
@@ -321,21 +340,49 @@ class ChatService:
                         and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "buscar_outros_usuarios"
                         and chart_data.get("status") == "ok" and chart_data.get("consulta") == "listar"
                         and chart_data.get("usuarios") and public_answer == result.get("candidato")):
-                    columns = [("nome", "Nome"), ("email", "E-mail"), ("cargo", "Cargo"),
+                    columns = [("foto", "Foto"), ("nome", "Nome"), ("email", "E-mail"), ("cargo", "Cargo"),
                                ("unidade", "Unidade"), ("tipo", "Perfil"), ("status", "Situação")]
-                    rows = [{key: item.get(key) for key, _ in columns} for item in chart_data["usuarios"]]
-                    message = request.message.casefold()
-                    wants_table = bool(re.search(r"\btabelas?\b", message))
-                    wants_images = bool(re.search(r"\b(fotos?|imagens?|avatares?|galeria)\b", message))
-                    blocks = [BlocoTexto(conteudo="Veja os usuários encontrados no seu escopo:")]
-                    if wants_table or not wants_images:
-                        blocks.append(BlocoTabela(titulo="Usuários", colunas=[ColunaTabela(chave=key, titulo=label) for key, label in columns],
-                                                  linhas=rows, pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]))
-                    if wants_images or not wants_table:
-                        blocks.append(BlocoGaleriaUsuarios(titulo="Fotos dos usuários", imagens=[ImagemUsuario(nome=row["nome"], email=row["email"]) for row in rows]))
-                    blocks.append(BlocoTexto(conteudo=f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} usuário(s)."))
-                response = ChatResponse(session_id=session_id, resposta=public_answer,
-                                        agentes_chamados=result["agentes_chamados"], blocos=blocks)
+                    rows = []
+                    for item in chart_data["usuarios"]:
+                        row = {key: item.get(key) for key, _ in columns if key != "foto"}
+                        row["foto"] = CelulaImagem(descricao=f"Foto de {item['nome']}")
+                        rows.append(row)
+                    blocks = [BlocoTexto(conteudo="Veja os usuários encontrados no seu escopo:"),
+                              BlocoTabela(titulo="Usuários", colunas=[ColunaTabela(chave=key, titulo=label) for key, label in columns],
+                                          linhas=rows, pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]),
+                              BlocoTexto(conteudo=f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} usuário(s).")]
+                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                        and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_conformidade_usuario"
+                        and chart_data.get("status") == "ok" and public_answer == result.get("candidato")):
+                    nrs = chart_data.get("nrs", [])
+                    total = len(nrs)
+                    valid = sum(nr.get("situacao") == "VIGENTE" for nr in nrs)
+                    name = chart_data["usuario"]
+                    blocks = [BlocoFichaUsuario(
+                        nome=name, email=chart_data.get("email"), cargo=chart_data.get("cargo"),
+                        unidade=chart_data.get("unidade"), foto=CelulaImagem(descricao=f"Foto de {name}"),
+                        conformidade=ConformidadeFicha(percentual=round(100 * valid / total, 2) if total else None,
+                                                       vigentes=valid, total=total, data_referencia=chart_data.get("data_referencia"))),
+                              BlocoTexto(conteudo=public_answer)]
+                if (result.get("guardar_turno") and result.get("avaliacao_juiz", {}).get("status") == "aprovado"
+                        and result.get("rota") == "consulta_operacional" and chart_data.get("status") == "ok"
+                        and chart_data.get("linhas") and public_answer == result.get("candidato")):
+                    blocks = [BlocoTexto(conteudo=chart_data["titulo"]),
+                              BlocoTabela(titulo=chart_data["titulo"], colunas=chart_data["colunas"],
+                                          linhas=chart_data["linhas"], pagina=chart_data["pagina"],
+                                          total_paginas=chart_data["total_paginas"], total=chart_data["total"])]
+                    if chart_data.get("grafico"):
+                        chart_class = BlocoGraficoSetores if chart_data.get("tipo_grafico") == "grafico_setores" else BlocoGrafico
+                        blocks.append(chart_class(titulo=chart_data["titulo"], dados=chart_data["grafico"],
+                                                  unidade=chart_data.get("unidade_grafico", "pessoas"), fonte=chart_data["fonte"]))
+                    summary = f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} registro(s)."
+                    if chart_data.get("aviso"):
+                        summary += " " + chart_data["aviso"]
+                    blocks.append(BlocoTexto(conteudo=summary))
+                response = ChatResponse(session_id=session_id,
+                                        agentes_chamados=result["agentes_chamados"],
+                                        blocos=blocks or [BlocoTexto(conteudo=public_answer[i:i + 6000])
+                                                         for i in range(0, len(public_answer), 6000)])
                 if result["guardar_turno"]:
                     delivery_fields = {}
                     if result.get("pdf_solicitado"):
@@ -351,6 +398,7 @@ class ChatService:
                             "ultima_rota": result["rota"],
                             "acao_pendente": result.get("acao_pendente"),
                             "consulta_rh": result.get("consulta_rh"),
+                            "consulta_operacional": result.get("operational_decision") if result.get("rota") == "consulta_operacional" else None,
                         }, messages=[
                             {"role": "human", "content": request.message},
                             {"role": "assistant", "content": stored_answer, **({"blocos": [block.model_dump() for block in blocks]} if blocks else {})},

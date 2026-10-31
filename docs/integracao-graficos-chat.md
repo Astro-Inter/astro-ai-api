@@ -1,13 +1,12 @@
 # Gráficos no chat: contrato para o frontend
 
-Os gráficos são pessoais e usam participações em treinamentos de eventos ativos.
+Os gráficos de treinamentos são pessoais e usam participações em eventos ativos.
+Gráficos de equipe são produzidos por `consultar_indicadores_equipe`; consulte
+[Tools operacionais e autorização](tools-operacionais.md).
 Barras e setores mostram a distribuição por situação; linhas mostra a evolução
 mensal das conclusões. Não são indicadores da empresa, conformidade ou vencimentos.
 
-`POST /chat/messages` mantém `session_id`, `resposta` e `agentes_chamados` e
-acrescenta `blocos`, uma lista ordenada. Quando vazia, renderize `resposta` como
-antes. Quando preenchida, percorra os blocos na ordem recebida; `resposta` é o
-fallback textual e não deve ser mostrado uma segunda vez. O mesmo campo opcional
+`POST /chat/messages` retorna `session_id`, `agentes_chamados` e `blocos`, uma lista ordenada e não vazia. O campo `resposta` não é retornado: até respostas apenas textuais chegam em um bloco `texto`. Percorra os blocos na ordem recebida. Clientes devem ser atualizados antes da API, pois versões antigas dependem de `resposta`. O mesmo campo opcional
 está em cada item de `GET /sessions/{session_id}/messages`. Mensagens antigas
 possuem lista vazia. O histórico mantém o retrato retornado no momento da consulta;
 atualizar os dados exige um novo pedido no chat.
@@ -15,7 +14,6 @@ atualizar os dados exige um novo pedido no chat.
 ```json
 {
   "session_id": "94229143-d20b-4766-80a4-05341435c236",
-  "resposta": "Seus treinamentos atribuídos em eventos ativos por situação: Pendentes: 3, Concluídos: 2, Rejeitados: 1. Total: 6.",
   "agentes_chamados": ["guardrail_entrada", "roteador", "agenda", "consultar_grafico_treinamentos", "juiz", "guardrail_saida"],
   "blocos": [
     {"tipo": "texto", "conteudo": "Veja a distribuição dos seus treinamentos atribuídos em eventos ativos:"},
@@ -28,8 +26,7 @@ atualizar os dados exige um novo pedido no chat.
 Valores do exemplo são fictícios. Cada valor é inteiro não negativo; há até 12
 pontos e 10 blocos. O texto pode conter Markdown conforme o parâmetro existente
 `markdown`. O frontend escolhe sua biblioteca visual e trata texto como conteúdo,
-não como HTML executável. Para tipo ou versão desconhecidos, renderize o fallback
-`resposta`; não execute código nem busque URLs indicadas pelos dados. Disponibilize
+não como HTML executável. Para tipo ou versão desconhecidos, apresente os blocos de texto disponíveis e informe que parte da resposta não pôde ser exibida; não execute código nem busque URLs indicadas pelos dados. Disponibilize
 uma alternativa textual/tabela e o título e fonte para leitores de tela.
 
 A tool LangChain usa o UID do contexto autenticado e uma conexão somente leitura.
@@ -40,7 +37,7 @@ Valores vêm do banco, não do modelo. Identificadores de outros usuários não 
 aceitos como filtros. O resultado é apresentado como candidato determinístico no
 subgrafo Agenda e segue pelo Juiz e guardrail. Blocos só são enviados quando há
 dados e a resposta final corresponde à candidata com Juiz aprovado. Sem dados,
-falha ou acesso indisponível, retorna texto e `blocos: []`. O fluxo existente tem
+falha ou acesso indisponível, retorna um bloco de texto. O fluxo existente tem
 fallback do Juiz para respostas determinísticas quando o provedor falha.
 
 Escopo atual: três tipos de gráfico pessoal. Filtros por unidade, empresa, período
@@ -57,7 +54,7 @@ números não devem ser comparados como se tivessem a mesma definição.
 - `grafico_setores`: pedidos como “Mostre um gráfico de setores dos meus treinamentos”
   ou “gráfico de pizza dos meus treinamentos”. Usa os mesmos pontos das barras;
   o frontend calcula as proporções pelo total e pode apresentá-las em porcentagem.
-  Se não houver participações, o backend envia apenas texto e lista de blocos vazia.
+  Se não houver participações, o backend envia um bloco de texto.
 - `grafico_linhas`: pedidos como “Mostre um gráfico de linhas dos meus treinamentos
   concluídos”. Mostra a quantidade de conclusões por mês nos **últimos 12 meses
   civis**, incluindo o mês atual. A data considerada é `data_conclusao`, com status
@@ -83,35 +80,24 @@ com os gráficos organizacionais da API de dashboards.
 
 ## Tabela de usuários e fotos de perfil
 
-Quando uma consulta autorizada de RH lista usuários, o chat pode entregar blocos
-`texto`, `tabela`, `galeria_usuarios`, `texto`, nessa ordem quando ambos são
-solicitados. A tabela e a galeria são blocos independentes; um não precisa estar
-dentro do outro. Se pedir apenas tabela, a resposta pode conter só a tabela; se
-pedir apenas fotos, só a galeria. Uma listagem sem preferência apresenta ambos. O contrato versionado é:
+Quando uma consulta autorizada de RH lista usuários, a resposta apresenta blocos
+`texto`, `tabela`, `texto`. A foto fica na própria linha da pessoa, identificada
+por uma célula de tipo `imagem`; não é gerado um bloco de galeria.
 
 ```json
 {"tipo":"tabela","versao":1,"titulo":"Usuários","pagina":1,
  "total_paginas":1,"total":1,
- "colunas":[{"chave":"nome","titulo":"Nome"},{"chave":"email","titulo":"E-mail"}],
- "linhas":[{"nome":"Ana Exemplo","email":"ana@example.com"}]}
+ "colunas":[{"chave":"foto","titulo":"Foto"},{"chave":"nome","titulo":"Nome"},{"chave":"email","titulo":"E-mail"}],
+ "linhas":[{"foto":{"tipo":"imagem","url":null,"descricao":"Foto de Ana Exemplo"},"nome":"Ana Exemplo","email":"ana@example.com"}]}
 ```
 
-O exemplo de tabela foi abreviado: a resposta de usuários também traz cargo,
-unidade, perfil e situação. As colunas definem as chaves de cada linha, com
-valores textuais, numéricos ou nulos. Cada página contém no máximo 50 linhas.
-As imagens chegam em bloco separado:
-
-```json
-{"tipo":"galeria_usuarios","versao":1,"titulo":"Fotos dos usuários",
- "imagens":[{"nome":"Ana Exemplo","email":"ana@example.com","url":null}]}
-```
-
-Cada item `url` é uma URL HTTPS assinada e temporária ou `null` quando não há
-foto, autorização ou acesso ao serviço. O
-frontend deve exibir nome e iniciais quando faltar foto ou ocorrer erro no
-carregamento; não registre ou analise a URL nem a persista em cache local. Exiba
-campos como texto, preserve paginação e leia as linhas como tabela acessível.
-O campo `resposta` permanece o fallback para clientes que não renderizam blocos.
+A tabela real inclui também cargo, unidade, perfil e situação. A URL é HTTPS,
+assinada e temporária, ou `null` quando a foto não está disponível ou autorizada.
+O frontend deve renderizar a célula `imagem` visualmente, usar sua descrição
+para acessibilidade e apresentar uma alternativa quando faltar a foto. Não
+registre a URL nem a persista em cache local. Há no máximo 50 linhas por página.
+O histórico conserva `content` para compatibilidade com mensagens antigas;
+o POST não retorna `resposta`.
 As URLs não são armazenadas no histórico nem enviadas aos modelos. Ao abrir o
 histórico, a API revalida as permissões atuais e obtém novamente as URLs; se o
 usuário deixar de ter acesso à foto, esse campo retorna `null`.
@@ -136,3 +122,66 @@ O endpoint deve ser HTTPS de Cloudflare R2. Configure Redis e bucket iguais aos 
 API principal para compartilhar o cache; os segredos de PDF têm nomes separados.
 Use `.env.example` como referência e nunca versione valores reais. Testes locais
 usam serviços simulados; conexão e permissões reais exigem homologação própria.
+
+## Referências ao turno anterior
+
+O roteador recebe o histórico recente dentro de um orçamento de caracteres.
+Respostas longas são abreviadas preservando início e final com um aviso de trecho
+omitido, em vez de remover o turno inteiro. Assim, referências como “nesses”
+continuam vinculadas à listagem anterior, inclusive sua paginação. Uma lista
+abreviada ou paginada não pode ser usada como se representasse todos os usuários.
+Gráficos de funcionários usam `consultar_indicadores_equipe`, preservando os
+filtros anteriores de RH. A agregação é feita sobre todo o conjunto autorizado,
+nunca contando apenas a página ou o trecho de histórico exibido.
+
+## Ficha individual (`ficha_usuario`, versão 1)
+
+Pedidos como “Mostre a ficha de ana@example.com” ou “Qual a conformidade de Ana
+Silva?” usam a consulta SST `consultar_conformidade_usuario`. A ficha reúne os
+campos autorizados dessa consulta, após Juiz e guardrails. Nome ambíguo exige
+esclarecimento; pessoa fora do escopo ou falha produz bloco de texto, sem ficha.
+O escopo atual é de gestores consultando terceiros em sua unidade/workspace.
+Campos ausentes são nulos e não devem ser inventados ou exibidos como vazios.
+
+```json
+{"tipo":"ficha_usuario","versao":1,"titulo":"Ficha do usuário",
+ "nome":"Ana Exemplo","email":"ana@example.com","cargo":"Técnica",
+ "unidade":"Matriz","perfil":null,"situacao":null,
+ "foto":{"tipo":"imagem","url":null,"descricao":"Foto de Ana Exemplo"},
+ "conformidade":{"percentual":66.67,"vigentes":2,"total":3,
+   "data_referencia":"2026-10-30",
+   "criterio":"NRs vigentes / NRs aplicáveis retornadas"}}
+```
+
+Exemplo fictício. Renderize como cartão com foto, campos identificados e coluna
+ou seção de conformidade, adaptando o layout ao espaço disponível. O percentual
+é calculado pela aplicação: `round(100 * vigentes / total, 2)`. Conta exclusivamente
+as NRs retornadas pela consulta existente de cargo/unidade, não revogadas, com
+status `VIGENTE` calculado com `CURRENT_DATE` do PostgreSQL. Zero NRs produz
+`percentual: null`, com indicação “Sem NRs aplicáveis”, nunca 0% ou 100%.
+Mostrar contagens, critério e data permite interpretar o indicador. Não é
+certificação legal. A API Java consultada delega indicadores da home às funções
+`fn_carrega_home_colaborador`, `fn_carrega_home_gestor` e `fn_carrega_workspace`;
+sem a definição dessas funções não foi confirmada equivalência com esses painéis.
+
+A foto usa a mesma resolução autorizada das tabelas: URL só é preenchida após
+persistir a mensagem, revalidada no histórico, não enviada aos modelos nem salva
+no Mongo. Frontends devem restringir a origem, oferecer imagem alternativa e não
+persistir URLs. O cartão mantém os blocos de texto seguintes na ordem recebida.
+Não adiciona chamadas de IA nem consultas de conformidade por pessoa em listagens.
+
+
+## Gráficos de pendências e validade
+
+Além de `participações` e `pessoas`, o campo `unidade` dos gráficos admite
+`pendências` e `registros`. Frontends devem apresentar essa unidade, o título e
+a fonte; não rotular todos os gráficos como quantidade de pessoas.
+
+As tools `consultar_grafico_pendencias_nr` e `consultar_grafico_vencimentos`
+produzem os mesmos blocos versionados `grafico_barras`/`grafico_setores`, com
+`dados: [{"categoria":"NR-10","valor":4}]` ou categorias de prazo. O tipo visual
+segue o pedido. A tabela acompanha o gráfico e contém as pessoas únicas por
+categoria e a data de referência; essas contagens não devem ser somadas como
+pessoas únicas globais. Regras e faixas estão em [Tools operacionais](tools-operacionais.md).
+Não há série mensal nesses gráficos. Linhas permanecem disponíveis para as
+conclusões pessoais de treinamentos, com a definição já documentada.

@@ -895,7 +895,7 @@ def consultar_conformidade_usuario(pessoa: str, config: RunnableConfig = None) -
         return {"status": "esclarecer", "mensagem": "Há mais de uma pessoa com esse nome. Informe o e-mail para consultar a pessoa correta."}
     # Revalida o escopo na leitura de conformidade, inclusive após a resolução.
     result = _consultar_situacao_nrs_filtrada("usuario.firebase_uid = %s AND " + scope, [people[0][0], *scope_parameters])
-    return {**result, "consulta_terceiro": True}
+    return {**result, "consulta_terceiro": True, **({"email": people[0][2]} if result.get("status") == "ok" else {})}
 
 
 TOOLS_SST = [

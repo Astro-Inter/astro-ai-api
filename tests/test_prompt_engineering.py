@@ -46,9 +46,9 @@ def test_decision_examples_are_not_used_for_specialist_result_schema():
 
 def test_compact_router_preserves_commands_and_routing_boundaries():
     assert len(ROTEADOR_PROMPT_COMPLETO) < 10000
-    for command in ("MEMORY=", "CONVERSATION=", "NOTIFICATIONS=", "ACCESSES=", "MESSAGE="):
+    for command in ("MEMORY=", "CONVERSATION=", "NOTIFICATIONS=", "ACCESSES="):
         assert command in ROTEADOR_PROMPT_COMPLETO
-    for marker in ("confirmar_envio=false", "banco interno do Astro", "Fundacentro", "consultar_nrs_organizacao", "usuario_atual.role", "mes_especifico", "intervalo"):
+    for marker in ("banco interno do Astro", "Fundacentro", "consultar_nrs_organizacao", "usuario_atual.role", "mes_especifico", "intervalo"):
         assert marker in ROTEADOR_PROMPT_COMPLETO
     assert {answer for _, answer in EXAMPLES["roteador"] if answer.startswith("ROUTE=")} == {
         "ROUTE=rh", "ROUTE=sst", "ROUTE=agenda", "ROUTE=faq", "ROUTE=fora_escopo",

@@ -34,7 +34,7 @@ def test_checkpoint_contains_only_committed_public_turns_without_duplicates():
         config = service.checkpoints.config(user.uid, sid)
         snapshot = await service.graph.aget_state(config)
         assert set(snapshot.values) == {"session_id", "messages"}
-        assert [m.content for m in snapshot.values["messages"]] == ["Primeiro assunto", first.resposta]
+        assert [m.content for m in snapshot.values["messages"]] == ["Primeiro assunto", "\n\n".join(b.conteudo for b in first.blocos if b.tipo == "texto")]
         assert snapshot.next == ()
         assert len(list(service.checkpoints.saver.list(config))) == 1
 
@@ -42,7 +42,7 @@ def test_checkpoint_contains_only_committed_public_turns_without_duplicates():
         second = await service.chat(ChatRequest(message="Continue", session_id=first.session_id), user)
         snapshot = await service.graph.aget_state(config)
         contents = [m.content for m in snapshot.values["messages"]]
-        assert contents == ["Primeiro assunto", first.resposta, "Continue", second.resposta]
+        assert contents == ["Primeiro assunto", "\n\n".join(b.conteudo for b in first.blocos if b.tipo == "texto"), "Continue", "\n\n".join(b.conteudo for b in second.blocos if b.tipo == "texto")]
         assert len(contents) == len(repository.docs[sid]["mensagens"]) == 4
         assert len({m.id for m in snapshot.values["messages"]}) == 4
         assert len(list(service.checkpoints.saver.list(config))) == 1

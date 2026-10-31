@@ -84,12 +84,12 @@ def test_router_command_restores_recipient_without_changing_json_structure():
             async def complete(self, name, messages, **kwargs):
                 calls.append(messages)
                 token = TOKEN.search(messages[-1].content).group()
-                return 'MESSAGE=' + json.dumps({"destinatario": token, "mensagem": "Olá", "confirmar_envio": False})
+                return 'CONVERSATION=' + json.dumps({"pessoa": token})
 
         state = {"usuario_atual": CurrentUser(uid="private-firebase", role="GESTOR"),
-                 "contexto": {}, "historico": [], "mensagem": "Prepare um envio para ana@privado.example."}
+                 "contexto": {}, "historico": [], "mensagem": "Consulte conversas com ana@privado.example."}
         reply = await invoke_agent(Model(), "roteador", "Escolha uma ferramenta autorizada.", state)
-        assert json.loads(reply.split("=", 1)[1])["destinatario"] == "ana@privado.example"
+        assert json.loads(reply.split("=", 1)[1])["pessoa"] == "ana@privado.example"
         assert "ana@privado.example" not in str(calls)
         assert "private-firebase" not in str(calls)
         assert "GESTOR" in str(calls)

@@ -8,7 +8,7 @@ CAPABILITIES = (
     "no seu escopo de acesso, NRs, conformidade, eventos e treinamentos atribuídos, "
     "notificações, dias de acesso e conversas. Também posso buscar informações "
     "nos documentos do Astro e gerar um PDF com o conteúdo consultado. "
-    "O envio de mensagens exige prévia e confirmação. "
+    "O envio para outras pessoas deve ser feito pela área de mensagens do aplicativo. "
     "Não realizo inscrições em treinamentos nem crio eventos internos do Astro."
 )
 

@@ -217,17 +217,17 @@ No `/docs`, autorize com o token retornado pelo login e envie:
 }
 ```
 
-Exemplo de resposta (o texto e o caminho dependem da mensagem):
+Exemplo de resposta (o texto e o caminho dependem da mensagem). O conteúdo público está em `blocos`; o campo `resposta` não é retornado. Veja [o contrato dos blocos](docs/integracao-graficos-chat.md):
 
 ```json
 {
   "session_id": "94229143-d20b-4766-80a4-05341435c236",
-  "resposta": "Olá! Posso ajudar com RH, SST, Agenda e dúvidas sobre normas.",
+  "blocos": [{"tipo":"texto","conteudo":"Olá! Posso ajudar com RH, SST, Agenda e dúvidas sobre normas."}],
   "agentes_chamados": ["guardrail_entrada", "roteador", "juiz", "guardrail_saida"]
 }
 ```
 
-O parâmetro de query opcional `markdown` controla a formatação do campo `resposta`:
+O parâmetro de query opcional `markdown` controla a formatação dos blocos de texto:
 
 - `POST /chat/messages?markdown=true` preserva Markdown e é o comportamento padrão.
 - `POST /chat/messages?markdown=false` retorna texto simples, sem sintaxe Markdown.
@@ -286,7 +286,7 @@ Os demais agentes usam os prompts existentes, incluindo o prompt inicial comum.
 No fluxo automático atual, a memória acessa o histórico, a tool de RH consulta
 os usuários permitidos pelo perfil autenticado, as tools de SST consultam NRs e
 orientações oficiais, e a tool de Agenda lê treinamentos atribuídos ao usuário.
-O Roteador pode enviar mensagens após uma prévia e uma confirmação explícita. A
+O Roteador consulta conversas, mas não cria nem envia mensagens. A
 Agenda consulta eventos internos e treinamentos no PostgreSQL. Os especialistas
 continuam sem autorização para afirmar operações não confirmadas por ferramentas.
 Autenticação não
@@ -601,31 +601,11 @@ reutilizada por outras APIs ou relatórios, uma view como
 `vw_nrs_obrigatorias_usuario` pode centralizar a interseção entre cargo e unidade;
 índices continuam sendo o recurso responsável pelo desempenho da consulta.
 
-### Tool de envio de mensagens do Roteador
+### Mensagens entre pessoas
 
-`app/modules/roteador/tools.py` registra a tool `enviar_mensagem`. O usuário
-informa nome ou e-mail do destinatário e o texto desejado. O backend resolve o
-Firebase UID autenticado para o `id_usuario` do PostgreSQL e restringe a pesquisa
-a pessoas ativas do mesmo workspace. IDs internos nunca são aceitos como entrada
-do modelo. Pesquisa por e-mail é exata; pesquisa por nome é literal por trecho e
-exige o e-mail quando houver mais de uma correspondência.
-
-O primeiro pedido nunca grava a mensagem, mesmo que o modelo tente confirmar o
-envio. Pedidos simples como “mande um oi para a Rosa” já chegam à prévia na
-primeira resposta; “oi” é o texto e o remetente vem da autenticação, sem precisar
-repetir quem é. Se houver complementos na mesma conversa, o roteador usa o
-histórico recente para aproveitar nome e texto já informados. A aplicação mostra
-uma prévia e armazena na sessão um rascunho com ID estável. Somente uma
-confirmação explícita em uma mensagem seguinte, na mesma sessão e sem alterações
-no destinatário ou no texto, autoriza a gravação. Repetir uma confirmação após
-resposta incerta não duplica o documento. “Sim”, “pode mandar” e “é isso mesmo
-que eu quero enviar” são exemplos de confirmação após a prévia.
-
-As mensagens confirmadas ficam na collection fixa `mensagens`, com `_id`,
-`id_envia`, `id_recebe`, `mensagem` e `data` em UTC. Os campos
-`id_envia` e `id_recebe` são IDs do PostgreSQL, não Firebase UIDs. A mesma
-configuração `MONGODB_URI` e `MONGODB_DATABASE` já usada pelo histórico é
-reutilizada; nenhuma variável de ambiente nova é necessária.
+O chatbot pode consultar conversas autorizadas, mas não cria nem envia mensagens.
+O envio deve ser feito pela área de mensagens do aplicativo. Rascunhos pendentes
+antigos são invalidados ao continuar uma sessão; confirmações não executam envios.
 
 ### Tool de consulta de conversas do Roteador
 
@@ -1017,3 +997,8 @@ obrigatoriedade de o guardrail respeitar avaliações negativas do Juiz.
 ## Diagnóstico operacional
 
 Consulte [os campos e limites dos novos diagnósticos](docs/observability-diagnostics.md) para investigar falhas por requisição ou execução no Grafana.
+
+### Consultas operacionais autorizadas
+
+A matriz de acesso, critérios e configuração das oito novas tools está em
+[Tools operacionais](docs/tools-operacionais.md).

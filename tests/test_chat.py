@@ -27,6 +27,11 @@ from app.modules.sst import tools as sst_tools
 from memory_fakes import FakeAccessRoles, FakeFaqVectors, FakeSessions, FakeVectors
 
 
+def texto_resposta(body):
+    assert "resposta" not in body
+    return "\n\n".join(block["conteudo"] for block in body["blocos"] if block["tipo"] == "texto")
+
+
 class FakeModel:
     def __init__(self, route="rh"):
         self.route = route
@@ -143,7 +148,7 @@ def test_specialist_flow(chat_client, domain):
     history = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"]
     assert history == [
         {"role": "human", "content": "Preciso de uma orientação."},
-        {"role": "assistant", "content": body["resposta"]},
+        {"role": "assistant", "content": texto_resposta(body)},
     ]
     system = model.calls[2][1][0].content
     assert '"uid"' not in system
@@ -155,8 +160,13 @@ def test_specialist_flow(chat_client, domain):
         '"consultar_nrs_obrigatorias", "consultar_situacao_nrs", '
         '"consultar_nrs_organizacao", '
         '"consultar_orientacoes_sst", "consultar_fontes_publicas", '
-            '"enviar_mensagem", "consultar_conversas", "consultar_notificacoes", '
-            '"consultar_acessos", "consultar_treinamentos", "consultar_eventos", '
+            '"consultar_conversas", "consultar_notificacoes", '
+            '"consultar_acessos", "consultar_indicadores_equipe", '
+            '"consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos", '
+            '"consultar_vencimentos_conformidades", "consultar_pendencias_equipe", '
+            '"consultar_conformidade_unidade", "consultar_formularios_pendentes", '
+            '"consultar_respostas_formulario", "consultar_detalhes_evento", '
+            '"consultar_candidatos_treinamento", "consultar_treinamentos", "consultar_eventos", '
             '"gerar_pdf"]'
         ) in system
     if domain == "rh":
@@ -208,9 +218,9 @@ def test_agenda_agent_consults_training_instead_of_sst(chat_client, monkeypatch)
     })
 
     assert response.status_code == 200
-    assert "Operação segura" in response.json()["resposta"]
-    assert "participação: pendente" in response.json()["resposta"]
-    assert "2026-09-20T08:00:00" in response.json()["resposta"]
+    assert "Operação segura" in texto_resposta(response.json())
+    assert "participação: pendente" in texto_resposta(response.json())
+    assert "2026-09-20T08:00:00" in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "agenda", "consultar_treinamentos",
         "juiz", "guardrail_saida",
@@ -256,8 +266,8 @@ def test_organization_nrs_do_not_use_public_catalog(chat_client, monkeypatch, me
     monkeypatch.setattr(sst_tools, "get_fetch_mcp_client", lambda: pytest.fail("Não deve consultar catálogo público"))
     response = client.post("/chat/messages", json={"message": message})
     assert response.status_code == 200
-    assert "NR-6: EPI" in response.json()["resposta"]
-    assert "38" not in response.json()["resposta"]
+    assert "NR-6: EPI" in texto_resposta(response.json())
+    assert "38" not in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "sst", "consultar_nrs_organizacao", "juiz", "guardrail_saida",
     ]
@@ -297,8 +307,8 @@ def test_next_event_uses_database_without_google_oauth(chat_client, monkeypatch)
     monkeypatch.setattr(agenda_tools, "get_postgres_connection", lambda: Connection())
     response = client.post("/chat/messages", json={"message": "quero saber qual é o próximo evento"})
     assert response.status_code == 200
-    assert "Evento futuro" in response.json()["resposta"]
-    assert "conectar" not in response.json()["resposta"]
+    assert "Evento futuro" in texto_resposta(response.json())
+    assert "conectar" not in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "agenda", "consultar_eventos", "juiz", "guardrail_saida",
     ]
@@ -412,9 +422,9 @@ def test_sst_agent_consults_multiple_nrs(chat_client, monkeypatch):
         "guardrail_entrada", "roteador", "sst", "consultar_nrs",
         "juiz", "guardrail_saida",
     ]
-    assert "NR-1" in response.json()["resposta"]
-    assert "Objetivo 6" in response.json()["resposta"]
-    assert "Contexto complementar" not in response.json()["resposta"]
+    assert "NR-1" in texto_resposta(response.json())
+    assert "Objetivo 6" in texto_resposta(response.json())
+    assert "Contexto complementar" not in texto_resposta(response.json())
     assert collection.query == {"_id": {"$in": [1, 6]}}
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "juiz",
@@ -480,9 +490,9 @@ def test_sst_agent_lists_all_current_nrs_with_compact_payload(chat_client, monke
 
     assert response.status_code == 200
     body = response.json()
-    assert "Encontrei 35 NR(s). Página 1 de 1" in body["resposta"]
-    assert "NR-35" in body["resposta"]
-    assert "conteudo muito extenso" not in body["resposta"]
+    assert "Encontrei 35 NR(s). Página 1 de 1" in texto_resposta(body)
+    assert "NR-35" in texto_resposta(body)
+    assert "conteudo muito extenso" not in texto_resposta(body)
     assert collection.query == {"revogada": False}
     assert collection.projection == {
         "_id": 1, "nome": 1, "revogada": 1, "ultima_atualizacao": 1,
@@ -538,10 +548,10 @@ def test_sst_agent_consults_mandatory_nrs_for_authenticated_user(chat_client, mo
         "guardrail_entrada", "roteador", "sst", "consultar_nrs_obrigatorias",
         "juiz", "guardrail_saida",
     ]
-    assert "Para o cargo Eletricista" in body["resposta"]
-    assert "NR-10" in body["resposta"] and "NR-18" in body["resposta"]
-    assert "Fonte:" not in body["resposta"]
-    assert "PostgreSQL" not in body["resposta"]
+    assert "Para o cargo Eletricista" in texto_resposta(body)
+    assert "NR-10" in texto_resposta(body) and "NR-18" in texto_resposta(body)
+    assert "Fonte:" not in texto_resposta(body)
+    assert "PostgreSQL" not in texto_resposta(body)
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "juiz",
     ]
@@ -572,8 +582,8 @@ def test_manager_consults_employee_conformity_with_recent_history(chat_client, m
     assert response.status_code == 200
     result = response.json()
     assert result["agentes_chamados"] == ["guardrail_entrada", "roteador", "sst", "consultar_conformidade_usuario", "juiz", "guardrail_saida"]
-    assert "Maria Silva" in result["resposta"] and "NR-10" in result["resposta"]
-    assert "renovação necessária" in result["resposta"]
+    assert "Maria Silva" in texto_resposta(result) and "NR-10" in texto_resposta(result)
+    assert "renovação necessária" in texto_resposta(result)
     assert not any(call[0] == "sst" for call in model.calls)
 
 
@@ -582,7 +592,7 @@ def test_employee_cannot_query_other_person_conformity(chat_client, monkeypatch)
     monkeypatch.setattr(sst_tools, "get_postgres_connection", lambda: pytest.fail("Consulta não autorizada ao banco"))
     response = client.post("/chat/messages", json={"message": "Consulte a conformidade de maria@example.com"})
     assert response.status_code == 200
-    assert "Somente gestores" in response.json()["resposta"]
+    assert "Somente gestores" in texto_resposta(response.json())
 
 
 def test_sst_agent_consults_nr_status_for_authenticated_user(chat_client, monkeypatch):
@@ -634,75 +644,16 @@ def test_sst_agent_consults_nr_status_for_authenticated_user(chat_client, monkey
         "guardrail_entrada", "roteador", "sst", "consultar_situacao_nrs",
         "juiz", "guardrail_saida",
     ]
-    assert "NR-10" in body["resposta"] and "situação: vigente" in body["resposta"]
-    assert "NR-18" in body["resposta"] and "ação: renovar" in body["resposta"]
-    assert "Fonte:" not in body["resposta"]
-    assert "PostgreSQL" not in body["resposta"]
+    assert "NR-10" in texto_resposta(body) and "situação: vigente" in texto_resposta(body)
+    assert "NR-18" in texto_resposta(body) and "ação: renovar" in texto_resposta(body)
+    assert "Fonte:" not in texto_resposta(body)
+    assert "PostgreSQL" not in texto_resposta(body)
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "juiz",
     ]
     assert connection.db_cursor.parameters == ["user-a"]
 
 
-def test_router_previews_and_sends_message_only_after_confirmation(chat_client, monkeypatch):
-    client, model, application = chat_client
-
-    class Collection:
-        def __init__(self):
-            self.documents = {}
-        def insert_one(self, document):
-            self.documents[document["_id"]] = document
-        def find_one(self, query):
-            return self.documents.get(query["_id"])
-
-    collection = Collection()
-    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
-    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
-    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
-    monkeypatch.setattr(
-        router_tools,
-        "_resolver_destinatarios",
-        lambda uid, recipient: [(7, 21, "Lucas Souza", "lucas@empresa.com")],
-    )
-    monkeypatch.setattr(router_tools, "get_messages_collection", lambda: collection)
-    model.replies["roteador"] = (
-        'MESSAGE={"destinatario":"lucas@empresa.com",'
-        '"mensagem":"Olá! Podemos conversar amanhã?","confirmar_envio":true}'
-    )
-
-    preview = client.post("/chat/messages", json={
-        "message": "Melhore e mande oi, podemos conversar amanhã para lucas@empresa.com",
-    })
-
-    assert preview.status_code == 200
-    preview_body = preview.json()
-    assert "Prévia para Lucas Souza" in preview_body["resposta"]
-    assert "Olá! Podemos conversar amanhã?" in preview_body["resposta"]
-    assert "Confirma o envio?" in preview_body["resposta"]
-    assert collection.documents == {}
-    session = application.state.chat_service.repository.docs[preview_body["session_id"]]
-    pending = session["acao_pendente"]
-    assert pending["remetente_id"] == 7 and pending["destinatario_id"] == 21
-    assert preview_body["agentes_chamados"] == [
-        "guardrail_entrada", "roteador", "enviar_mensagem", "juiz", "guardrail_saida",
-    ]
-
-    model.calls.clear()
-    sent = client.post("/chat/messages", json={
-        "message": "Sim, pode enviar.",
-        "session_id": preview_body["session_id"],
-    })
-
-    assert sent.status_code == 200
-    assert sent.json()["resposta"] == "Mensagem enviada para Lucas Souza (lucas@empresa.com)."
-    assert sent.json()["agentes_chamados"] == [
-        "guardrail_entrada", "roteador", "enviar_mensagem", "juiz", "guardrail_saida",
-    ]
-    assert [call[0] for call in model.calls] == ["juiz"]
-    document = collection.documents[pending["mensagem_id"]]
-    assert document["remetente_id"] == 7 and document["destinatario_id"] == 21
-    assert document["mensagem"] == "Olá! Podemos conversar amanhã?"
-    assert session["acao_pendente"] is None
 
 
 @pytest.mark.parametrize("message,router_reply,expected_model_calls", [
@@ -764,10 +715,10 @@ def test_router_consults_conversation_with_specific_person(
     })
 
     assert response.status_code == 200
-    assert "Mensagens com Rosa Maduda (rosa@empresa.com):" in response.json()["resposta"]
-    assert "Oi Lucas" in response.json()["resposta"]
-    assert "página 1 de 1" not in response.json()["resposta"]
-    assert "no total; mais recentes primeiro" not in response.json()["resposta"]
+    assert "Mensagens com Rosa Maduda (rosa@empresa.com):" in texto_resposta(response.json())
+    assert "Oi Lucas" in texto_resposta(response.json())
+    assert "página 1 de 1" not in texto_resposta(response.json())
+    assert "no total; mais recentes primeiro" not in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "consultar_conversas", "juiz", "guardrail_saida",
     ]
@@ -846,7 +797,7 @@ def test_router_consults_only_authenticated_users_notifications(
     response = client.post("/chat/messages", json={"message": message})
 
     assert response.status_code == 200
-    assert "Você tem um evento pendente!" in response.json()["resposta"]
+    assert "Você tem um evento pendente!" in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "consultar_notificacoes", "juiz", "guardrail_saida",
     ]
@@ -919,7 +870,7 @@ def test_short_notification_followup_skips_invalid_guardrail_reply(chat_client, 
     })
 
     assert second.status_code == 200
-    assert "Aviso 2" in second.json()["resposta"]
+    assert "Aviso 2" in texto_resposta(second.json())
     assert pages == [(1, 2), (2, 2)]
     assert [call[0] for call in model.calls] == ["juiz"]
 
@@ -950,7 +901,7 @@ def test_google_guidance_shortcut_rejects_extra_or_third_party_instructions(chat
     response = client.post("/chat/messages", json={"message": message})
     assert response.status_code == 200
     assert response.json()["agentes_chamados"] == ["guardrail_entrada"]
-    assert "/integracoes/google-calendar/conectar" not in response.json()["resposta"]
+    assert "/integracoes/google-calendar/conectar" not in texto_resposta(response.json())
 
 
 @pytest.mark.parametrize("message,expected_period,expected_consult", [
@@ -1040,8 +991,8 @@ def test_router_consults_own_access_days_without_claiming_login_count(
         "/chat/messages", json={"message": message},
     )
     assert response.status_code == 200
-    assert "2 dia(s)" in response.json()["resposta"]
-    assert ("não cada login" in response.json()["resposta"]) is explained
+    assert "2 dia(s)" in texto_resposta(response.json())
+    assert ("não cada login" in texto_resposta(response.json())) is explained
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "consultar_acessos", "juiz", "guardrail_saida",
     ]
@@ -1062,77 +1013,16 @@ def test_access_counting_explanation_is_available_only_on_request(chat_client, m
     )
 
     assert response.status_code == 200
-    assert "não cada login" in response.json()["resposta"]
-    assert "não informa horários" in response.json()["resposta"]
+    assert "não cada login" in texto_resposta(response.json())
+    assert "não informa horários" in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "consultar_acessos", "juiz", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
 
 
-@pytest.mark.parametrize("confirmation", [
-    "Sim", "É isso mesmo que eu quero enviar", "Pode mandar", "Confirmo o envio",
-])
-def test_simple_message_previews_immediately_and_accepts_natural_confirmation(
-    chat_client, monkeypatch, confirmation,
-):
-    client, model, application = chat_client
-
-    class Collection:
-        def __init__(self):
-            self.documents = {}
-
-        def insert_one(self, document):
-            self.documents[document["_id"]] = document
-
-    collection = Collection()
-    monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
-    monkeypatch.setattr(config, "MONGODB_URI", "mongodb://localhost:27017")
-    monkeypatch.setattr(config, "MONGODB_DATABASE", "astro")
-    monkeypatch.setattr(
-        router_tools, "_resolver_destinatarios",
-        lambda uid, recipient: [(7, 21, "Rosa Maduda", "rosa@empresa.com")]
-        if recipient == "Rosa Maduda" or recipient == "rosa@empresa.com" else [],
-    )
-    monkeypatch.setattr(router_tools, "get_messages_collection", lambda: collection)
-    model.replies["roteador"] = "ROUTE=rh"  # O pedido evidente dispensa a classificação do LLM.
-
-    preview = client.post("/chat/messages", json={
-        "message": "Mande um oi para a Rosa Maduda, por favor",
-    })
-
-    assert preview.status_code == 200
-    assert "Prévia para Rosa Maduda (rosa@empresa.com):\n\nOi\n\nConfirma" in (
-        preview.json()["resposta"]
-    )
-    assert collection.documents == {}
-    assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
-
-    session_id = preview.json()["session_id"]
-    pending = application.state.chat_service.repository.docs[session_id]["acao_pendente"]
-    sent = client.post("/chat/messages", json={
-        "message": confirmation, "session_id": session_id,
-    })
-
-    assert sent.status_code == 200
-    assert sent.json()["resposta"] == "Mensagem enviada para Rosa Maduda (rosa@empresa.com)."
-    assert collection.documents[pending["mensagem_id"]]["mensagem"] == "Oi"
-    assert application.state.chat_service.repository.docs[session_id]["acao_pendente"] is None
 
 
-def test_simple_message_does_not_infer_send_from_negation_or_edit_request():
-    from app.modules.chat.graph import _pedido_simples_de_mensagem
-
-    assert _pedido_simples_de_mensagem("Não mande um oi para a Rosa Maduda") is None
-    assert _pedido_simples_de_mensagem("Não quero mandar um oi para Rosa Maduda") is None
-    assert _pedido_simples_de_mensagem("Como mandar um oi para Rosa Maduda?") is None
-    assert _pedido_simples_de_mensagem("Melhore e mande 'oi' para Rosa Maduda") is None
-    assert _pedido_simples_de_mensagem("Mande um oi para meu amigo") is None
-    assert _pedido_simples_de_mensagem("Mande um oi para a Rosa Maduda").mensagem == "Oi"
-    assert _pedido_simples_de_mensagem("Manda um oi pra Rosa Maduda").destinatario \
-        == "Rosa Maduda"
-    assert _pedido_simples_de_mensagem("Envie a mensagem 'Oi Duda' para Rosa Maduda") \
-        .destinatario == "Rosa Maduda"
 
 
 def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatch):
@@ -1191,7 +1081,7 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     tool_result = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
     assert tool_result["resultado"]["evidencia_tool"]["resultado"]["usuarios"][0]["email"].startswith("[ASTRO_PII_")
     assert "ana@example.com" not in str(judge_call[1])
-    assert "ana@example.com" in response.json()["resposta"]
+    assert response.json()["blocos"][1]["linhas"][0]["email"] == "ana@example.com"
     evidence = json.loads(judge_call[1][-1].content.split("\n", 1)[1])["resultado"]
     assert evidence["evidencia_tool"]["nome"] == "buscar_outros_usuarios"
     assert evidence["evidencia_tool"]["resultado"]["status"] == "ok"
@@ -1258,18 +1148,18 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, fiel
     if field:
         assert set(data) == {field}
         expected = {"nome": "Lucas", "email": "lucas@example.com", "cargo": "Analista", "unidade": "Matriz"}[field]
-        assert expected in response.json()["resposta"]
+        assert expected in texto_resposta(response.json())
         if field in {"nome", "email"}:
             assert data[field].startswith("[ASTRO_PII_")
             assert expected not in str(judge_call[1])
         else:
             assert data[field] == expected
-        assert "12345678901" not in response.json()["resposta"]
+        assert "12345678901" not in texto_resposta(response.json())
         assert "12345678901" not in str(judge_call[1])
     else:
         assert data["cpf"].startswith("[ASTRO_PII_")
         assert "12345678901" not in str(judge_call[1])
-        assert "12345678901" in response.json()["resposta"]
+        assert "12345678901" in texto_resposta(response.json())
 
 
 @pytest.mark.parametrize("message", [
@@ -1304,7 +1194,7 @@ def test_employee_search_all_users_is_deterministically_denied(chat_client):
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "juiz",
     ]
-    assert response.json()["resposta"] == "Seu perfil nao permite consultar outros usuarios."
+    assert texto_resposta(response.json()) == "Seu perfil nao permite consultar outros usuarios."
 
 
 @pytest.mark.parametrize("first_reply", [
@@ -1324,7 +1214,7 @@ def test_python_identity_request_is_blocked_at_input_without_downstream_agents(c
     response = client.post("/chat/messages", json={"message": message})
 
     assert response.status_code == 200
-    assert "não gera respostas em código" in response.json()["resposta"]
+    assert "não gera respostas em código" in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == ["guardrail_entrada"]
     assert [call[0] for call in model.calls] == ["guardrail_entrada"] * (2 if first_reply else 1)
     if first_reply:
@@ -1365,7 +1255,7 @@ def test_incomplete_vietnam_meeting_asks_for_details_without_tools(chat_client, 
         "message": "eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?",
     })
     assert response.status_code == 200
-    assert response.json()["resposta"] == question
+    assert texto_resposta(response.json()) == question
     called = [call[0] for call in model.calls]
     assert called == ["guardrail_entrada"] + ["agenda"] * (2 if needs_retry else 1) + ["juiz", "guardrail_saida"]
     if needs_retry:
@@ -1388,7 +1278,7 @@ def test_incomplete_vietnam_meeting_asks_for_details_without_tools(chat_client, 
         "session_id": response.json()["session_id"],
     })
     assert followup.status_code == 200
-    assert followup.json()["resposta"] == next_question
+    assert texto_resposta(followup.json()) == next_question
     agenda_messages = [call for call in model.calls if call[0] == "agenda"][-1][1]
     assert any("horário do vietnã" in item.content for item in agenda_messages)
     assert any("30/09/2026" in item.content for item in agenda_messages)
@@ -1425,7 +1315,7 @@ def test_direct_and_faq_flows(chat_client):
     assert direct["agentes_chamados"] == [
         "guardrail_entrada", "roteador",
     ]
-    assert direct["resposta"] == "Olá! Sou o Agente do Astro. Como posso ajudar hoje?"
+    assert texto_resposta(direct) == "Olá! Sou o Agente do Astro. Como posso ajudar hoje?"
     assert model.calls == []
     model.calls.clear()
     model.route = "faq"
@@ -1433,7 +1323,7 @@ def test_direct_and_faq_flows(chat_client):
     assert faq["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "consultar_normas", "faq", "juiz", "guardrail_saida",
     ]
-    assert faq["resposta"] == "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
+    assert texto_resposta(faq) == "O Astro centraliza orientações internas. Fonte: normas.pdf, página 1."
     assert application.state.chat_service.faq_vectors.calls == ["Qual a norma interna?"]
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "faq", "juiz", "guardrail_saida",
@@ -1444,9 +1334,9 @@ def test_direct_and_faq_flows(chat_client):
     judge_call = next(call for call in model.calls if call[0] == "juiz")
     judged = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
     assert judged["resultado"]["trechos"][0]["fonte"] == "normas.pdf"
-    assert judged["resposta_candidata"] == faq["resposta"]
+    assert judged["resposta_candidata"] == texto_resposta(faq)
     session = application.state.chat_service.repository.docs[faq["session_id"]]
-    assert session["mensagens"][-1]["content"] == faq["resposta"]
+    assert session["mensagens"][-1]["content"] == texto_resposta(faq)
 
 
 def test_chat_roles_are_created_with_langchain_agents(chat_client, monkeypatch):
@@ -1508,7 +1398,7 @@ def test_faq_uses_curated_public_sources_for_official_current_material(
 
     assert response.status_code == 200
     body = response.json()
-    assert official_url in body["resposta"]
+    assert official_url in texto_resposta(body)
     assert body["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "consultar_normas",
         "consultar_fontes_publicas", "faq", "juiz", "guardrail_saida",
@@ -1556,8 +1446,8 @@ def test_sst_uses_official_guides_for_general_guidance(chat_client, monkeypatch)
 
     assert response.status_code == 200
     body = response.json()
-    assert "Cartilha de prevenção de riscos psicossociais" in body["resposta"]
-    assert source.url in body["resposta"]
+    assert "Cartilha de prevenção de riscos psicossociais" in texto_resposta(body)
+    assert source.url in texto_resposta(body)
     assert body["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "sst", "consultar_orientacoes_sst",
         "juiz", "guardrail_saida",
@@ -1607,7 +1497,7 @@ def test_chat_response_format_query_parameter(
     response = client.post(f"/chat/messages{query}", json={"message": "Uma orientação, por favor"})
 
     assert response.status_code == 200
-    assert response.json()["resposta"] == expected
+    assert texto_resposta(response.json()) == expected
     assert f'"formato_resposta": "{context_format}"' in model.calls[0][1][0].content
     stored = application.state.chat_service.repository.docs[response.json()["session_id"]]
     assert stored["mensagens"][-1]["content"] == expected
@@ -1652,10 +1542,10 @@ def test_pdf_request_uses_approved_faq_answer_and_returns_temporary_link(chat_cl
 
     assert response.status_code == 200
     body = response.json()
-    assert "[Baixar PDF](https://r2.example/arquivo.pdf?assinatura=teste)" in body["resposta"]
-    assert "link válido por 5 horas" in body["resposta"]
-    assert "Fonte: normas.pdf, página 1." in body["resposta"]
-    assert "Paráfrase indevida" not in body["resposta"]
+    assert "[Baixar PDF](https://r2.example/arquivo.pdf?assinatura=teste)" in texto_resposta(body)
+    assert "link válido por 5 horas" in texto_resposta(body)
+    assert "Fonte: normas.pdf, página 1." in texto_resposta(body)
+    assert "Paráfrase indevida" not in texto_resposta(body)
     assert body["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "consultar_normas", "faq", "juiz",
         "guardrail_saida", "gerar_pdf",
@@ -1694,7 +1584,7 @@ def test_pdf_promise_is_routed_to_content_and_waits_for_download(chat_client, mo
     response = client.post("/chat/messages", json={"message": message})
     assert response.status_code == 200
     assert completed == [True]
-    answer = response.json()["resposta"]
+    answer = texto_resposta(response.json())
     assert "[Baixar PDF](https://r2.example/arquivo.pdf?assinatura=teste)" in answer
     assert "O Astro centraliza orientações internas." in answer
     assert "Gerarei" not in answer and "Em breve" not in answer
@@ -1723,7 +1613,7 @@ def test_rerouted_pdf_promise_reports_missing_data_or_upload_failure(chat_client
         "message": "Consegue fazer um PDF para mim explicando o que é o Astro?",
     })
     assert response.status_code == 200
-    answer = response.json()["resposta"]
+    answer = texto_resposta(response.json())
     assert "Não consegui gerar o PDF agora." in answer if has_documents else "Não gerei o PDF" in answer
     assert "Gerarei" not in answer and "em breve" not in answer
     assert "Baixar PDF" not in answer
@@ -1734,8 +1624,8 @@ def test_unroutable_pdf_promise_does_not_claim_future_delivery(chat_client):
     model.replies["roteador"] = "Claro! Gerarei o PDF e enviarei em breve."
     response = client.post("/chat/messages", json={"message": "Consegue fazer um PDF para mim?"})
     assert response.status_code == 200
-    assert "Nenhum arquivo foi gerado." in response.json()["resposta"]
-    assert "Gerarei" not in response.json()["resposta"]
+    assert "Nenhum arquivo foi gerado." in texto_resposta(response.json())
+    assert "Gerarei" not in texto_resposta(response.json())
     assert "gerar_pdf" not in response.json()["agentes_chamados"]
 
 
@@ -1753,8 +1643,8 @@ def test_pdf_success_without_download_url_reports_failure(chat_client, monkeypat
     monkeypatch.setattr(chat_graph, "gerar_pdf", PdfTool())
     response = client.post("/chat/messages", json={"message": "Gere um PDF com o objetivo do Astro."})
     assert response.status_code == 200
-    assert "Não consegui gerar o PDF agora." in response.json()["resposta"]
-    assert "Baixar PDF" not in response.json()["resposta"]
+    assert "Não consegui gerar o PDF agora." in texto_resposta(response.json())
+    assert "Baixar PDF" not in texto_resposta(response.json())
 
 
 def test_pdf_link_is_plain_text_when_markdown_is_disabled(chat_client, monkeypatch):
@@ -1774,7 +1664,7 @@ def test_pdf_link_is_plain_text_when_markdown_is_disabled(chat_client, monkeypat
     )
 
     assert response.status_code == 200
-    answer = response.json()["resposta"]
+    answer = texto_resposta(response.json())
     assert "[Baixar PDF](" not in answer
     assert "Baixar PDF: https://r2.example/arquivo.pdf?assinatura=teste" in answer
     assert "Link válido por 5 horas." in answer
@@ -1803,8 +1693,8 @@ def test_pdf_is_not_uploaded_when_consultation_has_no_data(chat_client, monkeypa
         "/chat/messages", json={"message": "Gere um PDF sobre esta norma ausente."},
     )
     assert response.status_code == 200
-    assert "Não gerei o PDF" in response.json()["resposta"]
-    assert "Baixar PDF" not in response.json()["resposta"]
+    assert "Não gerei o PDF" in texto_resposta(response.json())
+    assert "Baixar PDF" not in texto_resposta(response.json())
 
 
 def test_pdf_upload_failure_keeps_the_approved_answer(chat_client, monkeypatch):
@@ -1822,9 +1712,9 @@ def test_pdf_upload_failure_keeps_the_approved_answer(chat_client, monkeypatch):
         "/chat/messages", json={"message": "Gere um PDF com o objetivo do Astro."},
     )
     assert response.status_code == 200
-    assert "O Astro centraliza orientações internas." in response.json()["resposta"]
-    assert "Não consegui gerar o PDF agora." in response.json()["resposta"]
-    assert "Baixar PDF" not in response.json()["resposta"]
+    assert "O Astro centraliza orientações internas." in texto_resposta(response.json())
+    assert "Não consegui gerar o PDF agora." in texto_resposta(response.json())
+    assert "Baixar PDF" not in texto_resposta(response.json())
 
 
 def test_pdf_is_not_generated_when_guardrail_ignores_negative_judge(chat_client, monkeypatch):
@@ -1850,7 +1740,7 @@ def test_pdf_is_not_generated_when_guardrail_ignores_negative_judge(chat_client,
         "Qual é o objetivo do Astro? Gere um PDF com a explicação e as fontes utilizadas."
     )})
     assert response.status_code == 200
-    assert response.json()["resposta"] == (
+    assert texto_resposta(response.json()) == (
         "Não consegui validar esta resposta com as informações disponíveis."
     )
 
@@ -1875,7 +1765,7 @@ def test_faq_without_relevant_chunks_does_not_call_model(chat_client):
     application.state.chat_service.faq_vectors.results = []
     response = client.post("/chat/messages", json={"message": "Pergunta ausente"})
     assert response.status_code == 200
-    assert response.json()["resposta"] == (
+    assert texto_resposta(response.json()) == (
         "Não encontrei essa informação nas normas disponibilizadas ao Astro."
     )
     assert [call[0] for call in model.calls] == [
@@ -1896,9 +1786,9 @@ def test_internal_vacation_policy_consults_documents_before_declining(chat_clien
     assert "roteador" not in [call[0] for call in model.calls]
     if has_documents:
         assert "consultar_normas" in response.json()["agentes_chamados"]
-        assert "normas.pdf" in response.json()["resposta"]
+        assert "normas.pdf" in texto_resposta(response.json())
     else:
-        assert response.json()["resposta"] == (
+        assert texto_resposta(response.json()) == (
             "Não encontrei essa informação nas normas disponibilizadas ao Astro."
         )
 
@@ -1913,8 +1803,8 @@ def test_internal_events_do_not_require_google_connection(chat_client):
         "message": "Preciso conectar o Google Calendar para consultar meus eventos internos?",
     })
     assert response.status_code == 200
-    assert "eventos internos" in response.json()["resposta"]
-    assert "não possui integração" in response.json()["resposta"]
+    assert "eventos internos" in texto_resposta(response.json())
+    assert "não possui integração" in texto_resposta(response.json())
     assert "guardrail_entrada" not in [call[0] for call in model.calls]
     assert "consultar_google_calendar" not in response.json()["agentes_chamados"]
 
@@ -1947,7 +1837,7 @@ def test_input_guard_stops_graph(chat_client, decision):
     response = client.post("/chat/messages", json={"message": "Pedido"})
     assert response.status_code == 200
     assert response.json()["agentes_chamados"] == ["guardrail_entrada"]
-    assert response.json()["resposta"] == "Explique seu pedido."
+    assert texto_resposta(response.json()) == "Explique seu pedido."
     session = application.state.chat_service.repository.docs[response.json()["session_id"]]
     assert bool(session["mensagens"]) == (decision == "esclarecer")
 
@@ -1963,7 +1853,7 @@ def test_output_guard_replaces_candidate(chat_client, status):
         "status": status, "motivo": "Falta evidência.", "resposta": "Resposta revisada.",
     })
     response = client.post("/chat/messages", json={"message": "Pedido"})
-    assert response.json()["resposta"] == "Resposta revisada."
+    assert texto_resposta(response.json()) == "Resposta revisada."
     session = application.state.chat_service.repository.docs[response.json()["session_id"]]
     assert bool(session["mensagens"]) == (status == "corrigido")
 
@@ -1994,27 +1884,27 @@ def test_invalid_agent_reply_fails_closed(chat_client, agent, reply):
     response = client.post("/chat/messages", json={"message": "Pedido"})
     if agent == "roteador":
         assert response.status_code == 200
-        assert "Pode reformular" in response.json()["resposta"]
+        assert "Pode reformular" in texto_resposta(response.json())
         assert [call[0] for call in model.calls] == ["guardrail_entrada", "roteador", "roteador"]
         return
     if agent in {"rh", "sst", "agenda"}:
         assert response.status_code == 200
-        assert "Pode reformular" in response.json()["resposta"]
+        assert "Pode reformular" in texto_resposta(response.json())
         assert [call[0] for call in model.calls].count(agent) == 2
-        assert "Não consegui interpretar" in response.json()["resposta"]
+        assert "Não consegui interpretar" in texto_resposta(response.json())
         return
     if agent in {"guardrail_entrada", "juiz", "guardrail_saida"}:
         assert response.status_code == 200
-        assert "não consegui" in response.json()["resposta"].lower()
-        assert "enviada" not in response.json()["resposta"]
-        assert "marcada" not in response.json()["resposta"]
+        assert "não consegui" in texto_resposta(response.json()).lower()
+        assert "enviada" not in texto_resposta(response.json())
+        assert "marcada" not in texto_resposta(response.json())
         if agent == "guardrail_entrada":
             assert {call[0] for call in model.calls} == {"guardrail_entrada"}
         assert application.state.chat_service.active_requests == 0
         return
     assert agent == "orquestrador"
     assert response.status_code == 200
-    assert "Pode reformular" in response.json()["resposta"]
+    assert "Pode reformular" in texto_resposta(response.json())
     assert all("lock_token" not in doc for doc in application.state.chat_service.repository.docs.values())
     assert application.state.chat_service.active_requests == 0
 
@@ -2028,7 +1918,7 @@ def test_internal_prompt_request_never_reaches_reviewer(chat_client, message):
     model.replies["guardrail_entrada"] = "não é JSON"
     response = client.post("/chat/messages", json={"message": message})
     assert response.status_code == 200
-    assert "Não posso mostrar" in response.json()["resposta"]
+    assert "Não posso mostrar" in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == ["guardrail_entrada"]
     assert model.calls == []
     assert not application.state.chat_service.repository.docs[response.json()["session_id"]]["mensagens"]
@@ -2048,8 +1938,8 @@ def test_internal_prompt_markers_are_not_delivered_even_if_model_approves(chat_c
         model.replies[source] = json.dumps({"status": "corrigido", "motivo": "Revisada", "resposta": leaked})
     response = client.post("/chat/messages", json={"message": "Explique suas funcionalidades"})
     assert response.status_code == 200
-    assert "Não posso mostrar" in response.json()["resposta"]
-    assert leaked not in response.json()["resposta"]
+    assert "Não posso mostrar" in texto_resposta(response.json())
+    assert leaked not in texto_resposta(response.json())
     assert not application.state.chat_service.repository.docs[response.json()["session_id"]]["mensagens"]
 
 
@@ -2078,7 +1968,7 @@ def test_invalid_specialist_decision_asks_for_clarification_without_tools(chat_c
         monkeypatch.setitem(tools, key, ForbiddenTool())
     response = client.post("/chat/messages", json={"message": "Preciso de uma orientação"})
     assert response.status_code == 200
-    assert "Pode reformular" in response.json()["resposta"]
+    assert "Pode reformular" in texto_resposta(response.json())
     assert [call[0] for call in model.calls].count(domain) == 2
     assert "orquestrador" not in [call[0] for call in model.calls]
     session = application.state.chat_service.repository.docs[response.json()["session_id"]]
@@ -2135,7 +2025,7 @@ def test_school_material_mind_map_request_returns_scope_limitation(chat_client, 
     })
 
     assert response.status_code == 200
-    assert "fora do escopo" in response.json()["resposta"]
+    assert "fora do escopo" in texto_resposta(response.json())
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
     ]
@@ -2160,7 +2050,7 @@ def test_identity_answers_do_not_depend_on_guardrail_or_router_model(chat_client
     response = client.post("/chat/messages", json={"message": message})
 
     assert response.status_code == 200
-    assert "Sou o Agente do Astro" in response.json()["resposta"]
+    assert "Sou o Agente do Astro" in texto_resposta(response.json())
     assert model.calls == []
 
 
@@ -2175,7 +2065,7 @@ def test_session_history_and_ownership(chat_client):
     assert second.json()["session_id"] == first["session_id"]
     messages = next(call for call in model.calls if call[0] == "roteador")[1]
     assert [message.content for message in messages[1 + len(example_messages("roteador")):]] == [
-        "Primeira mensagem", first["resposta"], "E agora?",
+        "Primeira mensagem", texto_resposta(first), "E agora?",
     ]
     assert '"ultima_rota": "rh"' in messages[0].content
     assert '"fuso": "America/Sao_Paulo"' in messages[0].content
@@ -2221,7 +2111,7 @@ def test_judge_flags_response_and_guardrail_must_change_it(chat_client):
     })
     response = client.post("/chat/messages", json={"message": "A operação terminou?"})
     assert response.status_code == 200
-    assert response.json()["resposta"] == "Não consigo confirmar que essa operação foi realizada."
+    assert texto_resposta(response.json()) == "Não consigo confirmar que essa operação foi realizada."
     judge_data = json.loads(model.calls[-2][1][-1].content.split("\n", 1)[1])
     assert judge_data["resposta_candidata"] == "Olá! Como posso ajudar?"
     guard_data = json.loads(model.calls[-1][1][-1].content.split("\n", 1)[1])
@@ -2243,7 +2133,7 @@ def test_guardrail_cannot_ignore_negative_judge(chat_client, guard_status):
     })
     response = client.post("/chat/messages", json={"message": "Pedido"})
     assert response.status_code == 200
-    assert response.json()["resposta"] == (
+    assert texto_resposta(response.json()) == (
         "Não consegui validar esta resposta com as informações disponíveis."
     )
     assert all(not doc["mensagens"] for doc in application.state.chat_service.repository.docs.values())
@@ -2370,10 +2260,10 @@ def test_calendar_requests_explain_removal_without_offering_connection(chat_clie
     response = client.post(f"/chat/messages?markdown={str(markdown).lower()}", json={"message": message})
     assert response.status_code == 200
     body = response.json()
-    assert "não possui integração" in body["resposta"]
-    assert "eventos internos" in body["resposta"]
-    assert "google-calendar-conectar" not in body["resposta"]
-    assert "/integracoes/" not in body["resposta"]
+    assert "não possui integração" in texto_resposta(body)
+    assert "eventos internos" in texto_resposta(body)
+    assert "google-calendar-conectar" not in texto_resposta(body)
+    assert "/integracoes/" not in texto_resposta(body)
     assert [call[0] for call in model.calls] == ["guardrail_entrada"]
     assert application.state.chat_service.repository.docs[body["session_id"]]["acao_pendente"] is None
 
@@ -2394,7 +2284,7 @@ def test_old_calendar_draft_is_discarded_without_losing_conversation(chat_client
     assert doc["acao_pendente"] is None
     assert doc["mensagens"][:len(history)] == history
     assert "criar_evento_google_calendar" not in response.json()["agentes_chamados"]
-    assert "indisponível" in response.json()["resposta"]
+    assert "indisponível" in texto_resposta(response.json())
 
 
 @pytest.mark.parametrize("action", ["consultar_google_calendar", "criar_evento_google_calendar"])
@@ -2405,7 +2295,7 @@ def test_obsolete_model_calendar_decision_cannot_execute_tools(chat_client, acti
     response = client.post("/chat/messages", json={"message": "Retome aquele pedido de agenda."})
     assert response.status_code == 200
     assert action not in response.json()["agentes_chamados"]
-    assert "Não consegui interpretar" in response.json()["resposta"]
+    assert "Não consegui interpretar" in texto_resposta(response.json())
 
 
 def test_grafico_no_chat_e_historico_preservam_ordem_e_escopo(chat_client, monkeypatch):
@@ -2441,7 +2331,7 @@ def test_grafico_nao_e_emitido_quando_juiz_rejeita(chat_client, monkeypatch):
     client, model, _ = chat_client
     model.replies["juiz"] = json.dumps({"status": "rejeitado", "motivo": "Inconsistência", "problemas": ["dados"]})
     body = client.post("/chat/messages", json={"message": "Mostre um gráfico dos meus treinamentos"}).json()
-    assert body["blocos"] == []
+    assert [block["tipo"] for block in body["blocos"]] == ["texto"]
 
 
 @pytest.mark.parametrize("question,tool_name,kind,values", [
@@ -2486,21 +2376,22 @@ def test_tabela_com_avatar_tem_url_efemera_e_reautoriza_historico(chat_client, m
     model.route = "rh"
     model.replies["rh"] = json.dumps({"acao":"buscar_outros_usuarios", "filtros":{}, "resposta":None})
     body = client.post("/chat/messages", json={"message":"Liste funcionários em tabela e mostre suas fotos"}).json()
-    assert [b["tipo"] for b in body["blocos"]] == ["texto", "tabela", "galeria_usuarios", "texto"]
-    assert body["blocos"][2]["imagens"][0]["url"] == "https://example.test/signed"
+    assert [b["tipo"] for b in body["blocos"]] == ["texto", "tabela", "texto"]
+    assert body["blocos"][1]["linhas"][0]["foto"]["tipo"] == "imagem"
+    assert body["blocos"][1]["linhas"][0]["foto"]["url"] == "https://example.test/signed"
     stored = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"][-1]
-    assert stored["blocos"][2]["imagens"][0]["url"] is None
+    assert stored["blocos"][1]["linhas"][0]["foto"]["url"] is None
     history = client.get(f"/sessions/{body['session_id']}/messages").json()
-    assert history["mensagens"][-1]["blocos"][2]["imagens"][0]["url"] == "https://example.test/signed"
+    assert history["mensagens"][-1]["blocos"][1]["linhas"][0]["foto"]["url"] == "https://example.test/signed"
     assert len(calls) == 2
 
 
 @pytest.mark.parametrize("question,expected", [
     ("Liste funcionários em tabela", ["texto", "tabela", "texto"]),
-    ("Liste funcionários e mostre fotos", ["texto", "galeria_usuarios", "texto"]),
-    ("Liste funcionários com tabela e fotos", ["texto", "tabela", "galeria_usuarios", "texto"]),
+    ("Liste funcionários e mostre fotos", ["texto", "tabela", "texto"]),
+    ("Liste funcionários com tabela e fotos", ["texto", "tabela", "texto"]),
 ])
-def test_tabela_e_galeria_funcionam_independentes_e_juntas(chat_client, monkeypatch, question, expected):
+def test_fotos_de_usuarios_aparecem_na_tabela(chat_client, monkeypatch, question, expected):
     from langchain_core.tools import tool
     from langchain_core.runnables import RunnableConfig
     from app.modules.chat import subgraphs, service as chat_service
@@ -2517,3 +2408,171 @@ def test_tabela_e_galeria_funcionam_independentes_e_juntas(chat_client, monkeypa
     response = client.post("/chat/messages", json={"message":question})
     assert response.status_code == 200
     assert [block["tipo"] for block in response.json()["blocos"]] == expected
+
+@pytest.mark.parametrize("agent", ["roteador", "rh", "sst", "agenda", "guardrail_entrada"])
+def test_long_listing_keeps_latest_reference_within_agent_budget(agent):
+    from app.modules.chat.agents import _history_for_agent
+    history = [
+        {"role": "user", "content": "Liste os funcionários"},
+        {"role": "assistant", "content": "Funcionários da unidade: " + "Ana: Analista; " * 1200 + "Página 1 de 3. Total: 103 usuários."},
+    ]
+    selected = _history_for_agent(agent, history)
+    assert [item["role"] for item in selected] == ["user", "assistant"]
+    assert "Funcionários da unidade" in selected[-1]["content"]
+    assert "Total: 103 usuários" in selected[-1]["content"]
+    assert "trecho omitido" in selected[-1]["content"]
+    assert sum(len(item["content"]) for item in selected) <= (6000 if agent in {"roteador", "guardrail_entrada"} else 12000)
+    assert "trecho omitido" not in history[-1]["content"]
+
+
+def test_followup_router_receives_previous_long_answer(chat_client):
+    client, model, application = chat_client
+    sid = str(uuid4())
+    repo = application.state.chat_service.repository
+    async def prepare():
+        await repo.ensure(sid, "user-a")
+        repo.docs[sid]["ultima_rota"] = "rh"
+        repo.docs[sid]["mensagens"] = [
+            {"role": "human", "content": "Liste funcionários"},
+            {"role": "assistant", "content": "Funcionários da unidade: " + "Ana: Analista; " * 430 + " Página 1 de 3."},
+        ]
+    asyncio.run(prepare())
+    model.replies["roteador"] = json.dumps({"acao":"consultar_indicadores_equipe", "filtros":{"agrupar_por":"cargo"}})
+    response = client.post("/chat/messages", json={"session_id": sid, "message": "Aí gere um gráfico com base nesses por favor"})
+    assert response.status_code == 200
+    router_call = next(call for call in model.calls if call[0] == "roteador")
+    previous = [message.content for message in router_call[1] if isinstance(message, AIMessage)]
+    assert any("Funcionários da unidade" in content and "Página 1 de 3" in content for content in previous)
+    assert "Seu perfil" in texto_resposta(response.json())
+
+@pytest.mark.parametrize("situations,expected", [(["VIGENTE", "PENDENTE", "VIGENTE"], 66.67), ([], None), (["REALIZACAO_NECESSARIA"], 0)])
+def test_ficha_usuario_usa_contagens_verificadas_e_avatar_efemero(chat_client, monkeypatch, situations, expected):
+    from langchain_core.tools import tool
+    from app.modules.chat import subgraphs, service as chat_service
+    @tool("consultar_conformidade_usuario")
+    def fake_profile(pessoa: str) -> dict:
+        """Consulta sintética autorizada."""
+        return {"status":"ok", "consulta_terceiro":True, "usuario":"Ana", "email":"ana@example.com", "cargo":"Técnica", "unidade":"Matriz", "data_referencia":"2026-10-30", "quantidade":len(situations), "nrs":[{"numero":i+1,"titulo":"NR", "situacao":status,"acao_necessaria":"NENHUMA", "data_validade":None,"atividade_pendente":False,"data_inicio_pendencia":None,"data_termino_pendencia":None} for i,status in enumerate(situations)]}
+    monkeypatch.setitem(subgraphs.SST_TOOLS, "consultar_conformidade_usuario", fake_profile)
+    monkeypatch.setattr(chat_service, "resolve_avatar_urls", lambda *_: {"ana@example.com":"https://example.test/signed"})
+    client, model, application = chat_client
+    model.route = "sst"
+    response = client.post("/chat/messages", json={"message":"Mostre a ficha de ana@example.com"})
+    assert response.status_code == 200
+    body = response.json()
+    card = body["blocos"][0]
+    assert card["tipo"] == "ficha_usuario"
+    assert card["conformidade"]["percentual"] == expected
+    assert card["conformidade"]["total"] == len(situations)
+    assert card["foto"]["url"] == "https://example.test/signed"
+    stored = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"][-1]
+    assert stored["blocos"][0]["foto"]["url"] is None
+    assert client.get(f"/sessions/{body['session_id']}/messages").json()["mensagens"][-1]["blocos"][0]["foto"]["url"] == "https://example.test/signed"
+
+
+def test_message_sender_is_removed_and_legacy_command_rejected():
+    from app.modules.chat.graph import ROTEADOR_TOOLS
+    from app.modules.chat.router_reply import normalize_router_reply
+    assert "enviar_mensagem" not in ROTEADOR_TOOLS
+    assert not hasattr(router_tools, "enviar_mensagem")
+    with pytest.raises(ValueError):
+        normalize_router_reply('MESSAGE={"destinatario":"Ana","mensagem":"oi"}')
+
+
+def test_old_message_draft_is_invalidated_without_sending(chat_client):
+    client, model, application = chat_client
+    sid = str(uuid4())
+    repo = application.state.chat_service.repository
+    async def prepare():
+        await repo.ensure(sid, "user-a")
+        repo.docs[sid]["acao_pendente"] = {"tipo":"enviar_mensagem", "destinatario_email":"ana@example.com", "mensagem":"oi"}
+    asyncio.run(prepare())
+    response = client.post("/chat/messages", json={"session_id":sid,"message":"Sim, pode enviar"})
+    assert response.status_code == 200
+    assert repo.docs[sid]["acao_pendente"] is None
+    assert "enviar_mensagem" not in response.json()["agentes_chamados"]
+
+
+@pytest.mark.parametrize("chart_kind", ["grafico_barras", "grafico_setores"])
+@pytest.mark.parametrize("tool_name,unit", [("consultar_indicadores_equipe","pessoas"),("consultar_grafico_pendencias_nr","pendências"),("consultar_grafico_vencimentos","registros")])
+def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, monkeypatch, chart_kind, tool_name, unit):
+    from langchain_core.tools import tool
+    from app.modules.operational.tools import REGISTRY, TeamArgs
+    from app.infrastructure.astro_queries import request_token
+    @tool(tool_name, args_schema=TeamArgs)
+    async def fake_indicators(config=None, **kwargs) -> dict:
+        """Indicadores simulados do escopo autorizado."""
+        assert request_token.get() == "test-private-token"
+        return {"status":"ok","titulo":"Equipe por cargo","colunas":[{"chave":"categoria","titulo":"Cargo"},{"chave":"quantidade","titulo":"Quantidade"}],"linhas":[{"categoria":"Técnica","quantidade":7}],"total":1,"pagina":1,"total_paginas":1,"completo":True,"fonte":"Cadastro autorizado","tipo_grafico":chart_kind,"unidade_grafico":unit,"grafico":[{"categoria":"Técnica","valor":7}]}
+    monkeypatch.setitem(REGISTRY,tool_name,fake_indicators)
+    client, model, application = chat_client
+    model.replies["roteador"] = json.dumps({"acao":tool_name,"filtros":{"agrupar_por":"cargo","tipo_grafico":chart_kind}})
+    response = client.post("/chat/messages",json={"message":"Mostre a distribuição dos funcionários por cargo"},headers={"Authorization":"Bearer test-private-token"})
+    assert response.status_code == 200
+    body = response.json()
+    assert [b["tipo"] for b in body["blocos"]] == ["texto","tabela",chart_kind,"texto"]
+    assert body["blocos"][2]["unidade"] == unit
+    assert "juiz" in body["agentes_chamados"] and "guardrail_saida" in body["agentes_chamados"]
+    assert next(call for call in model.calls if call[0] == "roteador")[2] is True
+    assert "test-private-token" not in str(model.calls)
+    assert "test-private-token" not in str(application.state.chat_service.repository.docs)
+    assert request_token.get() is None
+
+
+def test_operational_next_page_preserves_filters_and_rechecks_user(chat_client, monkeypatch):
+    from langchain_core.tools import tool
+    from app.modules.operational.tools import REGISTRY, TeamArgs
+    calls = []
+    @tool("consultar_indicadores_equipe", args_schema=TeamArgs)
+    async def fake_pages(config=None, **kwargs) -> dict:
+        """Paginação sintética."""
+        calls.append(kwargs)
+        return {"status":"ok","titulo":"Equipe por cargo","colunas":[{"chave":"categoria","titulo":"Cargo"},{"chave":"quantidade","titulo":"Quantidade"}],"linhas":[{"categoria":"Técnica","quantidade":7}],"total":2,"pagina":kwargs["pagina"],"total_paginas":2,"completo":False,"fonte":"Cadastro"}
+    monkeypatch.setitem(REGISTRY,"consultar_indicadores_equipe",fake_pages)
+    client, model, _ = chat_client
+    model.replies["roteador"] = json.dumps({"acao":"consultar_indicadores_equipe","filtros":{"agrupar_por":"cargo","limite":1}})
+    first = client.post("/chat/messages", json={"message":"Distribuição da equipe por cargo"}).json()
+    second = client.post("/chat/messages", json={"session_id":first["session_id"], "message":"Próxima página"})
+    assert second.status_code == 200
+    assert [item["pagina"] for item in calls] == [1,2]
+    assert all(item["agrupar_por"] == "cargo" and item["limite"] == 1 for item in calls)
+    assert second.json()["blocos"][1]["pagina"] == 2
+
+
+def test_contextual_chart_inherits_rh_filters(chat_client, monkeypatch):
+    from langchain_core.tools import tool
+    from app.modules.operational.tools import REGISTRY, TeamArgs
+    calls = []
+    @tool("consultar_indicadores_equipe", args_schema=TeamArgs)
+    async def fake_context(config=None, **kwargs) -> dict:
+        """Registra os filtros preservados."""
+        calls.append(kwargs)
+        return {"status":"sem_dados","mensagem":"Sem dados nesta página."}
+    monkeypatch.setitem(REGISTRY,"consultar_indicadores_equipe",fake_context)
+    client, model, application = chat_client
+    sid = str(uuid4())
+    repo = application.state.chat_service.repository
+    async def prepare():
+        await repo.ensure(sid,"user-a")
+        repo.docs[sid].update(ultima_rota="rh",consulta_rh={"tipos":["COLABORADOR"],"status":["ATIVO"],"cargo":"Técnica","pagina":2,"limite":20,"consulta":"listar"})
+    asyncio.run(prepare())
+    model.replies["roteador"] = json.dumps({"acao":"consultar_indicadores_equipe","filtros":{"agrupar_por":"cargo"}})
+    response = client.post("/chat/messages",json={"session_id":sid,"message":"Gere um gráfico desses por favor"})
+    assert response.status_code == 200
+    assert calls[0]["tipos"] == ["COLABORADOR"] and calls[0]["status"] == ["ATIVO"]
+    assert calls[0]["cargo"] == "Técnica" and calls[0]["pagina"] == 1
+
+
+def test_current_user_formatter_omits_status_and_registration_from_legacy_data():
+    from app.modules.chat.subgraphs import _formatar_meus_dados
+
+    answer = _formatar_meus_dados({"status": "ok", "dados": {
+        "nome": "Pessoa Teste", "cargo": "Analista",
+        "status": "ATIVO", "criado_em": "2026-09-10T10:30:00",
+    }})
+    assert "Pessoa Teste" in answer
+    assert "Cargo: Analista" in answer
+    assert "Status" not in answer
+    assert "ATIVO" not in answer
+    assert "Cadastrado em" not in answer
+    assert "2026-09-10" not in answer

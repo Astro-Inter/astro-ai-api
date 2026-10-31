@@ -191,7 +191,7 @@ paginação de mensagens nesta entrega. Uma sessão sem mensagens retorna
 individual no contrato atual; use uma chave local para a renderização, se necessário.
 
 Observe os nomes de transporte: a listagem usa `sessions`, o histórico usa
-`mensagens` e a resposta do chat usa `resposta`. Preserve esses nomes nos modelos
+`mensagens` e a resposta do chat usa uma lista ordenada de `blocos`. Preserve esses nomes nos modelos
 de leitura do JSON, mesmo que o aplicativo use outros nomes internamente.
 
 ## Retomar e enviar mensagens
@@ -237,7 +237,7 @@ Content-Type: application/json
 }
 ```
 
-A resposta mantém `session_id`, `resposta` e `agentes_chamados`. Enviar para uma
+A resposta contém `session_id`, `blocos` e `agentes_chamados`, sem `resposta`. Enviar para uma
 sessão encerrada antes de `/iniciar` retorna `409`; enviar para uma sessão de
 outro usuário retorna `404`. O parâmetro existente `markdown=false` continua
 disponível em `/chat/messages` para respostas em texto simples.
@@ -247,13 +247,13 @@ Exemplo ilustrativo de resposta do envio (`200`):
 ```json
 {
   "session_id": "94229143-d20b-4766-80a4-05341435c236",
-  "resposta": "Vou conferir os treinamentos atribuídos a você.",
+  "blocos": [{"tipo":"texto","conteudo":"Vou conferir os treinamentos atribuídos a você."}],
   "agentes_chamados": ["guardrail_entrada", "roteador", "agenda", "orquestrador", "juiz", "guardrail_saida"]
 }
 ```
 
-O conteúdo da resposta e os agentes variam conforme a pergunta. `resposta` contém
-a mensagem pública do assistente; `agentes_chamados` é uma lista de nomes e pode
+O conteúdo da resposta e os agentes variam conforme a pergunta. `blocos` contém
+a mensagem pública do assistente na ordem de renderização; `agentes_chamados` é uma lista de nomes e pode
 estar vazia. O envio retorna JSON, sem streaming neste contrato.
 
 `message` deve ter de 1 a 4.000 caracteres e não pode ser composto só por espaços.
@@ -417,7 +417,7 @@ obtidos da API para esse fluxo.
 1. Valide o texto e bloqueie envios simultâneos para a mesma conversa.
 2. Para conversa nova, envie somente `message`. Para continuação, envie também
    o `session_id` selecionado.
-3. Após sucesso, guarde o UUID da resposta e exiba `resposta` como mensagem do assistente.
+3. Após sucesso, guarde o UUID da resposta e renderize os `blocos` na ordem recebida, sem duplicar o texto.
 4. Atualize a primeira página da lista para refletir título, prévia e posição recentes.
 5. Quando o usuário escolher encerrar, faça `/encerrar` e aguarde o resultado.
 6. Após encerramento concluído, guarde `status: "encerrada"` e atualize a lista.
@@ -521,6 +521,10 @@ Para executar os testes específicos no repositório da API:
 O OpenAPI em `/openapi.json` e a interface `/docs` incluem autenticação Bearer,
 parâmetros, modelos, exemplos e respostas de erro. Renomear e excluir conversas
 não fazem parte desta tarefa.
+
+Os blocos de texto, gráficos, tabela e ficha estão documentados em
+[Contrato de blocos](../integracao-graficos-chat.md). Mensagens antigas do histórico
+podem não ter blocos; nesses casos, use `content`.
 
 ## Persistência Mongo
 

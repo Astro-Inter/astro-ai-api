@@ -25,6 +25,8 @@ from app.modules.chat.prompts.orquestrador import ORQUESTRADOR_PROMPT_COMPLETO
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
 from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch, OutputDecision
 from app.modules.chat.state import ChatState
+from app.modules.operational.tools import REGISTRY as OPERATIONAL_TOOLS, DOMAINS, OperationalDecision, is_operational_request
+from app.modules.operational.prompt import OPERATIONAL_PROMPT
 from app.modules.chat.subgraphs import (
     _filtros_treinamentos,
     pedido_grafico_treinamentos,
@@ -41,7 +43,7 @@ from app.modules.guardrails.entrada import GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 from app.modules.guardrails.saida import GUARDRAIL_SAIDA_PROMPT_COMPLETO
 from app.modules.roteador.tools import (
     ConsultarAcessosArgs, ConsultarConversasArgs, ConsultarNotificacoesArgs,
-    EnviarMensagemArgs, TOOLS_ROTEADOR,
+    TOOLS_ROTEADOR,
 )
 from app.modules.shared.tools import gerar_pdf
 from app.modules.shared.pdf_document import preparar_documento_pdf
@@ -237,72 +239,10 @@ def _pedido_pdf(message: str) -> bool:
     ))
 
 
-def _confirmacao_explicita(message: str) -> bool:
-    normalized = _sem_acentos(message).strip().rstrip(".!?")
-    if normalized in {
-        "sim", "confirmo", "isso mesmo", "e isso mesmo", "esta certo",
-        "sim, eu confirmo", "sim eu confirmo", "pode mandar assim",
-    }:
-        return True
-    action = r"(?:enviar|mandar|envie|envia|manda|mande)"
-    object_detail = (
-        r"(?:\s+(?:a mensagem|isso))?"
-    )
-    return bool(re.fullmatch(
-        rf"(?:sim,?\s+)?(?:eu\s+)?(?:confirmo(?:\s+o envio)?|"
-        rf"pode\s+{action}{object_detail}|{action}{object_detail}|"
-        rf"e isso mesmo que eu quero enviar|esta certo,? pode\s+(?:enviar|mandar))",
-        normalized,
-    ))
 
 
-def _cancelamento_explicito(message: str) -> bool:
-    normalized = message.casefold().strip().rstrip(".!?")
-    return bool(re.fullmatch(
-        r"(nao|não|cancelar|cancele|nao envie|não envie|desista|pode cancelar)",
-        normalized,
-    ))
 
 
-def _pedido_simples_de_mensagem(message: str) -> EnviarMensagemArgs | None:
-    """Prepara pedidos evidentes sem depender do LLM; nunca confirma o envio."""
-    normalized = _sem_acentos(message)
-    send_verb = re.search(r"\b(manda|mande|mandar|envie|enviar|envia)\b", normalized)
-    if send_verb is None:
-        return None
-    if re.search(r"\b(nao|como|se)\b", normalized[:send_verb.start()]):
-        return None
-    if re.search(r"\b(melhor[ae]|reescrev\w*|corrig\w*|reformul\w*)\b", normalized):
-        return None
-
-    recipient_match = re.search(
-        r"\b(?:para|pra|pro)\s+(?:(?:a|o|ao)\s+)?(?P<destinatario>.+?)"
-        r"(?=\s*,?\s*por favor\b|\s+e\s+(?:quero|gostaria|vou)\s+(?:enviar|mandar)\b|$)",
-        message, re.IGNORECASE,
-    )
-    if recipient_match is None:
-        return None
-    recipient = recipient_match.group("destinatario").strip(" \t\r\n.,!?\"'“”")
-    # Pronomes e relações não identificam um destinatário sem consulta adicional.
-    if _sem_acentos(recipient) in {"ele", "ela", "meu amigo", "minha amiga", "alguem"}:
-        return None
-
-    before_recipient = message[:recipient_match.start()]
-    quoted = re.search(
-        r"\b(?:mensagem|texto|dizendo)\s*[:]?\s*['\"“](?P<texto>[^'\"”]+)['\"”]",
-        before_recipient, re.IGNORECASE,
-    ) or re.search(r"['\"“](?P<texto>[^'\"”]+)['\"”]", before_recipient)
-    if quoted:
-        body = quoted.group("texto").strip()
-    elif re.search(r"\b(?:um\s+)?oi\b", _sem_acentos(before_recipient)):
-        body = "Oi"
-    else:
-        return None
-
-    try:
-        return EnviarMensagemArgs(destinatario=recipient, mensagem=body)
-    except ValidationError:
-        return None
 
 
 def _pedido_simples_de_conversa(message: str) -> ConsultarConversasArgs | None:
@@ -587,26 +527,6 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 "rota": "roteador", "resposta": "", "guardar_turno": True,
                 "pdf_solicitado": False, "agentes_chamados": ["guardrail_entrada"],
             }
-        pending = state.get("acao_pendente")
-        if (
-            isinstance(pending, dict)
-            and pending.get("tipo") in {
-                "enviar_mensagem",
-            }
-            and (
-                _confirmacao_explicita(state["mensagem"])
-                or _cancelamento_explicito(state["mensagem"])
-            )
-        ):
-            # A mensagem curta é contextualizada por uma ação criada pelo backend.
-            # A tool ainda revalida sessão, conteúdo, prazo e confirmação exatos.
-            return {
-                "rota": "roteador",
-                "resposta": "",
-                "guardar_turno": False,
-                "pdf_solicitado": False,
-                "agentes_chamados": ["guardrail_entrada"],
-            }
         decision = await invoke_agent(
             model, "guardrail_entrada", GUARDRAIL_ENTRADA_PROMPT_COMPLETO, state, InputDecision,
         )
@@ -639,6 +559,37 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 "rota": "fim", "resposta": answer, "guardar_turno": False,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
+        previous_query = state["contexto"].get("consulta_operacional")
+        if (state["contexto"].get("ultima_rota") == "consulta_operacional" and previous_query
+                and re.fullmatch(r"(?:mostre |quero ver )?(?:a )?proxima pagina(?:,? por favor)?[.!?]*", _sem_acentos(state["mensagem"]).strip())):
+            try:
+                previous = OperationalDecision.model_validate(previous_query)
+                values = previous.model_dump()
+                values["filtros"]["pagina"] += 1
+                decision = OperationalDecision.model_validate(values)
+            except (ValidationError, TypeError, KeyError):
+                return {"rota":"direta", "candidato":"Não consegui continuar esta consulta. Informe os filtros novamente.", "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
+            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(),
+                    "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
+        if is_operational_request(state["mensagem"], state["contexto"].get("ultima_rota", "")):
+            try:
+                decision = await invoke_agent(model, "roteador", OPERATIONAL_PROMPT, state, OperationalDecision)
+            except InvalidAgentResponse:
+                return {"rota":"direta", "candidato":"Não consegui identificar os filtros com segurança. Informe a consulta e o registro desejado.", "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
+            if decision.acao in {"consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"}:
+                values = decision.model_dump()
+                normalized = _sem_acentos(state["mensagem"])
+                previous = state.get("consulta_rh")
+                if (state["contexto"].get("ultima_rota") == "rh" and isinstance(previous, dict)
+                        and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", normalized)):
+                    for field in ("tipos", "status", "nome", "cargo"):
+                        if values["filtros"].get(field) is None and previous.get(field) is not None:
+                            values["filtros"][field] = previous[field]
+                if values["filtros"].get("tipos") is None and re.search(r"\b(funcionarios?|colaboradores)\b", normalized):
+                    values["filtros"]["tipos"] = ["COLABORADOR"]
+                decision = OperationalDecision.model_validate(values)
+            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(),
+                    "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
         employee_filters = _continuacao_rh(state)
         if employee_filters is not None or _contagem_funcionarios(state["mensagem"]):
             return {
@@ -692,35 +643,6 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 "acao_pendente": None,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
-        pending = state.get("acao_pendente")
-        if isinstance(pending, dict) and pending.get("tipo") == "enviar_mensagem":
-            if _cancelamento_explicito(state["mensagem"]):
-                return {
-                    "rota": "direta",
-                    "candidato": "O envio foi cancelado. Nenhuma mensagem foi enviada.",
-                    "acao_pendente": None,
-                    "agentes_chamados": state["agentes_chamados"] + ["roteador"],
-                }
-            if _confirmacao_explicita(state["mensagem"]):
-                decision = EnviarMensagemArgs(
-                    destinatario=pending["destinatario_email"],
-                    mensagem=pending["mensagem"],
-                    confirmar_envio=True,
-                )
-                return {
-                    "rota": "mensagem",
-                    "roteador_decision": decision,
-                    "agentes_chamados": state["agentes_chamados"] + ["roteador"],
-                }
-
-        simple_message = _pedido_simples_de_mensagem(state["mensagem"])
-        if simple_message is not None and memory_request is None:
-            return {
-                "rota": "mensagem",
-                "roteador_decision": simple_message,
-                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
-            }
-
         simple_conversation = _pedido_simples_de_conversa(state["mensagem"])
         if simple_conversation is not None and memory_request is None:
             return {
@@ -781,6 +703,14 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         )
         if code_block:
             command = code_block.group(1).strip()
+        query_match = re.fullmatch(r"QUERY\s*=\s*(\{.*\})", command, re.DOTALL)
+        if query_match:
+            try:
+                decision = OperationalDecision.model_validate_json(query_match.group(1))
+            except ValidationError:
+                raise InvalidAgentResponse("roteador") from None
+            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(),
+                    "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
         memory_match = re.fullmatch(r"MEMORY\s*=\s*(\{.*\})", command, re.DOTALL)
         if memory_match:
             if state.get("memoria_consultada") or search_memory is None:
@@ -791,18 +721,6 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 raise InvalidAgentResponse("roteador") from None
             return {"rota": "memoria", "busca_memoria": search.busca,
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        message_match = re.fullmatch(r"MESSAGE\s*=\s*(\{.*\})", command, re.DOTALL)
-        if message_match:
-            try:
-                decision = EnviarMensagemArgs.model_validate_json(message_match.group(1))
-            except ValidationError:
-                raise InvalidAgentResponse("roteador") from None
-            decision.confirmar_envio = False
-            return {
-                "rota": "mensagem",
-                "roteador_decision": decision,
-                "agentes_chamados": state["agentes_chamados"] + ["roteador"],
-            }
         conversation_text = command
         if conversation_text.startswith("NOTIFICATIONS"):
             match = re.fullmatch(r"NOTIFICATIONS\s*=\s*(\{.*\})", conversation_text, re.DOTALL)
@@ -860,7 +778,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
         if not route and re.search(
-            r"\b(?:ROUTE|MEMORY|MESSAGE|CONVERSATION|NOTIFICATIONS|ACCESSES)\s*=",
+            r"\b(?:ROUTE|MEMORY|MESSAGE|CONVERSATION|NOTIFICATIONS|ACCESSES|QUERY)\s*=",
             command, re.IGNORECASE,
         ):
             raise InvalidAgentResponse("roteador")
@@ -893,62 +811,31 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             "agentes_chamados": state["agentes_chamados"] + ["roteador"],
         }
 
-    async def send_message(state: ChatState):
-        decision = state["roteador_decision"]
-        result = await ROTEADOR_TOOLS["enviar_mensagem"].ainvoke(
-            decision.model_dump(),
-            config={"configurable": {
-                "usuario_atual": state["usuario_atual"].model_dump(),
-                "session_id": state["session_id"],
-                "acao_pendente": state.get("acao_pendente"),
-                "confirmacao_explicita": (
-                    decision.confirmar_envio and _confirmacao_explicita(state["mensagem"])
-                ),
-            }},
-        )
-        status = result.get("status")
-        if status == "aguardando_confirmacao":
-            draft = result["rascunho"]
-            recipient = draft["destinatario"]
-            candidate = (
-                f"Prévia para {recipient['nome']} ({recipient['email']}):\n\n"
-                f"{draft['mensagem']}\n\nConfirma o envio?"
-            )
-            pending = result["acao_pendente"]
-        elif status == "ambiguo":
-            options = "\n".join(
-                f"- {item['nome']} — {item['email']}"
-                for item in result.get("destinatarios", [])
-            )
-            candidate = f"{result['mensagem']}\n{options}" if options else result["mensagem"]
-            pending = None
-        elif status == "ok":
-            recipient = result["destinatario"]
-            candidate = f"Mensagem enviada para {recipient['nome']} ({recipient['email']})."
-            pending = None
-        else:
-            candidate = result.get("mensagem", "Não foi possível processar o envio.")
-            pending = state.get("acao_pendente") if status == "indisponivel" else None
 
-        public_result = {
-            key: value for key, value in result.items() if key != "acao_pendente"
-        }
-        return {
-            "resultado_tool": public_result,
-            "resposta_deterministica": True,
-            "resultado": {
-                "dominio": "roteador",
-                "intencao": "enviar_mensagem",
-                "status": status,
-                "evidencia_tool": {
-                    "nome": "enviar_mensagem",
-                    "resultado": public_result,
-                },
-            },
-            "candidato": candidate,
-            "acao_pendente": pending,
-            "agentes_chamados": state["agentes_chamados"] + ["enviar_mensagem"],
-        }
+    async def operational_query(state: ChatState):
+        decision = OperationalDecision.model_validate(state["operational_decision"])
+        name = decision.acao
+        result = await OPERATIONAL_TOOLS[name].ainvoke(
+            decision.filtros.model_dump(),
+            config={"configurable":{"usuario_atual":state["usuario_atual"].model_dump()}},
+        )
+        if result.get("status") == "ok":
+            # Keep a readable fallback for history, unsupported clients and review.
+            lines = [result["titulo"]]
+            for row in result["linhas"]:
+                lines.append(" · ".join(f"{key}: {value}" for key,value in row.items() if value is not None))
+            if result.get("aviso"):
+                lines.append(result["aviso"])
+            lines.append(f"Página {result['pagina']} de {result['total_paginas']}. Total: {result['total']} registro(s).")
+            candidate = "\n".join(lines)
+            if len(candidate) > 5500:
+                candidate = candidate[:5000] + "\n[Resumo abreviado; consulte a tabela e a paginação.]"
+        else:
+            candidate = result.get("mensagem", "Nenhum registro nesta página; isso não comprova ausência em outras páginas.")
+        return {"resultado_tool":result, "candidato":candidate,"resposta_deterministica":True,
+                "resultado":{"dominio":DOMAINS[name],"intencao":"consultar","status":result.get("status"),
+                             "evidencia_tool":{"nome":name,"resultado":result}},
+                "agentes_chamados":state["agentes_chamados"] + [DOMAINS[name],name]}
 
     async def consult_conversation(state: ChatState):
         decision = state["roteador_decision"]
@@ -1181,10 +1068,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 "consultar_nrs_organizacao",
                 "consultar_conformidade_usuario",
                 "consultar_orientacoes_sst",
-                "enviar_mensagem", "consultar_conversas", "consultar_notificacoes",
+                "consultar_conversas", "consultar_notificacoes",
                 "consultar_acessos",
                 "consultar_treinamentos",
                 "consultar_eventos",
+                *OPERATIONAL_TOOLS,
             }
         ):
             return {
@@ -1210,10 +1098,6 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 "guardar_turno": False,
                 "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
             }
-            if evidence.get("nome") in {
-                "enviar_mensagem",
-            }:
-                result["acao_pendente"] = None
             return result
         # Se o Juiz aprovou e o guardrail também marcou aprovado, o texto
         # autorizado é a candidata original. Ignorar paráfrases evita que uma
@@ -1236,11 +1120,6 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             "guardar_turno": decision.status != "bloqueado",
             "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
         }
-        if evidence.get("nome") in {
-            "enviar_mensagem",
-        }:
-            # Uma prévia reprovada não pode permanecer disponível para confirmação.
-            result["acao_pendente"] = None
         if (config.OPENROUTER_EVIDENCE_CHECK_ENABLED and result.get("guardar_turno")
                 and callable(getattr(model, "verify_evidence", None))):
             checked_state = {**state, "resposta": response, "candidato": response}
@@ -1306,7 +1185,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
     graph.add_node("guardrail_entrada", input_guard)
     graph.add_node("roteador", router)
     graph.add_node("buscar_historico", memory_lookup)
-    graph.add_node("enviar_mensagem", send_message)
+    graph.add_node("consulta_operacional", operational_query)
+    graph.add_edge("consulta_operacional", "juiz")
     graph.add_node("consultar_conversas", consult_conversation)
     graph.add_node("consultar_notificacoes", consult_notifications)
     graph.add_node("consultar_acessos", consult_accesses)
@@ -1341,14 +1221,14 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
     })
     graph.add_conditional_edges("roteador", lambda state: state["rota"], {
         "rh": "rh", "sst": "sst", "agenda": "agenda",
+        "consulta_operacional": "consulta_operacional",
         "faq": "faq", "direta": "juiz",
-        "memoria": "buscar_historico", "mensagem": "enviar_mensagem",
+        "memoria": "buscar_historico",
         "conversa": "consultar_conversas",
         "notificacoes": "consultar_notificacoes",
         "acessos": "consultar_acessos",
         "fim": COMPLETE_TURN_NODE,
     })
-    graph.add_edge("enviar_mensagem", "juiz")
     graph.add_edge("consultar_conversas", "juiz")
     graph.add_edge("consultar_notificacoes", "juiz")
     graph.add_edge("consultar_acessos", "juiz")
@@ -1365,7 +1245,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             # here wrongly suppressed PDFs after a successful correction.
             and state.get("rota") in {
                 "rh", "sst", "agenda", "eventos", "faq", "conversa",
-                "notificacoes", "acessos",
+                "notificacoes", "acessos", "consulta_operacional",
             }
         ) else "fim",
         {"gerar_pdf": "gerar_pdf", "fim": COMPLETE_TURN_NODE},
