@@ -1002,3 +1002,6 @@ Consulte [os campos e limites dos novos diagnósticos](docs/observability-diagno
 
 A matriz de acesso, critérios e configuração das oito novas tools está em
 [Tools operacionais](docs/tools-operacionais.md).
+
+
+As consultas de matriz de conformidade, cobertura, fila de validação, resultados de treinamento, evolução de conclusões, conflitos de agenda, simulação e origem de conformidade estão documentadas em [consultas de gestão de equipe](docs/consultas-gestao-equipe.md). Todas são leituras autorizadas pelo backend.

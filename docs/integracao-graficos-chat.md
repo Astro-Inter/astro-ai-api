@@ -319,3 +319,8 @@ Rolagem com teclado, rótulos amigáveis de perfis, espaçamento da ficha e esca
 visual dos gráficos são responsabilidades de apresentação nos clientes. A API
 preserva códigos como `GESTOR_WORKSPACE`, valores e regras de acesso; não altera
 dados para compensar esses problemas visuais.
+
+
+## Consultas de gestão: reutilização dos blocos
+
+Matriz/cobertura usam tabelas longas pessoa/NR; resultados, evolução e simulação podem anexar gráficos existentes. Não há novo discriminador visual. Ver [contrato e limitações das consultas](consultas-gestao-equipe.md#blocos-clientes-e-histórico). Tabelas v1 analíticas continuam com até 50 linhas por página, distintas da listagem simples de usuários v2.

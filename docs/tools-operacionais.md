@@ -177,3 +177,8 @@ Listagens de RH: quantidade solicitada e paginação visual foram separadas. Con
 
 
 `buscar_meus_dados`: consulta completa gera cartão `ficha_usuario` do autenticado, sem status/data de cadastro/CPF ou conformidade automática. Perguntas por campo permanecem em texto. Foto própria é reautorizada pelo UID, inclusive no histórico. Consulte [contrato do cartão](integracao-graficos-chat.md#cartão-do-usuário-autenticado-buscar_meus_dados) para campos opcionais e ajustes web/mobile.
+
+
+## Consultas de gestão de equipe
+
+Oito novas tools de leitura — matriz, cobertura, fila de validação, resultados de evento, evolução mensal, conflitos, simulação e origem — estão descritas em [consultas de gestão](consultas-gestao-equipe.md), com matriz de acesso, filtros, exemplos, limites e semântica. A simulação é exclusiva de gestor workspace; fila de validação é restrita ao criador do evento.
