@@ -1,6 +1,6 @@
 """Consultas de gestão somente leitura; autorização é sempre aplicada no backend."""
 import asyncio
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Literal
 
 from langchain_core.tools import tool
@@ -23,8 +23,8 @@ class InsightArgs(BaseModel):
     fim: date | None = None
     escopo: Literal["proprio", "equipe"] = "proprio"
     incluir_agendados: bool = False
-    pagina: int = Field(default=1, ge=1, le=1000)
-    limite: int = Field(default=20, ge=1, le=50)
+    pagina: int = Field(default=1, ge=1, le=1, description="Legado: somente 1; navegação visual local.")
+    limite: int = Field(default=100, ge=1, le=1000000, description="Quantidade solicitada; coleta limitada a 200 registros e orçamento de resposta.")
     tipo_grafico: Literal["grafico_barras", "grafico_setores", "grafico_linhas"] = "grafico_barras"
 
     @model_validator(mode="after")
@@ -36,11 +36,16 @@ class InsightArgs(BaseModel):
         return self
 
 
+class EvolutionInsightArgs(InsightArgs):
+    tipo_grafico: Literal["grafico_barras", "grafico_linhas"] = "grafico_linhas"
+
+
 ACTIONS = {
     "consultar_matriz_conformidade_equipe", "consultar_cobertura_treinamentos",
     "consultar_evidencias_pendentes_validacao", "consultar_resultados_treinamento",
     "consultar_evolucao_conclusoes_equipe", "consultar_conflitos_agenda",
     "simular_impacto_exigencia_nr", "consultar_origem_conformidade",
+    "consultar_indicadores_cobertura", "comparar_conformidade_unidades",
 }
 
 
@@ -115,12 +120,12 @@ def build_query(action, args, user):
     people = "WITH people AS (SELECT target.id_usuario,target.nome,target.cargo_id,target.unidade_id, unit.nome AS unidade " + scope + ")"
     warning = "Consulta cadastral; não certifica conformidade legal nem aptidão."
     graph = False
-    if action in {"consultar_matriz_conformidade_equipe", "consultar_cobertura_treinamentos"}:
+    if action in {"consultar_matriz_conformidade_equipe", "consultar_cobertura_treinamentos", "consultar_indicadores_cobertura", "comparar_conformidade_unidades"}:
         prefix = people + REQUIREMENTS
         params += [args.nr,args.nr]
-        columns = [("nome","Pessoa"),("unidade","Unidade"),("nr","NR"),("situacao","Registro"),
+        columns = [("referencia_pessoa","Referência da pessoa"),("nome","Pessoa"),("unidade","Unidade"),("nr","NR"),("situacao","Registro"),
                    ("conformidade_id","Referência da conformidade"),("validade","Validade"),("agendado","Atividade agendada"),("em_analise","Em análise")]
-        select = "SELECT id_usuario,nome,unidade,nr,situacao,conformidade_id,data_validade AS validade,agendado,em_analise FROM facts"
+        select = "SELECT id_usuario AS referencia_pessoa,nome,unidade,nr,situacao,conformidade_id,data_validade AS validade,agendado,em_analise FROM facts"
         if action == "consultar_cobertura_treinamentos":
             select += " WHERE situacao<>'VIGENTE' AND (%s OR NOT (agendado OR em_analise))"
             params.append(args.incluir_agendados)
@@ -128,7 +133,32 @@ def build_query(action, args, user):
         else:
             warning += " Matriz em formato pessoa/NR; NRs não aplicáveis não geram linha."
         title = "Cobertura de treinamentos por pessoa/NR" if action == "consultar_cobertura_treinamentos" else "Matriz cadastral de conformidade por pessoa/NR"
-        order = "nome,id_usuario,nr"
+        order = "nome,referencia_pessoa,nr"
+        if action=="consultar_indicadores_cobertura":
+            select="""SELECT nr,COUNT(*) AS aplicaveis,
+ COUNT(*) FILTER(WHERE situacao='VIGENTE') AS vigentes,
+ COUNT(*) FILTER(WHERE situacao<>'VIGENTE' AND em_analise) AS em_analise,
+ COUNT(*) FILTER(WHERE situacao<>'VIGENTE' AND NOT em_analise AND agendado) AS agendados,
+ COUNT(*) FILTER(WHERE situacao<>'VIGENTE' AND NOT em_analise AND NOT agendado) AS sem_encaminhamento
+ FROM facts GROUP BY nr"""
+            columns=[("nr","NR"),("aplicaveis","Pares pessoa/NR"),("vigentes","Vigentes"),
+                     ("em_analise","Em análise"),("agendados","Agendados"),("sem_encaminhamento","Sem encaminhamento")]
+            title,order="Cobertura cadastral por NR","nr"
+            warning="As quatro etapas são exclusivas: vigente, em análise, agendado, sem encaminhamento. O gráfico conta pares pessoa/NR sem encaminhamento, não pessoas únicas globais."
+            graph=True
+        elif action=="comparar_conformidade_unidades":
+            select="""SELECT p.unidade_id,p.unidade,
+ LEFT(COALESCE(p.unidade,''),70) || ' (#' || p.unidade_id::text || ')' AS categoria,
+ COUNT(f.nr) AS aplicaveis,COUNT(f.nr) FILTER(WHERE f.situacao='VIGENTE') AS vigentes,
+ ROUND(100.0 * COUNT(f.nr) FILTER(WHERE f.situacao='VIGENTE') / NULLIF(COUNT(f.nr),0),2)::float8 AS percentual,
+ COUNT(DISTINCT p.id_usuario) AS pessoas
+ FROM people p LEFT JOIN facts f ON f.id_usuario=p.id_usuario
+ GROUP BY p.unidade_id,p.unidade"""
+            columns=[("unidade_id","Referência da unidade"),("unidade","Unidade"),("pessoas","Pessoas"),
+                     ("aplicaveis","Pares exigidos"),("vigentes","Pares vigentes"),("percentual","Vigentes / exigidos (%)")]
+            title,order="Comparação cadastral entre unidades autorizadas","unidade,unidade_id"
+            warning="Percentual = pares pessoa/NR vigentes / pares exigidos da unidade; denominador zero retorna nulo. O gráfico mostra contagens vigentes, não percentuais. Denominadores variam entre unidades."
+            graph=True
     elif action == "simular_impacto_exigencia_nr":
         params += [args.nr,args.nr]
         prefix = people + """, facts AS (
@@ -188,7 +218,7 @@ def build_query(action, args, user):
     elif action == "consultar_evidencias_pendentes_validacao":
         prefix="WITH viewer AS (SELECT v.id_usuario,u.workspace_id FROM usuario v JOIN unidade u ON u.id_unidade=v.unidade_id WHERE v.firebase_uid=%s AND v.tipo=%s AND v.status='ATIVO')"
         params=[user.uid,user.role]
-        select="""SELECT ce.id_conclusao_evento AS referencia,e.id_evento AS evento_id,e.titulo AS evento,
+        select="""SELECT ce.id_conclusao_evento AS referencia,p.id_usuario AS usuario_id,e.id_evento AS evento_id,e.titulo AS evento,
  p.nome, t.nome AS turma, ce.data_conclusao AS envio,
  (SELECT COUNT(*) FROM evidencia ev WHERE ev.conclusao_evento_id=ce.id_conclusao_evento) AS arquivos
  FROM viewer v JOIN evento e ON e.gestor_id=v.id_usuario
@@ -221,37 +251,41 @@ def build_query(action, args, user):
 
 
 def sql_read(action,args,user):
-    from app.modules.operational.tools import table
+    from app.modules.operational.visual_data import bounded_rows, finish, stats_query, items_from_stats, graph_query
     if not app_config.DATABASE_URL:
         return {"status":"indisponivel","mensagem":"Consulta ao cadastro indisponível."}
     try:
         count,query,params,columns,title,warning,graph=build_query(action,args,user)
+        graph_data=None
         with read_only_connection(app_config.DATABASE_URL) as conn:
             with conn.cursor() as cur:
                 cur.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", [])
-                cur.execute(count,params)
-                total=cur.fetchone()[0]
-                cur.execute(query,[*params,args.limite,(args.pagina-1)*args.limite])
-                rows=cur.fetchall()
-        data=[dict(zip([k for k,_ in columns],row)) for row in rows]
-        result=table(title,data,columns,total,args.pagina,args.limite)
-        result.update(aviso=warning,quantidade=len(rows))
-        if not rows:
-            result["mensagem"]=f"Nenhum registro nesta página. Total autorizado pelos filtros: {total}."
-        if graph:
-            if result["completo"] and 0<len(rows)<=12:
-                result.update(grafico=[{"categoria":r["categoria"],"valor":r["quantidade"]} for r in data],
-                              tipo_grafico=args.tipo_grafico,
-                              unidade_grafico="participações" if action=="consultar_evolucao_conclusoes_equipe" else "pessoas")
-            else:
-                result["aviso"]+=" Gráfico omitido: exige todas as categorias e no máximo 12."
-        return result
+                cur.execute(count.replace("SELECT COUNT(*) FROM result", "SELECT COUNT(*),CURRENT_DATE FROM result"),params)
+                counted=cur.fetchone()
+                total,reference=counted[0],counted[1] if len(counted)>1 else None
+                cur.execute(stats_query(action,count),params)
+                items=items_from_stats(action,cur.fetchone())
+                rows,reason=bounded_rows(cur,query,params,columns,args,total)
+                if graph:
+                    cur.execute(graph_query(action,count),params)
+                    groups=cur.fetchall()
+                    if 0<len(groups)<=12 and len(groups)==total:
+                        graph_data={"grafico":[{"categoria":row[0],"valor":row[1]} for row in groups],
+                                    "tipo_grafico":args.tipo_grafico,
+                                    "unidade_grafico":"participações" if action=="consultar_evolucao_conclusoes_equipe" else "pessoas"}
+                        if action=="consultar_indicadores_cobertura":
+                            graph_data.update(unidade_grafico="pendências",titulo_grafico="Pares pessoa/NR sem encaminhamento por NR")
+                        elif action=="comparar_conformidade_unidades":
+                            graph_data.update(unidade_grafico="registros",titulo_grafico="Pares pessoa/NR vigentes por unidade")
+                    elif total:
+                        warning+=" Gráfico omitido: exige todas as categorias e no máximo 12."
+        return finish(action,args,user,rows,columns,total,title,warning,items,reason,reference,graph_data)
     except Exception:
         return {"status":"indisponivel","mensagem":"Não foi possível consultar o cadastro. Nenhum resultado foi confirmado."}
 
 
-async def event_results(args):
-    from app.modules.operational.tools import table
+async def event_results(args,user):
+    from app.modules.operational.visual_data import finish,count_item,percentage_item,MAX_RESULTS
     response=await read_api(f"/events/{args.evento_id}/participants", {})
     if response.get("status")!="ok":
         return response
@@ -260,21 +294,28 @@ async def event_results(args):
         if not isinstance(records,list):
             raise ValueError()
         statuses={key:{"count":0,"people":set()} for key in ("PENDENTE","EM_ANALISE","CONCLUIDO","REJEITADO")}
+        people=set()
         for item in records:
             if not isinstance(item,dict) or type(item.get("participantId")) is not int or item["participantId"]<=0 or item.get("participationStatus") not in statuses:
                 raise ValueError()
             group=statuses[item["participationStatus"]]
             group["count"]+=1
             group["people"].add(item["participantId"])
-        if not records:
-            return {"status":"sem_dados","mensagem":"Evento autorizado sem participações registradas."}
-        rows=[{"categoria":key,"quantidade":value["count"],"pessoas_unicas":len(value["people"])} for key,value in statuses.items()]
-        result=table("Resultados registrados do treinamento",rows[(args.pagina-1)*args.limite:args.pagina*args.limite],
-                     [("categoria","Situação"),("quantidade","Participações"),("pessoas_unicas","Pessoas únicas nesta situação")],len(rows),args.pagina,args.limite)
-        result["aviso"]="Total da tabela representa situações. Conta participações, não presença. Pessoa em várias turmas pode aparecer mais de uma vez; pessoas únicas não se somam entre situações."
-        if result["completo"]:
-            result.update(grafico=[{"categoria":r["categoria"],"valor":r["quantidade"]} for r in rows],tipo_grafico=args.tipo_grafico,unidade_grafico="participações")
-        return result
+            people.add(item["participantId"])
+        all_rows=[{"categoria":key,"quantidade":value["count"],"pessoas_unicas":len(value["people"])} for key,value in statuses.items()] if records else []
+        rows=all_rows[:min(args.limite,MAX_RESULTS)]
+        columns=[("categoria","Situação"),("quantidade","Participações"),("pessoas_unicas","Pessoas únicas nesta situação")]
+        n=len(records)
+        criterion="Participações retornadas pela API Java no evento autorizado; não comprova presença."
+        items=[count_item("participacoes","Participações",n,"participações",criterion),
+               count_item("pessoas","Pessoas únicas",len(people),"pessoas","Pessoas distintas em todas as situações; não soma as contagens por situação."),
+               *[count_item(key.lower(),label,statuses[key]["count"],"participações",criterion) for key,label in
+                 (("CONCLUIDO","Concluídas"),("PENDENTE","Ainda não enviadas"),("EM_ANALISE","Em análise"),("REJEITADO","Rejeitadas"))],
+               percentage_item("percentual_concluidas","Conclusões registradas",statuses["CONCLUIDO"]["count"],n,"Participações concluídas / participações registradas; não é frequência.")]
+        warning="Total da tabela representa situações. Conta participações, não presença. Pessoa em várias turmas pode aparecer mais de uma vez; pessoas únicas não se somam entre situações."
+        graph={"grafico":[{"categoria":r["categoria"],"valor":r["quantidade"]} for r in all_rows],"tipo_grafico":args.tipo_grafico,"unidade_grafico":"participações"} if records else None
+        return finish("consultar_resultados_treinamento",args,user,rows,columns,len(all_rows),"Resultados registrados do treinamento",warning,items,None,datetime.now(timezone.utc).date(),graph,
+                      source="API Java Astro: participações autorizadas do evento")
     except (KeyError,TypeError,ValueError):
         return {"status":"indisponivel","mensagem":"A API retornou dados incompatíveis com esta consulta."}
 
@@ -298,12 +339,14 @@ async def execute(action,args,config):
             return clarify("Resultados do evento não aceitam filtros de equipe; selecione o evento autorizado.")
         if args.tipo_grafico=="grafico_linhas":
             return clarify("Resultados por situação aceitam barras ou setores; evolução mensal usa a consulta de conclusões.")
-        return await event_results(args)
+        return await event_results(args,user)
     if action=="consultar_origem_conformidade" and args.conformidade_id is None:
         return clarify("Informe a referência da conformidade individual; ela será verificada no seu escopo.")
     # Reject filters which this query cannot apply instead of silently broadening.
     supported={
         "consultar_matriz_conformidade_equipe":{"nome","cargo","unidade","nr"},
+        "consultar_indicadores_cobertura":{"nome","cargo","unidade","nr","tipo_grafico"},
+        "comparar_conformidade_unidades":{"nome","cargo","unidade","nr","tipo_grafico"},
         "consultar_cobertura_treinamentos":{"nome","cargo","unidade","nr","incluir_agendados"},
         "simular_impacto_exigencia_nr":{"cargo","unidade","nr","tipo_grafico"},
         "consultar_evolucao_conclusoes_equipe":{"nome","cargo","unidade","nr","inicio","fim","tipo_grafico"},
@@ -318,8 +361,8 @@ async def execute(action,args,config):
         return clarify("Esta consulta usa somente seu cadastro autenticado; não selecione outra pessoa.")
     if action=="consultar_evolucao_conclusoes_equipe" and args.tipo_grafico=="grafico_setores":
         return clarify("Para comparar meses, use linhas ou barras; setores não representam esta evolução.")
-    if action=="simular_impacto_exigencia_nr" and args.tipo_grafico=="grafico_linhas":
-        return clarify("Simulação cadastral não possui série histórica; use barras ou setores.")
+    if action in {"simular_impacto_exigencia_nr","consultar_indicadores_cobertura","comparar_conformidade_unidades"} and args.tipo_grafico=="grafico_linhas":
+        return clarify("Esta consulta cadastral não possui série histórica; use barras ou setores.")
     return await asyncio.to_thread(sql_read,action,args,user)
 
 
@@ -347,7 +390,7 @@ async def consultar_resultados_treinamento(config: RunnableConfig = None,**kwarg
     return await execute("consultar_resultados_treinamento",InsightArgs.model_validate(kwargs),config)
 
 
-@tool("consultar_evolucao_conclusoes_equipe",args_schema=InsightArgs)
+@tool("consultar_evolucao_conclusoes_equipe",args_schema=EvolutionInsightArgs)
 async def consultar_evolucao_conclusoes_equipe(config: RunnableConfig = None,**kwargs):
     """Conta conclusões registradas por mês na equipe autorizada."""
     return await execute("consultar_evolucao_conclusoes_equipe",InsightArgs.model_validate({"tipo_grafico":"grafico_linhas",**kwargs}),config)
@@ -371,10 +414,22 @@ async def consultar_origem_conformidade(config: RunnableConfig = None,**kwargs):
     return await execute("consultar_origem_conformidade",InsightArgs.model_validate(kwargs),config)
 
 
+@tool("consultar_indicadores_cobertura",args_schema=InsightArgs)
+async def consultar_indicadores_cobertura(config: RunnableConfig = None,**kwargs):
+    """Retorna cartões de cobertura global e barras de lacunas sem encaminhamento por NR."""
+    return await execute("consultar_indicadores_cobertura",InsightArgs.model_validate(kwargs),config)
+
+
+@tool("comparar_conformidade_unidades",args_schema=InsightArgs)
+async def comparar_conformidade_unidades(config: RunnableConfig = None,**kwargs):
+    """Compara numeradores, denominadores e percentuais cadastrais entre unidades autorizadas."""
+    return await execute("comparar_conformidade_unidades",InsightArgs.model_validate(kwargs),config)
+
+
 TOOLS=[consultar_matriz_conformidade_equipe,consultar_cobertura_treinamentos,
        consultar_evidencias_pendentes_validacao,consultar_resultados_treinamento,
        consultar_evolucao_conclusoes_equipe,consultar_conflitos_agenda,
-       simular_impacto_exigencia_nr,consultar_origem_conformidade]
+       simular_impacto_exigencia_nr,consultar_origem_conformidade,consultar_indicadores_cobertura,comparar_conformidade_unidades]
 
 
 def is_insight_request(message):
@@ -382,6 +437,11 @@ def is_insight_request(message):
     import unicodedata
     text="".join(c for c in unicodedata.normalize("NFKD",message.casefold()) if not unicodedata.combining(c))
     return bool(re.search(
+        r"\b(resumo|cartoes|indicadores)\b.*\b(cobertura|conformidade|encaminhamento)\b|"
+        r"\bresumo\b.*\bequipe\b|"
+        r"\bresumo\b.*\b(treinamentos?|eventos?|turmas?)\b|"
+        r"\b(compar\w*|percentual|conformidade)\b.*\bunidades\b|"
+        r"\bunidades\b.*\b(compar\w*|percentual|conformidade)\b|"
         r"\b(matriz|cobertura)\b.*\b(conformidade|nrs?|treinamentos?|equipe)\b|"
         r"\b(quem|pessoas|funcionarios|colaboradores)\b.*\b(precisa|precisam|necessita|necessitam)\b.*\b(sem treinamento|nao esta|nao estao|nao tem|nao foram)\b|"
         r"\b(evidencias?|conclusoes)\b.*\b(validacao|validar|revisao|revisar)\b|"

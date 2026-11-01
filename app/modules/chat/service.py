@@ -20,6 +20,7 @@ from app.modules.chat.errors import ChatError
 from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import build_chat_graph, _pedido_pdf
 from app.modules.operational.insights import TOOLS as INSIGHT_TOOLS
+from app.modules.chat.analytic_blocks import build_analytic_blocks
 from app.modules.chat.pdf_delivery import asks_for_pdf_link
 from app.modules.chat.schemas import (
     ChatRequest,
@@ -395,7 +396,7 @@ class ChatService:
                               BlocoTexto(conteudo=public_answer)]
                 if (structured_ready
                         and result.get("rota") == "consulta_operacional" and chart_data.get("status") == "ok"
-                        and chart_data.get("linhas")):
+                        and chart_data.get("linhas") and chart_data.get("paginacao") != "local"):
                     compact_expiry = result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_grafico_vencimentos"
                     blocks = [] if compact_expiry else [BlocoTexto(conteudo=chart_data["titulo"])]
                     blocks.append(BlocoTabela(
@@ -419,6 +420,11 @@ class ChatService:
                     if chart_data.get("aviso"):
                         summary += " " + chart_data["aviso"]
                     blocks.append(BlocoTexto(conteudo=summary))
+                if (structured_ready and result.get("rota") == "consulta_operacional"
+                        and chart_data.get("status") in {"ok","sem_dados"}
+                        and chart_data.get("paginacao") == "local"):
+                    blocks=build_analytic_blocks(
+                        result.get("resultado",{}).get("evidencia_tool",{}).get("nome"),chart_data)
                 logger.info("chat_blocks_ready tool=%s judge=%s types=%s",
                             result.get("resultado", {}).get("evidencia_tool", {}).get("nome", "none"),
                             result.get("avaliacao_juiz", {}).get("status", "none"),

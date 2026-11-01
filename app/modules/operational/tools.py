@@ -44,7 +44,7 @@ class ApiArgs(BaseModel):
 
 class OperationalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    acao: Literal["consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos", "consultar_vencimentos_conformidades", "consultar_pendencias_equipe", "consultar_conformidade_unidade", "consultar_formularios_pendentes", "consultar_respostas_formulario", "consultar_detalhes_evento", "consultar_candidatos_treinamento", "consultar_matriz_conformidade_equipe", "consultar_cobertura_treinamentos", "consultar_evidencias_pendentes_validacao", "consultar_resultados_treinamento", "consultar_evolucao_conclusoes_equipe", "consultar_conflitos_agenda", "simular_impacto_exigencia_nr", "consultar_origem_conformidade"]
+    acao: Literal["consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos", "consultar_vencimentos_conformidades", "consultar_pendencias_equipe", "consultar_conformidade_unidade", "consultar_formularios_pendentes", "consultar_respostas_formulario", "consultar_detalhes_evento", "consultar_candidatos_treinamento", "consultar_matriz_conformidade_equipe", "consultar_cobertura_treinamentos", "consultar_evidencias_pendentes_validacao", "consultar_resultados_treinamento", "consultar_evolucao_conclusoes_equipe", "consultar_conflitos_agenda", "simular_impacto_exigencia_nr", "consultar_origem_conformidade", "consultar_indicadores_cobertura", "comparar_conformidade_unidades"]
     filtros: TeamArgs | ApiArgs | InsightArgs
 
     @model_validator(mode="before")

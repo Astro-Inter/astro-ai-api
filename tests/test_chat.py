@@ -2705,6 +2705,8 @@ def test_expiry_blocks_do_not_repeat_title_and_keep_context(chat_client, monkeyp
     ("consultar_conflitos_agenda","Tenho treinamentos no mesmo horário?",{}),
     ("simular_impacto_exigencia_nr","Se exigirmos NR-35 neste cargo, qual o impacto?",{"nr":35,"cargo":"Analista"}),
     ("consultar_origem_conformidade","De onde veio esta conformidade?",{"conformidade_id":7}),
+    ("consultar_indicadores_cobertura","Mostre os indicadores de cobertura da equipe",{}),
+    ("comparar_conformidade_unidades","Compare a conformidade entre as unidades",{}),
 ])
 def test_management_tools_full_chat_post_history_and_review(chat_client,monkeypatch,name,question,filters):
     from app.modules.operational import insights
@@ -2742,7 +2744,7 @@ def test_management_tools_full_chat_post_history_and_review(chat_client,monkeypa
     assert "juiz" in body["agentes_chamados"] and "guardrail_saida" in body["agentes_chamados"]
     review=next(call for call in model.calls if call[0]=="juiz")
     evidence=json.loads(review[1][-1].content.split("\n",1)[1])["resultado"]
-    assert evidence["apresentacao"]["blocos"][0]=="tabela"
+    assert "tabela" in evidence["apresentacao"]["blocos"]
     history=client.get(f"/sessions/{body['session_id']}/messages").json()
     assert history["mensagens"][-1]["blocos"]==body["blocos"]
     assert "private-token-not-in-history" not in str(model.calls)+str(application.state.chat_service.repository.docs)
@@ -2752,3 +2754,23 @@ def test_management_tools_full_chat_post_history_and_review(chat_client,monkeypa
     BSON.encode({"consulta_operacional":stored_query})
     if filters.get("inicio"):
         assert stored_query["filtros"]["inicio"]==filters["inicio"]
+
+
+def test_analytic_matrix_full_collection_post_history_and_local_navigation(chat_client,monkeypatch):
+    from app.modules.operational import insights
+    from test_analytic_visual_data import fake_db,matrix_rows
+    client,model,application=chat_client
+    application.dependency_overrides[auth.get_current_user]=lambda: CurrentUser(uid="viewer",role="GESTOR_WORKSPACE")
+    cursor=fake_db(monkeypatch,"consultar_matriz_conformidade_equipe",matrix_rows(273),(273,273,273,0,0,0,0))
+    model.replies["roteador"]=json.dumps({"acao":"consultar_matriz_conformidade_equipe","filtros":{"limite":100}})
+    body=client.post("/chat/messages?markdown=false",json={"message":"Mostre 100 registros na matriz de conformidade da equipe"}).json()
+    assert [b["tipo"] for b in body["blocos"]]==["indicadores","matriz_conformidade","contexto_dados"]
+    matrix=body["blocos"][1]
+    assert len(matrix["linhas"])==100 and matrix["total"]==273 and matrix["paginacao"]=="local"
+    assert body["blocos"][0]["indicadores"][1]["valor"]==273
+    history=client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"]==body["blocos"]
+    count=len(cursor.calls)
+    followup=client.post("/chat/messages?markdown=false",json={"session_id":body["session_id"],"message":"próxima página"}).json()
+    assert len(cursor.calls)==count
+    assert all(b["tipo"]=="texto" for b in followup["blocos"])

@@ -62,7 +62,7 @@ def test_langchain_injects_authenticated_config_and_routes_args(monkeypatch,name
 
 
 @pytest.mark.parametrize("payload",[{"uid":"other"},{"role":"GESTOR_WORKSPACE"},{"workspace_id":1},
-    {"evento_id":-1},{"limite":51},{"pagina":0},{"nr":0},
+    {"evento_id":-1},{"limite":1000001},{"pagina":0},{"pagina":2},{"nr":0},
     {"inicio":"2026-10-01"},{"inicio":"2026-10-31","fim":"2026-10-01"},
     {"inicio":"2020-01-01","fim":"2026-01-01"}])
 def test_invalid_arguments_rejected(payload):
@@ -162,17 +162,20 @@ def test_sql_snapshot_count_survives_empty_page_and_sanitizes_errors(monkeypatch
         def __enter__(self):return self
         def __exit__(self,*a):pass
         def execute(self,q,p):calls.append((q,p))
-        def fetchone(self):return (83,)
+        def fetchone(self):
+            if "CURRENT_DATE FROM result" in calls[-1][0]: return (0,date(2026,10,31))
+            return (0,0,0,0,0,0,0)
         def fetchall(self):return []
     class Conn:
         def cursor(self):return Cursor()
     @contextmanager
     def conn(*args):yield Conn()
     monkeypatch.setattr(insights,"read_only_connection",conn)
-    result=insights.sql_read("consultar_matriz_conformidade_equipe",insights.InsightArgs(pagina=4),CurrentUser(uid="viewer",role="GESTOR"))
-    assert result["status"]=="sem_dados" and result["total"]==83
+    result=insights.sql_read("consultar_matriz_conformidade_equipe",insights.InsightArgs(limite=100),CurrentUser(uid="viewer",role="GESTOR"))
+    assert result["status"]=="sem_dados" and result["total"]==0
     assert calls[0][0]=="BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
-    assert calls[-1][1][-2:]==[20,60]
+    assert result["retornada"]==0 and result["paginacao"]=="local"
+    assert result["cartoes"]["indicadores"][-1]["valor"] is None
     def failure(*args):raise RuntimeError("sensitive-driver-message")
     monkeypatch.setattr(insights,"read_only_connection",failure)
     result=insights.sql_read("consultar_matriz_conformidade_equipe",insights.InsightArgs(),CurrentUser(uid="viewer",role="GESTOR"))
@@ -199,7 +202,7 @@ def test_event_results_aggregate_full_java_response_and_drop_private_fields(monk
 def test_event_authorization_and_failures_propagate(monkeypatch,response):
     async def api(*a):return response
     monkeypatch.setattr(insights,"read_api",api)
-    assert run(insights.event_results(insights.InsightArgs(evento_id=1)))==response
+    assert run(insights.event_results(insights.InsightArgs(evento_id=1),CurrentUser(uid="viewer",role="GESTOR")))==response
 
 
 @pytest.mark.parametrize("data",[{},[{"participantId":1,"participationStatus":"UNKNOWN"}],
@@ -207,7 +210,7 @@ def test_event_authorization_and_failures_propagate(monkeypatch,response):
 def test_event_unknown_status_or_invalid_shape_not_guessed(monkeypatch,data):
     async def api(*a):return {"status":"ok","data":data}
     monkeypatch.setattr(insights,"read_api",api)
-    assert run(insights.event_results(insights.InsightArgs(evento_id=1)))["status"]=="indisponivel"
+    assert run(insights.event_results(insights.InsightArgs(evento_id=1),CurrentUser(uid="viewer",role="GESTOR")))["status"]=="indisponivel"
 
 
 @pytest.mark.parametrize("question",[
@@ -226,7 +229,7 @@ def test_every_sql_tool_has_bounded_valid_positive_result(monkeypatch,action):
     user=CurrentUser(uid="viewer",role="GESTOR_WORKSPACE")
     args=insights.InsightArgs(**args_for(action))
     _,_,_,columns,*_=insights.build_query(action,args,user)
-    values={"nome":"Pessoa Teste","unidade":"Unidade","nr":10,"situacao":"SEM_REGISTRO",
+    values={"referencia_pessoa":1,"unidade_id":2,"aplicaveis":1,"vigentes":1,"percentual":100.0,"pessoas":1,"agendados":0,"sem_encaminhamento":0,"nome":"Pessoa Teste","unidade":"Unidade","nr":10,"situacao":"SEM_REGISTRO",
             "conformidade_id":None,"validade":None,"agendado":False,"em_analise":False,
             "referencia":7,"evento_id":12,"evento":"Evento","turma":"Turma","envio":None,"arquivos":0,
             "categoria":"2026-10" if action=="consultar_evolucao_conclusoes_equipe" else "VIGENTE",
@@ -236,9 +239,19 @@ def test_every_sql_tool_has_bounded_valid_positive_result(monkeypatch,action):
     class Cursor:
         def __enter__(self):return self
         def __exit__(self,*a):pass
-        def execute(self,q,p):assert q.count("%s")==len(p)
-        def fetchone(self):return (1,)
-        def fetchall(self):return [tuple(values[key] for key,_ in columns)]
+        def execute(self,q,p):
+            assert q.count("%s")==len(p)
+            self.query=q
+        def fetchone(self):
+            if "CURRENT_DATE FROM result" in self.query: return (1,date(2026,10,31))
+            if action in {"consultar_matriz_conformidade_equipe","consultar_cobertura_treinamentos","consultar_indicadores_cobertura","comparar_conformidade_unidades"}:return (1,1,1,0,0,0,0)
+            if action=="simular_impacto_exigencia_nr":return (2,2,1)
+            if action=="consultar_evidencias_pendentes_validacao":return (1,1,0)
+            if action in {"consultar_conflitos_agenda","consultar_evolucao_conclusoes_equipe"}:return (2,1)
+            return (1,)
+        def fetchall(self):
+            if self.query.endswith("LIMIT 13"):return [(values["categoria"],values["quantidade"])]
+            return [tuple(values[key] for key,_ in columns)]
     class Conn:
         def cursor(self):return Cursor()
     @contextmanager

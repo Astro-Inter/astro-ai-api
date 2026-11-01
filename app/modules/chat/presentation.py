@@ -2,6 +2,14 @@
 
 
 def presentation_evidence(name: str, data: dict) -> dict | None:
+    if data.get("paginacao") == "local" and data.get("contexto_dados") and data.get("status") in {"ok","sem_dados"}:
+        kinds=["indicadores"]
+        if data.get("linhas"):
+            kinds.append("matriz_conformidade" if name=="consultar_matriz_conformidade_equipe" else "tabela")
+        if data.get("grafico"):
+            kinds.append(data["tipo_grafico"])
+        kinds.append("contexto_dados")
+        return {"blocos":kinds,"linhas_validadas":data["retornada"],"total":data["total"],"paginacao":"local"}
     if data.get("status") != "ok":
         return None
     if name in {"buscar_meus_dados", "consultar_conformidade_usuario"}:
