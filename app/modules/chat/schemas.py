@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -82,9 +82,9 @@ class BlocoTabela(BaseModel):
 
     @model_validator(mode="after")
     def validar_colunas(self):
-        if self.versao == 1 and len(self.linhas) > 50:
+        if self.tipo == "tabela" and self.versao == 1 and len(self.linhas) > 50:
             raise ValueError("Tabela legada limitada a 50 linhas.")
-        if self.versao == 2:
+        if self.versao == 2 or self.tipo == "matriz_conformidade":
             if (self.paginacao != "local" or self.retornada != len(self.linhas)
                     or self.solicitada is None or self.limitado is None or self.tem_mais is None
                     or self.total < len(self.linhas) or len(self.linhas) > self.solicitada
@@ -99,6 +99,111 @@ class BlocoTabela(BaseModel):
             raise ValueError("Linhas e colunas da tabela devem corresponder.")
         if any(isinstance(value, str) and len(value) > 500 for row in self.linhas for value in row.values()):
             raise ValueError("Conteúdo de tabela excede o limite.")
+        return self
+
+
+class BlocoMatrizConformidade(BlocoTabela):
+    tipo: Literal["matriz_conformidade"] = "matriz_conformidade"
+    versao: Literal[1] = 1
+    chave_pessoa: Literal["referencia_pessoa"] = "referencia_pessoa"
+    chave_categoria: Literal["nr"] = "nr"
+    chave_situacao: Literal["situacao"] = "situacao"
+
+    @model_validator(mode="after")
+    def validar_matriz(self):
+        seen = set()
+        for row in self.linhas:
+            person, nr = row.get("referencia_pessoa"), row.get("nr")
+            if (type(person) is not int or person <= 0 or type(nr) is not int or not 1 <= nr <= 100
+                    or row.get("situacao") not in {"VIGENTE", "VENCIDA", "SEM_VALIDADE", "SEM_REGISTRO"}
+                    or (person, nr) in seen):
+                raise ValueError("Célula de matriz inválida ou duplicada.")
+            seen.add((person, nr))
+        return self
+
+
+class IndicadorVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    chave: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    rotulo: str = Field(min_length=1, max_length=120)
+    valor: Annotated[int, Field(strict=True)] | Annotated[float, Field(strict=True)] | None
+    unidade: Literal["pessoas", "pares_pessoa_nr", "participações", "conclusões", "registros", "conflitos", "envios", "meses", "%"]
+    numerador: int | None = Field(default=None, ge=0)
+    denominador: int | None = Field(default=None, ge=0)
+    criterio: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def validar_valor(self):
+        if self.unidade == "%":
+            if self.numerador is None or self.denominador is None or self.numerador > self.denominador:
+                raise ValueError("Percentual exige contagens verificadas.")
+            expected = round(100 * self.numerador / self.denominador, 2) if self.denominador else None
+            if self.valor != expected:
+                raise ValueError("Percentual não corresponde às contagens.")
+        elif type(self.valor) is not int or self.valor < 0 or self.numerador is not None or self.denominador is not None:
+            raise ValueError("Contagem deve ser inteira e não negativa.")
+        return self
+
+
+class BlocoIndicadores(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["indicadores"] = "indicadores"
+    versao: Literal[1] = 1
+    titulo: str = Field(min_length=1, max_length=200)
+    abrangencia: Literal["conjunto_autorizado"] = "conjunto_autorizado"
+    universo: str = Field(min_length=1, max_length=300)
+    indicadores: list[IndicadorVisual] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def validar_chaves(self):
+        if len({item.chave for item in self.indicadores}) != len(self.indicadores):
+            raise ValueError("Indicadores duplicados.")
+        return self
+
+
+class ResumoConjunto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    solicitada: int = Field(ge=1)
+    retornada: int = Field(ge=0, le=200)
+    total: int = Field(ge=0)
+    limitado: bool
+    tem_mais: bool
+    motivo_limite: Literal["maximo_resultados", "tamanho_resposta"] | None = None
+    unidade_total: str = Field(min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def validar_contagens(self):
+        if (self.retornada > min(self.solicitada, self.total)
+                or self.tem_mais != (self.retornada < self.total)
+                or self.limitado != (self.retornada < min(self.solicitada, self.total))
+                or self.limitado != (self.motivo_limite is not None)):
+            raise ValueError("Resumo do conjunto inconsistente.")
+        return self
+
+
+class BlocoContextoDados(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["contexto_dados"] = "contexto_dados"
+    versao: Literal[1] = 1
+    fonte: str = Field(min_length=1, max_length=200)
+    referencia: date | None = None
+    inicio: date | None = None
+    fim: date | None = None
+    escopo: str = Field(min_length=1, max_length=200)
+    filtros: dict[str, str | int | bool | list[str]] = Field(max_length=12)
+    criterios: list[str] = Field(min_length=1, max_length=8)
+    avisos: list[str] = Field(default_factory=list, max_length=8)
+    conjunto: ResumoConjunto
+
+    @model_validator(mode="after")
+    def validar_contexto(self):
+        allowed = {"nome", "cargo", "unidade", "nr", "evento_id", "conformidade_id", "incluir_agendados", "status"}
+        if set(self.filtros) - allowed or any(len(str(value)) > 300 for value in self.filtros.values()):
+            raise ValueError("Filtros não suportados no contexto público.")
+        if any(not 1 <= len(text) <= 500 for text in self.criterios + self.avisos):
+            raise ValueError("Descrição de critério/aviso excede limite.")
+        if (self.inicio is None) != (self.fim is None) or (self.inicio and self.fim < self.inicio):
+            raise ValueError("Período inconsistente.")
         return self
 
 
@@ -156,13 +261,20 @@ class BlocoFichaUsuario(BaseModel):
         return value.strip() or None if isinstance(value, str) else value
 
 
-BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoRosca | BlocoGraficoLinhas | BlocoTabela | BlocoGaleriaUsuarios | BlocoFichaUsuario, Field(discriminator="tipo")]
+BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoRosca | BlocoGraficoLinhas | BlocoTabela | BlocoMatrizConformidade | BlocoIndicadores | BlocoContextoDados | BlocoGaleriaUsuarios | BlocoFichaUsuario, Field(discriminator="tipo")]
 
 
 class ChatResponse(BaseModel):
     session_id: UUID
     agentes_chamados: list[str]
     blocos: list[BlocoResposta] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def validar_orcamento_visual(self):
+        if any(block.tipo in {"indicadores","matriz_conformidade","contexto_dados"} for block in self.blocos):
+            if len(json.dumps(self.model_dump(mode="json"),ensure_ascii=True).encode("utf-8")) > 2*1024*1024:
+                raise ValueError("Resposta visual excede 2 MiB.")
+        return self
 
 
 class SessionResponse(BaseModel):

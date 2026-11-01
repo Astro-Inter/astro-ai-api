@@ -19,6 +19,8 @@ from app.infrastructure.vectorstore.memory import SummaryVectors
 from app.modules.chat.errors import ChatError
 from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import build_chat_graph, _pedido_pdf
+from app.modules.operational.insights import TOOLS as INSIGHT_TOOLS
+from app.modules.chat.analytic_blocks import build_analytic_blocks
 from app.modules.chat.pdf_delivery import asks_for_pdf_link
 from app.modules.chat.schemas import (
     ChatRequest,
@@ -260,6 +262,7 @@ class ChatService:
                             "consultar_treinamentos",
                             "consultar_eventos",
                             "gerar_pdf",
+                            *[item.name for item in INSIGHT_TOOLS],
                         ],
                         "fontes_disponiveis": [
                             "faq_chunks", "nrs", "portal_oficial_mte_via_mcp_fetch",
@@ -393,7 +396,7 @@ class ChatService:
                               BlocoTexto(conteudo=public_answer)]
                 if (structured_ready
                         and result.get("rota") == "consulta_operacional" and chart_data.get("status") == "ok"
-                        and chart_data.get("linhas")):
+                        and chart_data.get("linhas") and chart_data.get("paginacao") != "local"):
                     compact_expiry = result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_grafico_vencimentos"
                     blocks = [] if compact_expiry else [BlocoTexto(conteudo=chart_data["titulo"])]
                     blocks.append(BlocoTabela(
@@ -401,7 +404,7 @@ class ChatService:
                         colunas=chart_data["colunas"], linhas=chart_data["linhas"],
                         pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]))
                     if chart_data.get("grafico"):
-                        chart_class = {"grafico_setores": BlocoGraficoSetores, "grafico_rosca": BlocoGraficoRosca}.get(chart_data.get("tipo_grafico"), BlocoGrafico)
+                        chart_class = {"grafico_setores": BlocoGraficoSetores, "grafico_linhas": BlocoGraficoLinhas, "grafico_rosca": BlocoGraficoRosca}.get(chart_data.get("tipo_grafico"), BlocoGrafico)
                         blocks.append(chart_class(titulo=chart_data["titulo"], dados=chart_data["grafico"],
                                                   unidade=chart_data.get("unidade_grafico", "pessoas"), fonte=chart_data["fonte"]))
                     summary = f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} registro(s)."
@@ -417,6 +420,11 @@ class ChatService:
                     if chart_data.get("aviso"):
                         summary += " " + chart_data["aviso"]
                     blocks.append(BlocoTexto(conteudo=summary))
+                if (structured_ready and result.get("rota") == "consulta_operacional"
+                        and chart_data.get("status") in {"ok","sem_dados"}
+                        and chart_data.get("paginacao") == "local"):
+                    blocks=build_analytic_blocks(
+                        result.get("resultado",{}).get("evidencia_tool",{}).get("nome"),chart_data)
                 logger.info("chat_blocks_ready tool=%s judge=%s types=%s",
                             result.get("resultado", {}).get("evidencia_tool", {}).get("nome", "none"),
                             result.get("avaliacao_juiz", {}).get("status", "none"),

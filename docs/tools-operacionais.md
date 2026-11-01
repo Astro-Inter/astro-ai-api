@@ -179,4 +179,9 @@ Listagens de RH: quantidade solicitada e paginação visual foram separadas. Con
 `buscar_meus_dados`: consulta completa gera cartão `ficha_usuario` do autenticado, sem status/data de cadastro/CPF ou conformidade automática. Perguntas por campo permanecem em texto. Foto própria é reautorizada pelo UID, inclusive no histórico. Consulte [contrato do cartão](integracao-graficos-chat.md#cartão-do-usuário-autenticado-buscar_meus_dados) para campos opcionais e ajustes web/mobile.
 
 
-Os agregados que aceitam setores também aceitam `tipo_grafico="grafico_rosca"` para pedidos de rosca/donut, sem mudar filtros, escopo ou contagens. Consulte o [contrato de rosca](integracao-graficos-chat.md#gráfico-de-rosca-grafico_rosca-versão-1). Suporte web/mobile é pré-requisito para publicação.
+## Consultas de gestão de equipe
+
+Dez tools de leitura — matriz, cobertura, fila de validação, resultados de evento, evolução mensal, conflitos, simulação, origem, indicadores de cobertura e comparação entre unidades — estão descritas em [consultas de gestão](consultas-gestao-equipe.md), com matriz de acesso, filtros, exemplos, limites e semântica. A simulação é exclusiva de gestor workspace; fila de validação é restrita ao criador do evento.
+
+
+Os agregados originais de equipe, pendências e vencimentos que aceitam setores também aceitam `tipo_grafico="grafico_rosca"` para pedidos de rosca/donut, sem mudar filtros, escopo ou contagens. Consulte o [contrato de rosca](integracao-graficos-chat.md#gráfico-de-rosca-grafico_rosca-versão-1). Suporte web/mobile é pré-requisito para publicação.

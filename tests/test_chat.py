@@ -24,6 +24,7 @@ from app.modules.rh import tools as rh_tools
 from app.modules.roteador import tools as router_tools
 from app.modules.shared import public_sources
 from app.modules.sst import tools as sst_tools
+from app.modules.operational.insights import TOOLS as INSIGHT_TOOLS
 from memory_fakes import FakeAccessRoles, FakeFaqVectors, FakeSessions, FakeVectors
 
 
@@ -167,7 +168,8 @@ def test_specialist_flow(chat_client, domain):
             '"consultar_conformidade_unidade", "consultar_formularios_pendentes", '
             '"consultar_respostas_formulario", "consultar_detalhes_evento", '
             '"consultar_candidatos_treinamento", "consultar_treinamentos", "consultar_eventos", '
-            '"gerar_pdf"]'
+            '"gerar_pdf", '
+            + ", ".join(json.dumps(item.name) for item in INSIGHT_TOOLS) + "]"
         ) in system
     if domain == "rh":
         assert "DECISÃO DE USO DA TOOL" in system
@@ -2694,6 +2696,86 @@ def test_expiry_blocks_do_not_repeat_title_and_keep_context(chat_client, monkeyp
         assert body["blocos"][1]["dados"][0]["valor"] == 7
     history = client.get(f"/sessions/{body['session_id']}/messages").json()
     assert history["mensagens"][-1]["blocos"] == body["blocos"]
+
+
+@pytest.mark.parametrize("name,question,filters", [
+    ("consultar_matriz_conformidade_equipe","Mostre a matriz de conformidade da equipe",{}),
+    ("consultar_cobertura_treinamentos","Quem precisa da NR-10 e não está em nenhum treinamento?",{"nr":10}),
+    ("consultar_evidencias_pendentes_validacao","Quais evidências aguardam validação?",{}),
+    ("consultar_resultados_treinamento","Como foi o treinamento selecionado?",{"evento_id":12}),
+    ("consultar_evolucao_conclusoes_equipe","Mostre a evolução das conclusões da equipe",{"inicio":"2026-10-01","fim":"2026-10-31"}),
+    ("consultar_conflitos_agenda","Tenho treinamentos no mesmo horário?",{}),
+    ("simular_impacto_exigencia_nr","Se exigirmos NR-35 neste cargo, qual o impacto?",{"nr":35,"cargo":"Analista"}),
+    ("consultar_origem_conformidade","De onde veio esta conformidade?",{"conformidade_id":7}),
+    ("consultar_indicadores_cobertura","Mostre os indicadores de cobertura da equipe",{}),
+    ("comparar_conformidade_unidades","Compare a conformidade entre as unidades",{}),
+])
+def test_management_tools_full_chat_post_history_and_review(chat_client,monkeypatch,name,question,filters):
+    from app.modules.operational import insights
+    from app.infrastructure.astro_queries import request_token
+    client,model,application=chat_client
+    application.dependency_overrides[auth.get_current_user]=lambda: CurrentUser(uid="user-a",role="GESTOR_WORKSPACE")
+    calls=[]
+    def sql(action,args,user):
+        assert user.uid=="user-a" and action==name
+        for key,value in filters.items():
+            actual=getattr(args,key)
+            assert (actual.isoformat() if hasattr(actual,"isoformat") else actual)==value
+        calls.append(action)
+        result={"status":"ok","titulo":"Consulta autorizada","colunas":[{"chave":"categoria","titulo":"Grupo"},{"chave":"quantidade","titulo":"Quantidade"}],
+                "linhas":[{"categoria":"2026-10","quantidade":2}],"total":1,"pagina":1,"total_paginas":1,"fonte":"Cadastro autorizado"}
+        if action=="consultar_evolucao_conclusoes_equipe":
+            result.update(grafico=[{"categoria":"2026-10","valor":2}],tipo_grafico="grafico_linhas",unidade_grafico="participações")
+        return result
+    async def api(path,params):
+        assert name=="consultar_resultados_treinamento" and path=="/events/12/participants"
+        assert request_token.get()=="private-token-not-in-history"
+        calls.append(name)
+        return {"status":"ok","data":[{"participantId":1,"participationStatus":"CONCLUIDO"}]}
+    monkeypatch.setattr(insights,"sql_read",sql)
+    monkeypatch.setattr(insights,"read_api",api)
+    model.replies["roteador"]=json.dumps({"acao":name,"filtros":filters})
+    response=client.post("/chat/messages?markdown=false",json={"message":question},headers={"Authorization":"Bearer private-token-not-in-history"})
+    assert response.status_code==200
+    body=response.json()
+    assert calls==[name]
+    assert "tabela" in [b["tipo"] for b in body["blocos"]]
+    if name=="consultar_evolucao_conclusoes_equipe":
+        assert next(b for b in body["blocos"] if b["tipo"]=="grafico_linhas")["dados"]==[{"categoria":"2026-10","valor":2}]
+    assert name in body["agentes_chamados"]
+    assert "juiz" in body["agentes_chamados"] and "guardrail_saida" in body["agentes_chamados"]
+    review=next(call for call in model.calls if call[0]=="juiz")
+    evidence=json.loads(review[1][-1].content.split("\n",1)[1])["resultado"]
+    assert "tabela" in evidence["apresentacao"]["blocos"]
+    history=client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"]==body["blocos"]
+    assert "private-token-not-in-history" not in str(model.calls)+str(application.state.chat_service.repository.docs)
+    assert request_token.get() is None
+    from bson import BSON
+    stored_query=application.state.chat_service.repository.docs[body["session_id"]]["consulta_operacional"]
+    BSON.encode({"consulta_operacional":stored_query})
+    if filters.get("inicio"):
+        assert stored_query["filtros"]["inicio"]==filters["inicio"]
+
+
+def test_analytic_matrix_full_collection_post_history_and_local_navigation(chat_client,monkeypatch):
+    from app.modules.operational import insights
+    from test_analytic_visual_data import fake_db,matrix_rows
+    client,model,application=chat_client
+    application.dependency_overrides[auth.get_current_user]=lambda: CurrentUser(uid="viewer",role="GESTOR_WORKSPACE")
+    cursor=fake_db(monkeypatch,"consultar_matriz_conformidade_equipe",matrix_rows(273),(273,273,273,0,0,0,0))
+    model.replies["roteador"]=json.dumps({"acao":"consultar_matriz_conformidade_equipe","filtros":{"limite":100}})
+    body=client.post("/chat/messages?markdown=false",json={"message":"Mostre 100 registros na matriz de conformidade da equipe"}).json()
+    assert [b["tipo"] for b in body["blocos"]]==["indicadores","matriz_conformidade","contexto_dados"]
+    matrix=body["blocos"][1]
+    assert len(matrix["linhas"])==100 and matrix["total"]==273 and matrix["paginacao"]=="local"
+    assert body["blocos"][0]["indicadores"][1]["valor"]==273
+    history=client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"]==body["blocos"]
+    count=len(cursor.calls)
+    followup=client.post("/chat/messages?markdown=false",json={"session_id":body["session_id"],"message":"próxima página"}).json()
+    assert len(cursor.calls)==count
+    assert all(b["tipo"]=="texto" for b in followup["blocos"])
 
 
 @pytest.mark.parametrize("word", ["rosca", "donut"])

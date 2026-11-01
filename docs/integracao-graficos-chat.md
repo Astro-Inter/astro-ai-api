@@ -321,6 +321,16 @@ preserva códigos como `GESTOR_WORKSPACE`, valores e regras de acesso; não alte
 dados para compensar esses problemas visuais.
 
 
+## Extensão de gestão: cartões, matriz e contexto
+
+As dez tools de gestão passam a usar paginação local, `tabela` v2 e três tipos
+novos: `indicadores`, `matriz_conformidade` e `contexto_dados`, todos v1.
+O contrato completo e a coordenação de publicação estão em
+[contrato de dados analíticos](contrato-dados-analiticos.md).
+Essa extensão substitui a paginação de servidor dessas dez consultas, mantendo
+as demais tools antigas com seus contratos próprios.
+
+
 ## Gráfico de rosca (`grafico_rosca`, versão 1)
 
 Contrato exato, reutilizando o modelo de setores:

@@ -25,7 +25,7 @@ from app.modules.chat.prompts.orquestrador import ORQUESTRADOR_PROMPT_COMPLETO
 from app.modules.chat.prompts.roteador import ROTEADOR_PROMPT_COMPLETO
 from app.modules.chat.schemas import JudgeDecision, InputDecision, MemorySearch, OutputDecision
 from app.modules.chat.state import ChatState
-from app.modules.operational.tools import REGISTRY as OPERATIONAL_TOOLS, DOMAINS, OperationalDecision, is_operational_request
+from app.modules.operational.tools import REGISTRY as OPERATIONAL_TOOLS, DOMAINS, OperationalDecision, is_operational_request, INSIGHT_ACTIONS
 from app.modules.operational.prompt import OPERATIONAL_PROMPT
 from app.modules.chat.presentation import presentation_evidence
 from app.modules.chat.subgraphs import (
@@ -548,6 +548,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         previous_query = state["contexto"].get("consulta_operacional")
         if (state["contexto"].get("ultima_rota") == "consulta_operacional" and previous_query
                 and re.fullmatch(r"(?:mostre |quero ver )?(?:a )?proxima pagina(?:,? por favor)?[.!?]*", _sem_acentos(state["mensagem"]).strip())):
+            if isinstance(previous_query,dict) and previous_query.get("acao") in INSIGHT_ACTIONS:
+                return {"rota":"direta","candidato":"A paginação desta consulta é local nos controles da tabela. Para ampliar o conjunto recebido, informe outra quantidade ou ajuste os filtros.",
+                        "agentes_chamados":state["agentes_chamados"]+["roteador"]}
             try:
                 previous = OperationalDecision.model_validate(previous_query)
                 values = previous.model_dump()
@@ -555,7 +558,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 decision = OperationalDecision.model_validate(values)
             except (ValidationError, TypeError, KeyError):
                 return {"rota":"direta", "candidato":"Não consegui continuar esta consulta. Informe os filtros novamente.", "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
-            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(),
+            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(mode="json"),
                     "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
         if is_operational_request(state["mensagem"], state["contexto"].get("ultima_rota", "")):
             try:
@@ -576,7 +579,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 if values["filtros"].get("tipos") is None and re.search(r"\b(funcionarios?|colaboradores)\b", normalized):
                     values["filtros"]["tipos"] = ["COLABORADOR"]
                 decision = OperationalDecision.model_validate(values)
-            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(),
+            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(mode="json"),
                     "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
         employee_filters = _continuacao_rh(state)
         if employee_filters is not None or _contagem_funcionarios(state["mensagem"]):
@@ -697,7 +700,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 decision = OperationalDecision.model_validate_json(query_match.group(1))
             except ValidationError:
                 raise InvalidAgentResponse("roteador") from None
-            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(),
+            return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(mode="json"),
                     "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
         memory_match = re.fullmatch(r"MEMORY\s*=\s*(\{.*\})", command, re.DOTALL)
         if memory_match:
@@ -807,7 +810,17 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             decision.filtros.model_dump(),
             config={"configurable":{"usuario_atual":state["usuario_atual"].model_dump()}},
         )
-        if result.get("status") == "ok":
+        if result.get("paginacao") == "local" and result.get("contexto_dados"):
+            unit=result["contexto_dados"]["conjunto"]["unidade_total"]
+            candidate=f"Retornados {result['retornada']} de {result['total']} {unit} autorizados. Quantidade solicitada: {result['solicitada']}."
+            if result.get("limitado"):
+                candidate+=f" Coleta limitada por segurança: {result['motivo_limite']}."
+            elif result.get("tem_mais"):
+                candidate+=" Conjunto tabular parcial conforme a quantidade solicitada."
+            candidate+=" Indicadores e gráficos consideram o conjunto autorizado completo descrito nos critérios."
+            if result.get("aviso"):
+                candidate+=" "+result["aviso"]
+        elif result.get("status") == "ok":
             # Keep a readable fallback for history, unsupported clients and review.
             lines = [result["titulo"]]
             for row in result["linhas"]:
@@ -824,7 +837,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 "resultado":{"dominio":DOMAINS[name],"intencao":"consultar",
                              "status":"concluido" if result.get("status") == "ok" else result.get("status"),
                              "apresentacao":presentation_evidence(name, result),
-                             "evidencia_tool":{"nome":name,"resultado":result}},
+                             "evidencia_tool":{"nome":name,"resultado":({key:value for key,value in result.items() if key!="linhas"} if result.get("paginacao")=="local" else result)}},
                 "agentes_chamados":state["agentes_chamados"] + [DOMAINS[name],name]}
 
     async def consult_conversation(state: ChatState):
