@@ -36,6 +36,13 @@ async def chat_message(
     try:
         return await request.app.state.chat_service.chat(body, user, markdown=markdown)
     except ChatError as error:
+        from app.diagnostics import emit
+        stages={"guardrail_entrada","roteador","rh","sst","agenda","faq","orquestrador","juiz","guardrail_saida","resumo","embeddings"}
+        reasons={"provider_configuration","insufficient_credits","model_unavailable","rate_limited","provider_failure","provider_response","review_unavailable"}
+        emit("chat_request_rejected",level="WARNING",sink=logger,
+             error_stage=error.stage if error.stage in stages else "chat",
+             error_reason=error.reason if error.reason in reasons else "unspecified",
+             http_status=error.status_code)
         if isinstance(error, InvalidAgentResponse):
             logger.warning("Resposta invalida no estagio do chat: %s", error.stage)
         headers = {"Retry-After": str(error.retry_after)} if error.retry_after else None

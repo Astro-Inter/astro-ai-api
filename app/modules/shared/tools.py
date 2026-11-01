@@ -92,6 +92,7 @@ def gerar_pdf(
     if _usuario_do_contexto(config) is None:
         return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
     if not _r2_configurado():
+        logger.warning("PDF indisponivel etapa=configuracao")
         return {"status": "indisponivel", "mensagem": "Geracao de PDF indisponivel."}
 
     etapa = "renderizacao"

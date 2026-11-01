@@ -24,7 +24,7 @@ def retry_after(headers) -> int:
 
 async def request(path: str, payload: dict, *, stage: str, attempts: int = 2) -> dict:
     if not config.OPENROUTER_API_KEY:
-        raise ChatError(503, "OpenRouter nao configurado.", reason="provider_configuration")
+        raise ChatError(503, "OpenRouter nao configurado.", reason="provider_configuration", stage=stage)
     if path not in {"/v1/chat/completions", "/v1/embeddings", "/alpha/decisions"}:
         raise ValueError("Endpoint de inferencia invalido")
     for attempt in range(attempts):
@@ -57,7 +57,7 @@ async def request(path: str, payload: dict, *, stage: str, attempts: int = 2) ->
         except (httpx.TimeoutException, httpx.TransportError):
             status = 503
         except (ValueError, TypeError, AttributeError):
-            raise ChatError(502, "Resposta do OpenRouter invalida.", reason="provider_response") from None
+            raise ChatError(502, "Resposta do OpenRouter invalida.", reason="provider_response", stage=stage) from None
         logger.warning("Falha OpenRouter agente=%s status=%s tentativa=%d", stage, status, attempt + 1)
         if status in TRANSIENT and attempt + 1 < attempts and delay <= 2:
             await asyncio.sleep(delay)
@@ -66,5 +66,5 @@ async def request(path: str, payload: dict, *, stage: str, attempts: int = 2) ->
                   402: "insufficient_credits", 404: "model_unavailable",
                   429: "rate_limited"}.get(status, "provider_failure")
         raise ChatError(503, "Servico de IA indisponivel. Tente novamente em instantes.",
-                        reason=reason, retry_after=delay if status == 429 else None) from None
-    raise ChatError(503, "Servico de IA indisponivel.", reason="provider_failure")
+                        reason=reason, stage=stage, retry_after=delay if status == 429 else None) from None
+    raise ChatError(503, "Servico de IA indisponivel.", reason="provider_failure", stage=stage)

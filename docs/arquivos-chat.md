@@ -35,6 +35,9 @@ O exemplo usa URL fictícia. Campos:
 | estado | disponivel, expirado ou indisponivel |
 
 O arquivo é anexado ao final dos blocos da resposta, mantendo a ordem dos demais.
+Expiração usa precisão de milissegundos, compatível com BSON, para que POST,
+histórico e lembretes exponham exatamente o mesmo prazo. Valores históricos com
+microssegundos são normalizados na leitura, sem renovar a assinatura.
 Pode coexistir com texto, tabelas, ficha e gráficos. Não serve para fotos de usuário.
 O limite de upload atual é 2.000.000 bytes e a validade do link é cinco horas.
 Essa validade não é promessa de retenção física eterna do objeto.
@@ -48,6 +51,10 @@ para validar o link: isso expõe capacidades e pode baixar um arquivo desnecess�
 Botão habilitado apenas com estado disponivel, URL presente e prazo ainda válido.
 O relógio do cliente ajuda a desabilitar o botão, mas não substitui a autorização
 do servidor e do armazenamento. Tratar erro de download sem inventar outro link.
+Para downloads via fetch no web, o bucket também precisa permitir a origem por
+CORS. Consulte a [auditoria e política candidata restrita](homologacao-web-recorrencia-cors.md).
+O CORS da API não é o CORS do armazenamento; ausência de headers não autoriza
+renovar assinaturas ou tornar o bucket público.
 
 Quando expirado, mostrar “Link expirado; solicite a geração novamente”. Quando
 indisponível ou URL null, mostrar indisponibilidade; não oferecer link quebrado.
@@ -75,6 +82,9 @@ mensagens. URLs e metadados privados não entram em prompts, embeddings ou texto
 persistido da conversa. Não há credenciais de R2/OpenRouter no cliente.
 
 ## Verificação e publicação
+
+A [homologação mobile sobre a7fbe68](homologacao-mobile-a7fbe68.md) registra download
+real, autorização e a correção de precisão do prazo e do pedido contextual de PDF.
 
 Testes simulam geração, upload, falha, expiração, lembrete, acesso de outro UID,
 formato inválido, memória/resumo e igualdade POST/histórico enquanto válido. O PDF

@@ -54,6 +54,9 @@ def items_from_stats(action, values):
     if action in {"consultar_matriz_conformidade_equipe","consultar_cobertura_treinamentos",
                   "consultar_indicadores_cobertura","comparar_conformidade_unidades"}:
         pairs,people,valid,people_gaps,review,scheduled,uncovered=values
+        if (pairs!=valid+review+scheduled+uncovered or people>pairs or people_gaps>people
+                or people_gaps>pairs-valid):
+            raise ValueError("Etapas e população de cobertura inconsistentes.")
         criterion="Exigências do cadastro ativo autorizado, antes do filtro de encaminhamento da lista."
         return [count_item("pessoas_com_exigencias","Pessoas com exigências",people,"pessoas",criterion),
                 count_item("pares_aplicaveis","Exigências pessoa/NR",pairs,"pares_pessoa_nr",criterion),

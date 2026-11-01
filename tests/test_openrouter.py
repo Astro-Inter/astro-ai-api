@@ -82,6 +82,7 @@ def test_errors_bounded_and_redacted(transport, caplog, status, reason, attempts
     with pytest.raises(ChatError) as error:
         asyncio.run(models.LanguageModels().complete("juiz", []))
     assert error.value.reason == reason and len(calls) == attempts
+    assert error.value.stage == "juiz"
     assert "fake-secret" not in str(error.value) + caplog.text
     assert "sensitive-text" not in str(error.value) + caplog.text
 
@@ -92,6 +93,7 @@ def test_long_rate_limit_does_not_sleep_or_retry(transport):
     with pytest.raises(ChatError) as error:
         asyncio.run(models.LanguageModels().complete("juiz", []))
     assert error.value.retry_after == 30 and len(calls) == 1
+    assert error.value.stage == "juiz"
     openrouter.asyncio.sleep.assert_not_awaited()
 
 

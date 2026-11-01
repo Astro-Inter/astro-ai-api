@@ -12,6 +12,10 @@ def presentation_evidence(name: str, data: dict) -> dict | None:
         return {"blocos":kinds,"linhas_validadas":data["retornada"],"total":data["total"],"paginacao":"local"}
     if data.get("status") != "ok":
         return None
+    if name in {"consultar_eventos","consultar_treinamentos"}:
+        items=data.get("eventos",data.get("treinamentos",[]))
+        return {"blocos":["texto"],"evento_id_disponiveis":sorted({i["evento_id"] for i in items if type(i.get("evento_id")) is int}),
+                "referencias_nao_concedem_acesso":True}
     if name in {"consultar_grafico_treinamentos", "consultar_evolucao_treinamentos"} and data.get("categorias"):
         return {"blocos": [data.get("tipo_grafico", "grafico_barras")],
                 "categorias_grafico": len(data["categorias"]), "valores_zero_preservados": True}
@@ -25,7 +29,7 @@ def presentation_evidence(name: str, data: dict) -> dict | None:
                 "linhas_validadas": count, "paginacao": "local" if "retornada" in data else "servidor",
                 "registros_omitidos_do_prompt": True}
     from app.modules.operational.insights import ACTIONS
-    if name in ACTIONS | {"consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"} and data.get("linhas"):
+    if name in ACTIONS | {"consultar_detalhes_evento", "consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"} and data.get("linhas"):
         kinds = ["tabela"]
         if data.get("grafico"):
             kinds.append(data.get("tipo_grafico", "grafico_barras"))

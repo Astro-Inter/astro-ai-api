@@ -153,14 +153,17 @@ def test_listed_event_title_resolves_reference_and_java_authorizes(chat_client,m
     monkeypatch.setitem(subgraphs.AGENDA_TOOLS,'consultar_eventos',Events())
     first=client.post('/chat/messages',json={'message':'Liste meus eventos e treinamentos disponíveis com a referência para selecionar um.'}).json()
     assert 'referência do evento: 12' in texto_resposta(first)
-    assert 'http://localhost:5173/mainEventScreen' in texto_resposta(first)
+    assert 'localhost' not in texto_resposta(first)
+    assert 'Link:' not in texto_resposta(first)
     seen=[]
     async def api(path,params):
         seen.append(path)
-        return {'status':'ok','data':[{'participantId':1,'participationStatus':'CONCLUIDO'}]} if result_status=='ok' else {'status':result_status,'mensagem':'Acesso negado.'}
+        if result_status!='ok':return {'status':result_status,'mensagem':'Acesso negado.'}
+        if not path.endswith('/participants'):return {'status':'ok','data':{'title':'Treinamento exemplo','status':'ATIVO'}}
+        return {'status':'ok','data':[{'participantId':1,'participationStatus':'CONCLUIDO'}]}
     monkeypatch.setattr(insights,'read_api',api)
     body=client.post('/chat/messages',json={'session_id':first['session_id'],'message':'Faça um resumo do treinamento Treinamento exemplo.'}).json()
-    assert seen==['/events/12/participants']
+    assert seen==(['/events/12/participants'] if result_status=='ok' else ['/events/12/participants'])
     if result_status=='ok':assert body['blocos'][0]['tipo']=='indicadores'
     else:assert all(b['tipo']=='texto' for b in body['blocos']) and 'negado' in texto_resposta(body)
     assert client.get(f"/sessions/{first['session_id']}/messages").json()['mensagens'][-1]['blocos']==body['blocos']
@@ -170,7 +173,7 @@ def test_ambiguous_event_selection_and_new_intent():
     from app.modules.chat.current_intent import selected_event,explicit_read
     refs=[{'evento_id':1,'titulo':'Curso'},{'evento_id':2,'titulo':'Curso'}]
     assert 'mais de um' in selected_event('Faça um resumo do treinamento Curso',refs)
-    assert selected_event('Faça um resumo do evento 2',refs).filtros.evento_id==2
+    assert selected_event('Faça um resumo do evento 2',refs).filtros.identificador=='2'
     assert selected_event('Mostre 100 registros da matriz de conformidade da equipe',refs,True) is None
     assert explicit_read('Mostre 100 registros da matriz de conformidade da equipe').acao=='consultar_matriz_conformidade_equipe'
 
