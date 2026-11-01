@@ -101,3 +101,23 @@ def test_projection_requires_resolution_feedback():
             minutes_saved_per_resolution=10,
             hourly_cost_usd=20,
         )
+
+
+def test_provider_cost_metadata_preserves_zero_and_omits_incomplete_cost():
+    from app.observability.chat import _current_observation, record_provider_call, record_provider_cost
+    observation = ChatObservation()
+    token = _current_observation.set(observation)
+    try:
+        record_provider_call()
+        record_provider_cost({"cost": 0})
+        assert observation.metadata()["observed_cost_usd"] == 0
+        record_provider_call()
+        record_provider_cost({"cost": 0.25})
+        assert observation.metadata()["observed_cost_usd"] == 0.25
+        record_provider_call()
+        record_provider_cost({"cost": float("nan")})
+        assert "observed_cost_usd" not in observation.metadata()
+        assert observation.metadata()["provider_calls"] == 3
+        assert observation.metadata()["provider_cost_calls"] == 2
+    finally:
+        _current_observation.reset(token)
