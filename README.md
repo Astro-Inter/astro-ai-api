@@ -109,6 +109,16 @@ de configuração, segredos e execução estão em [`deploy/README.md`](deploy/R
 
 ## Ingestão de PDFs do FAQ
 
+O FAQ funcional revisado está em [Markdown](docs/faq/astro-faq-funcional.md) e
+[PDF](output/pdf/Astro_FAQ_Funcional_v2.0.pdf). A [atualização controlada](docs/atualizacao-faq-funcional.md)
+documenta as fontes, os 46 trechos ativos em faq_chunks, validação e recuperação.
+Para reconstruir o PDF localmente, sem acesso à IA ou ao Qdrant:
+
+```powershell
+python -m app.scripts.build_product_faq
+```
+
+
 O script `app/scripts/ingest_faq.py` extrai PDFs em chunks de 700 caracteres,
 com sobreposição de 150, preservando documento e página. Cada execução grava em
 uma coleção **nova**, sem apagar pontos existentes. Sem `--apply`, apenas estima
