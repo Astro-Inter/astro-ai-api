@@ -297,7 +297,9 @@ class ChatService:
                                    "oficial do MTE via MCP Fetch; a collection MongoDB autorizada "
                                    "serve como contexto interno e fallback. "
                                    "Historico nao comprova direitos nem execucao. "
-                                   "Nao expor identificadores internos nem metadados tecnicos. "
+                                   "Nao expor UID, tokens, workspace_id ou chaves internas. "
+                                   "Referencias evento_id de eventos autorizados podem ser exibidas para selecao; "
+                                   "nao concedem acesso nem substituem verificacoes de permissao. "
                                    "Em respostas do FAQ, citar documento e pagina quando "
                                    "fornecidos pelos trechos autorizados.",
                     },
@@ -394,7 +396,8 @@ class ChatService:
                         and result.get("rota") == "consulta_operacional" and chart_data.get("status") == "ok"
                         and chart_data.get("linhas") and chart_data.get("paginacao") != "local"):
                     compact_expiry = result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_grafico_vencimentos"
-                    blocks = [] if compact_expiry else [BlocoTexto(conteudo=chart_data["titulo"])]
+                    event_details = result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_detalhes_evento"
+                    blocks = [] if compact_expiry else [BlocoTexto(conteudo=public_answer if event_details else chart_data["titulo"])]
                     blocks.append(BlocoTabela(
                         titulo="Detalhamento por faixa de prazo" if compact_expiry else chart_data["titulo"],
                         colunas=chart_data["colunas"], linhas=chart_data["linhas"],
@@ -426,6 +429,9 @@ class ChatService:
                             result.get("avaliacao_juiz", {}).get("status", "none"),
                             ",".join(block.tipo for block in blocks) or "texto")
                 if result.get("rota")=="consulta_operacional" and not blocks:
+                    blocks=[BlocoTexto(conteudo=public_answer[i:i+6000]) for i in range(0,len(public_answer),6000)]
+                if (result.get("rota")=="agenda" and not blocks
+                        and result.get("resultado",{}).get("evidencia_tool",{}).get("nome") in {"consultar_eventos","consultar_treinamentos"}):
                     blocks=[BlocoTexto(conteudo=public_answer[i:i+6000]) for i in range(0,len(public_answer),6000)]
                 if pdf_delivery:
                     if not blocks:

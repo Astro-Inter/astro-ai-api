@@ -585,6 +585,32 @@ def _formatar_situacao_nrs(result: dict) -> str:
     return "\n".join([header, *lines])
 
 
+def _event_public_link(value):
+    """Do not present a localhost/test link as a usable event destination.
+
+    The registered value is never rewritten; only its presentation is omitted.
+    """
+    from urllib.parse import urlparse
+    from ipaddress import ip_address
+    if not isinstance(value,str) or not value or len(value)>300:
+        return None
+    try:
+        parsed=urlparse(value)
+        host=parsed.hostname or ""
+        if parsed.scheme not in {"http","https"} or not host or parsed.username or parsed.password:
+            return None
+        if host.lower().rstrip('.')=='localhost' or host.lower().rstrip('.').endswith('.localhost'):
+            return None
+        try:
+            address=ip_address(host)
+            if address.is_loopback or address.is_unspecified:return None
+        except ValueError:
+            pass
+        return value
+    except ValueError:
+        return None
+
+
 def _formatar_treinamentos(result: dict) -> str:
     if result.get("status") == "sem_dados":
         labels = {
@@ -617,14 +643,17 @@ def _formatar_treinamentos(result: dict) -> str:
         if training.get("data_validade"):
             details.append(f"validade: {training['data_validade']}")
         if type(reference) is int:
-            details.append(f"referência do evento: {reference}")
+            details.append(f"referência do evento: {reference} (evento_id)")
         lines.append(f"- {training['titulo']} | " + " | ".join(details))
         if training.get("descricao"):
             lines.append(f"  {training['descricao'][:160]}")
         if training.get("motivo_rejeicao"):
             lines.append(f"  Motivo da rejeição: {training['motivo_rejeicao'][:160]}")
-        if training.get("link_externo") and len(training["link_externo"]) <= 300:
-            lines.append(f"  Link: {training['link_externo']}")
+        link=_event_public_link(training.get("link_externo"))
+        if link:
+            lines.append(f"  Link: {link}")
+        elif training.get("link_externo"):
+            lines.append("  Link cadastrado não disponível para abertura externa; consulte o evento no aplicativo.")
     if not result["treinamentos"]:
         lines.append("Nenhum treinamento nesta página. Tente uma página anterior.")
     elif result["pagina"] < result["total_paginas"]:
@@ -646,8 +675,11 @@ def _evidencia_treinamentos(result: dict) -> dict:
             item["descricao"] = training["descricao"][:160]
         if training.get("motivo_rejeicao"):
             item["motivo_rejeicao"] = training["motivo_rejeicao"][:160]
-        if training.get("link_externo") and len(training["link_externo"]) <= 300:
-            item["link_externo"] = training["link_externo"]
+        link=_event_public_link(training.get("link_externo"))
+        if link:
+            item["link_externo"] = link
+        elif training.get("link_externo"):
+            item["aviso_link"] = "Link cadastrado não disponível para abertura externa; consulte o evento no aplicativo."
         trainings.append(item)
     return {
         "status": result.get("status"),
@@ -665,7 +697,7 @@ def _formatar_eventos(result: dict) -> str:
         return (
             "Não encontrei próximos eventos atribuídos a você no Astro."
             if upcoming else "Não encontrei eventos atribuídos a você no Astro."
-        )
+        ) + " Sem eventos neste conjunto, não há evento_id para selecionar um resumo."
     if result.get("status") != "ok":
         return "Não foi possível consultar seus eventos no Astro. " + result.get("mensagem", "")
     trainings = {**result, "treinamentos": result.get("eventos", [])}
@@ -674,6 +706,24 @@ def _formatar_eventos(result: dict) -> str:
         "Seus próximos eventos no Astro:" if upcoming else "Seus eventos no Astro:",
     ).replace("treinamento", "evento")
 
+
+def _referencias_eventos(result):
+    """Selection needs titles and references, not descriptions or external links."""
+    if result.get('status')!='ok':
+        return _formatar_eventos(result)
+    events={}
+    for event in result.get('eventos',[]):
+        reference=event.get('evento_id')
+        if type(reference) is int and reference>0 and isinstance(event.get('titulo'),str):
+            events.setdefault(reference,event['titulo'])
+    if not events:
+        return 'A consulta não retornou referências evento_id utilizáveis para selecionar um resumo.'
+    lines=['Eventos atribuídos a você para selecionar um resumo:']
+    lines.extend(f'- {title} | referência do evento: {reference} (evento_id)' for reference,title in events.items())
+    lines.append('Escolha pelo evento_id, por exemplo: Faça um resumo do evento '+str(next(iter(events)))+'. O acesso será verificado novamente.')
+    if result.get('pagina',1)<result.get('total_paginas',1):
+        lines.append(f"Para mais eventos, consulte a página {result['pagina']+1} da sua agenda.")
+    return '\n'.join(lines)
 
 def _evidencia_situacao_nrs(result: dict) -> dict:
     return {
@@ -713,6 +763,7 @@ def build_rh_graph(model: AgentModel):
         decision = await invoke_agent(
             model, "rh", RH_DECISAO_PROMPT_COMPLETO, state, RhToolDecision,
         )
+
         if decision.acao == "responder":
             return {
                 "rh_route": "fim",
@@ -985,7 +1036,7 @@ def pedido_grafico_treinamentos(message: str) -> bool:
     if re.search(r"\b(concluid[oa]s?|mensal)\b", text) and not re.search(r"\b(linhas?|evolucao|mensal)\b", text):
         return False
     return bool(re.search(r"\b(grafico|dashboard|visualizacao|rosca|donut)\b", text)
-                and re.search(r"\b(treinamentos?|capacitac(?:ao|oes))\b", text)
+                and re.search(r"\b(treinamentos?|capacitac(?:ao|oes)|conclusoes)\b", text)
                 and re.search(r"\b(meus?|minhas?|para mim)\b", text)
                 and not re.search(r"\b(empresa|unidade|equipe|todos|outros|ano|mes|periodo|vencid[oa]s?|pendentes?|rejeitad[oa]s?)\b|\d", text))
 
@@ -1053,9 +1104,12 @@ def build_agenda_graph(model: AgentModel):
             "nao_aplicavel": "nao_autorizado",
         }
         if tool_name == "consultar_eventos":
-            candidate = _formatar_eventos(result)
+            selection=bool(re.search(r'\b(refer[eê]ncia|evento_id)\b',state['mensagem'],re.I))
+            candidate = _referencias_eventos(result) if selection else _formatar_eventos(result)
             evidence = _evidencia_treinamentos({**result, "treinamentos": result.get("eventos", [])})
             evidence["eventos"] = evidence.pop("treinamentos", [])
+            if selection:
+                evidence['eventos']=[{k:item[k] for k in ('evento_id','titulo') if k in item} for item in evidence['eventos']]
             evidence["proximos"] = result.get("proximos")
             intention = "listar"
         elif tool_name == "consultar_treinamentos":
@@ -1075,6 +1129,7 @@ def build_agenda_graph(model: AgentModel):
                     "nome": tool_name,
                     "resultado": evidence,
                 },
+                "apresentacao":presentation_evidence(tool_name,result),
             },
             "candidato": candidate,
             "acao_pendente": None,

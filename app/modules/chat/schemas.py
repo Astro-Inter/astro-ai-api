@@ -36,7 +36,10 @@ class BlocoArquivo(BaseModel):
     @field_validator("expira_em")
     @classmethod
     def normalizar_expiracao(cls,value):
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        value=value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        # BSON stores datetimes at millisecond precision. The first POST, history
+        # and reminders must expose exactly the same expiry, without rounding up.
+        return value.replace(microsecond=(value.microsecond//1000)*1000)
 
     @field_validator("url")
     @classmethod

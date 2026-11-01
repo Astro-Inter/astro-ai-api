@@ -572,8 +572,15 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        from app.modules.chat.current_intent import explicit_read, selected_event
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf
         previous=state["contexto"].get("consulta_operacional") or {}
+        pdf_query=distribution_pdf(state["mensagem"],previous)
+        if isinstance(pdf_query,str):
+            return {"rota":"direta","candidato":pdf_query,"pdf_solicitado":False,
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if isinstance(pdf_query,OperationalDecision):
+            return {"rota":"consulta_operacional","operational_decision":pdf_query.model_dump(mode="json"),
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
         pending=(previous.get("acao")=="consultar_resultados_treinamento" and not (previous.get("filtros") or {}).get("evento_id"))
         event=selected_event(state["mensagem"],state.get("eventos_referencias",[]),pending)
         if isinstance(event,str):
@@ -592,6 +599,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         if isinstance(current,RhToolDecision):
             return {"rota":"rh","rh_decision":current,
                     "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        # An explicit personal series takes precedence over the broad operational
+        # "evolução + conclusões" classifier, which otherwise selects team data.
+        if pedido_grafico_treinamentos(state["mensagem"]):
+            return {"rota":"agenda","agentes_chamados":state["agentes_chamados"]+["roteador"]}
         chart_query = _grafico_da_listagem(state)
         if chart_query is not None:
             if isinstance(chart_query, str):
@@ -886,6 +897,26 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         if result.get("paginacao") == "local" and result.get("contexto_dados"):
             unit=result["contexto_dados"]["conjunto"]["unidade_total"]
             candidate=f"Retornados {result['retornada']} de {result['total']} {unit} autorizados. Quantidade solicitada: {result['solicitada']}."
+            if name=="consultar_indicadores_cobertura":
+                metrics={item["chave"]:item for item in result["cartoes"]["indicadores"]}
+                percentage=metrics["percentual_vigentes"]
+                rate=(f"{percentage['valor']}%" if percentage["valor"] is not None else "sem base de cálculo")
+                candidate=(f"Cobertura cadastral da equipe autorizada: {metrics['pessoas_com_exigencias']['valor']} pessoas com exigências, "
+                           f"{metrics['pares_aplicaveis']['valor']} pares pessoa/NR exigidos. "
+                           f"{metrics['vigentes']['valor']} pares vigentes ({rate}; {percentage['numerador']}/{percentage['denominador']}). "
+                           f"Entre os pares não vigentes: {metrics['em_analise']['valor']} em análise, "
+                           f"{metrics['agendados']['valor']} agendados sem análise e "
+                           f"{metrics['sem_encaminhamento']['valor']} sem encaminhamento. "+candidate)
+            if name=="consultar_resultados_treinamento":
+                metrics={item["chave"]:item for item in result["cartoes"]["indicadores"]}
+                percentage=metrics['percentual_concluidas']
+                rate=f"{percentage['valor']}%" if percentage['valor'] is not None else 'sem base de cálculo'
+                candidate=(f"Resultados registrados do evento: participações: {metrics['participacoes']['valor']}; "
+                           f"pessoas únicas: {metrics['pessoas']['valor']}; concluídas: {metrics['concluido']['valor']}; "
+                           f"pendentes de envio: {metrics['pendente']['valor']}; em análise: {metrics['em_analise']['valor']}; "
+                           f"rejeitadas: {metrics['rejeitado']['valor']}. Conclusões registradas: {rate} "
+                           f"({percentage['numerador']}/{percentage['denominador']} participações). "
+                           "Participações não comprovam presença. "+candidate)
             if name=="consultar_conflitos_agenda" and result["total"]==0:
                 context=result["contexto_dados"]
                 candidate=(f"Não encontrei treinamentos com horários sobrepostos no período de {context['inicio']} a {context['fim']}, "
@@ -912,6 +943,19 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 candidate = candidate[:5000] + "\n[Resumo abreviado; consulte a tabela e a paginação.]"
         else:
             candidate = result.get("mensagem", "Nenhum registro nesta página; isso não comprova ausência em outras páginas.")
+        if name=='consultar_detalhes_evento' and result.get('status')=='ok':
+            fields={row.get('campo'):row.get('valor') for row in result.get('linhas',[])}
+            title=fields.get('Título')
+            if title:
+                candidate=f'Resumo do evento: {title}.'
+                status=fields.get('Situação') or fields.get('Situação do evento')
+                if isinstance(status,str):
+                    candidate+=f" O evento está {status.lower().replace('_',' ')} no cadastro."
+                description=fields.get('Descrição')
+                if isinstance(description,str) and description.strip():
+                    candidate+=' Descrição cadastrada: '+description
+                if fields.get('NR') is not None:candidate+=f" NR vinculada: {fields['NR']}."
+                candidate+=' Os demais campos retornados estão na tabela; dados não retornados não foram inferidos.'
         return {"resultado_tool":result, "candidato":candidate,"resposta_deterministica":True,
                 "resultado":{"dominio":DOMAINS[name],"intencao":"consultar",
                              "status":"concluido" if result.get("status") == "ok" else result.get("status"),
@@ -1244,7 +1288,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                     "usuario_atual": state["usuario_atual"].model_dump(),
                 }},
             )
-        except Exception:
+        except Exception as error:
+            from app.diagnostics import diagnostic
+            logger.warning("Geracao de PDF falhou no pipeline",extra=diagnostic(error))
             result = {"status": "indisponivel"}
         url = result.get("url")
         if result.get("status") == "ok" and isinstance(url, str) and url.strip():
