@@ -14,6 +14,11 @@ from app.modules.chat.errors import ChatError
 from app.scripts import ingest_faq, migrate_vectors
 
 
+@pytest.fixture(autouse=True)
+def isolated_faq_target(monkeypatch):
+    monkeypatch.setattr(ingest_faq, "COLLECTION_FAQ", "faq_chunks_openai_te3s_test")
+
+
 @pytest.fixture
 def pdfs(tmp_path, monkeypatch):
     files = [tmp_path / "normas.pdf", tmp_path / "beneficios.PDF"]
@@ -35,7 +40,9 @@ def test_new_collection_preserves_legacy_and_refuses_overwrite(pdfs):
         await client.create_collection("faq_chunks", vectors_config=models.VectorParams(size=1024, distance=models.Distance.COSINE))
         pid = str(uuid4())
         await client.upsert("faq_chunks", points=[models.PointStruct(id=pid, vector=[1.0] * 1024)])
-        batches = AsyncMock(side_effect=embed)
+        batches = AsyncMock(return_value=[])
+        async def faq_embed(texts): return [[1.0]+[0.0]*1023 for _ in texts]
+        batches.side_effect = faq_embed
         total = await ingest_faq.ingerir_faq(pdfs, client=client, embed_batch=batches)
         assert total > 50
         assert all(len(c.args[0]) <= 50 for c in batches.await_args_list)

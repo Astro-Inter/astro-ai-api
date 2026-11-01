@@ -8,6 +8,8 @@ Os testes de produto usam dados e modelos simulados. As leituras reais limitaram
 
 ## PDF sobre o Astro: erro anterior ao arquivo
 
+**Atualização posterior:** após a imagem do usuário, nova leitura encontrou apenas `faq_chunks` e `memoria_resumos`. A coleção OpenAI abaixo não está mais presente. As evidências seguintes descrevem a primeira leitura; o ajuste final solicitado usa OpenAI/1024 para FAQ e está em [FAQ OpenAI 1024](faq-openai-1024.md). Não executar a antiga orientação de corte para o destino ausente.
+
 A imagem informa HTTP 503, `Consulta as normas indisponivel.`, request ID `e4a516ed-b4e8-4679-aa21-a6d0d124bb86`, em 01/11/2026 às 17:09:57 UTC. Na revisão publicada, esse detalhe é produzido por `FaqVectors`, não pelo renderer ou pelo upload R2. O fluxo consulta fontes para construir a explicação, depois passa pelo Juiz e guardrail e somente então gera o PDF. Portanto esse erro não comprova falha de armazenamento, download ou CORS.
 
 Evidências reais sanitizadas:
@@ -21,12 +23,12 @@ Correções preparadas:
 
 - Diagnóstico `faq_search_failed` identifica `faq_metadata`, `faq_query`, `faq_embeddings` ou `faq_payload`, com status HTTP controlado. Um 404 na consulta de metadados gera `FAQ_COLLECTION_MISSING` e reason `faq_collection_missing`. Um 404/400 na busca não é confundido com coleção ausente na etapa de metadados. Não registra corpo de erro, URL do serviço, texto da pergunta ou credenciais.
 - Erro de embeddings preserva o tratamento específico do OpenRouter; não adiciona inferências ou retries. A resposta pública de erro continua sanitizada e compatível.
-- Exemplos `.env.example`, Render e Kubernetes passam a apontar para a coleção migrada documentada. O default genérico do código não é trocado automaticamente e nenhuma coleção é criada/reutilizada como fallback.
+- A proposta inicial de apontar os exemplos para a coleção migrada foi substituída: default/exemplos agora usam `faq_chunks`, com FAQ OpenAI em 1024 dimensões e verificação de modelo. Nenhuma coleção ou vetor remoto foi alterado.
 - Regressão do POST confirma que FAQ indisponível impede upload, cartão de sucesso e persistência de turno incompleto. O fluxo de PDF aprovado e o contrato arquivo v1 permanecem inalterados.
 
 ### Ação operacional pendente
 
-Um operador autorizado deve confirmar a variável efetiva `QDRANT_FAQ_COLLECTION` e o erro correlacionado no runtime AWS. Após revisão/homologação, configurar explicitamente `QDRANT_FAQ_COLLECTION=faq_chunks_openai_te3s_20261027` no ambiente que atende o domínio, garantindo que um Secret antigo não sobrescreva o ConfigMap. O consumidor mantém o mesmo modelo e filtro; não migrar ou apagar vetores. A alteração dos exemplos nesta PR não atualiza o GitOps nem o ambiente remoto.
+**Orientação inicial substituída; consultar o documento FAQ OpenAI 1024 antes de qualquer corte.** Um operador autorizado deve confirmar a variável efetiva `QDRANT_FAQ_COLLECTION` e o erro correlacionado no runtime AWS. Após revisão/homologação, configurar explicitamente `QDRANT_FAQ_COLLECTION=faq_chunks_openai_te3s_20261027` no ambiente que atende o domínio, garantindo que um Secret antigo não sobrescreva o ConfigMap. O consumidor mantém o mesmo modelo e filtro; não migrar ou apagar vetores. A alteração dos exemplos nesta PR não atualiza o GitOps nem o ambiente remoto.
 
 Repetir a busca documental e o pedido de PDF após uma publicação autorizada. Só considerar sucesso quando retornar arquivo v1 e o download for validado. Não renovar assinaturas existentes para testar. A validade/custo da configuração anterior não é restaurada apontando o modelo novo para vetores legados: qualquer recuperação deve manter código/modelo/coleção compatíveis como conjunto.
 

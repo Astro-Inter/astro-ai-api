@@ -9,7 +9,8 @@ from qdrant_client import AsyncQdrantClient, models
 
 from app.core import config
 from app.infrastructure.llm.embeddings import (
-    EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, gerar_embeddings_batch,
+    FAQ_EMBEDDING_DIMENSIONS as EMBEDDING_DIMENSIONS, EMBEDDING_MODEL,
+    gerar_embeddings_faq as gerar_embeddings_batch,
 )
 
 
@@ -78,9 +79,10 @@ def carregar_chunks(entradas: list[str | Path]) -> list[dict]:
 
 
 async def ingerir_faq(entradas: list[str | Path], *, client=None, embed_batch=None,
-                      target: str = COLLECTION_FAQ) -> int:
+                      target: str | None = None) -> int:
     """Nunca substitui dados existentes. Após falha use outro destino e mantenha a origem."""
     from app.scripts.migrate_vectors import populate
+    target = target or COLLECTION_FAQ
     chunks = carregar_chunks(entradas)
     if "_openai_te3s_" not in target:
         raise ValueError("Use uma colecao nova com _openai_te3s_.")

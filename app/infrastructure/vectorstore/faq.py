@@ -6,7 +6,8 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.core import config
 from app.infrastructure.llm.embeddings import (
-    EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, gerar_embeddings_batch,
+    FAQ_EMBEDDING_DIMENSIONS as EMBEDDING_DIMENSIONS, EMBEDDING_MODEL,
+    gerar_embeddings_faq as gerar_embeddings_batch,
 )
 from app.modules.chat.errors import ChatError
 
@@ -36,8 +37,6 @@ class FaqVectors:
         self.ready = False
 
     async def connect(self):
-        if "_openai_te3s_" not in COLLECTION_FAQ:
-            raise ChatError(503, "Use uma colecao FAQ nova para text-embedding-3-small.")
         if not self.ready:
             if not config.QDRANT_URL:
                 raise ChatError(503, "Consulta as normas indisponivel.")
@@ -59,8 +58,14 @@ class FaqVectors:
             if (vector is None or vector.size != EMBEDDING_DIMENSIONS
                     or vector.distance != models.Distance.COSINE):
                 raise ChatError(
-                    503, "Colecao FAQ incompativel com openai/text-embedding-3-small (1536/Cosine).",
+                    503, "Colecao FAQ incompativel com openai/text-embedding-3-small (1024/Cosine).",
                 )
+            matching = await self.client.count(COLLECTION_FAQ, exact=True,
+                count_filter=models.Filter(must=[models.FieldCondition(
+                    key="modelo_embedding", match=models.MatchValue(value=EMBEDDING_MODEL))]))
+            if matching.count == 0 and (await self.client.count(COLLECTION_FAQ, exact=True)).count > 0:
+                raise ChatError(503, "FAQ ainda nao indexado com o modelo OpenAI. Reindexacao necessaria.",
+                                reason="faq_model_incompatible", stage="faq_metadata")
             self.ready = True
         return self.client
 

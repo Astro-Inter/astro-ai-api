@@ -92,7 +92,7 @@ services:
       - key: OPENROUTER_EVIDENCE_CHECK_ENABLED
         value: "false"
       - key: QDRANT_FAQ_COLLECTION
-        value: faq_chunks_openai_te3s_20261027
+        value: faq_chunks
       - key: QDRANT_MEMORY_COLLECTION
         value: memoria_resumos_openai_te3s_v1
       - key: FAQ_SCORE_THRESHOLD

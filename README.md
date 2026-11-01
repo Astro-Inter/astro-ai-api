@@ -120,7 +120,7 @@ antes de gerar vetores ou trocar as coleções em uso.
 ```
 
 Use `OPENROUTER_API_KEY`, `QDRANT_URL` e `QDRANT_API_KEY` no backend. O modelo é
-`openai/text-embedding-3-small`, com 1536 dimensões e Cosine. Não reutilize as
+`openai/text-embedding-3-small`, com **1024 dimensões para FAQ** e Cosine. A memória mantém 1536. Não misture modelos nem reutilize as
 coleções legadas. PDFs digitalizados precisam de OCR prévio; revise tabelas e
 layouts complexos. A API não dispara ingestão ao iniciar.
 
@@ -1013,3 +1013,5 @@ PDFs gerados podem ser apresentados em cartões pelo [bloco arquivo v1](docs/arq
 O [cache seletivo Redis](docs/cache-redis.md) compartilha apenas fontes públicas do MCP e reutiliza fotos autorizadas da API Java; não armazena respostas finais ou permissões.
 
 A [homologação de PDF e contexto de gráficos](docs/homologacao-pdf-contexto-novembro.md) diferencia falha do FAQ, gráfico da listagem e pedidos pessoais sem indicador definido.
+
+O ajuste de FAQ para 1024 dimensões e o estado da coleção legada estão em [FAQ OpenAI 1024](docs/faq-openai-1024.md).
