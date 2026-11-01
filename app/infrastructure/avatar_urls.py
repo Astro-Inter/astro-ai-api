@@ -99,18 +99,21 @@ def resolve_avatar_urls(user: CurrentUser, emails: list[str], *, own: bool = Fal
     urls = {}
     client = None
     try:
-        for email, user_id, path in photos:
-            if email not in emails or not isinstance(user_id, int) or user_id <= 0 or not isinstance(path, str) or not path:
-                continue
-            key = f"user:avatar:{user_id}"
-            url = None
-            if cache:
-                try: url = cache.get(key)
-                except Exception:
-                    logger.warning("Cache de avatares indisponível")
-                    try: cache.close()
-                    except Exception: pass
-                    cache = None
+        photos=[(email,user_id,path) for email,user_id,path in photos
+                if email in emails and type(user_id) is int and user_id>0 and isinstance(path,str) and path][:200]
+        keys=[f"usuario:foto:{user_id}" for _,user_id,_ in photos]
+        cached=[None]*len(photos)
+        if cache and keys:
+            try:
+                values=cache.mget(keys)
+                if not isinstance(values,list) or len(values)!=len(keys):raise ValueError()
+                cached=values
+            except Exception:
+                logger.warning("Cache de avatares indisponível")
+                try: cache.close()
+                except Exception: pass
+                cache=None
+        for (email,user_id,path),key,url in zip(photos,keys,cached):
             if not url or not _valid_url(url, path):
                 if not config.AVATAR_R2_ACCESS_KEY_ID or not config.AVATAR_R2_SECRET_ACCESS_KEY:
                     logger.info("avatar_unavailable reason=signer_configuration")

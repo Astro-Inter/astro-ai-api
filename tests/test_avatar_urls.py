@@ -29,13 +29,13 @@ def test_cache_only_after_authorization_and_valid_object(monkeypatch):
         return [("ana@example.com", 7, "avatar/7.png")]
     monkeypatch.setattr(avatar_urls, "_authorized_photos", authorized)
     class Cache:
-        def get(self, key):
-            seen.append(("cache", key)); return signed()
+        def mget(self, keys):
+            seen.append(("cache", keys)); return [signed()]
         def close(self): pass
     with patch("redis.Redis.from_url", return_value=Cache()):
         result = avatar_urls.resolve_avatar_urls(CurrentUser(uid="gestor", role="GESTOR"), ["ana@example.com", "other@example.com"])
     assert list(result) == ["ana@example.com"]
-    assert seen[0][0] == "authorization" and seen[1] == ("cache", "user:avatar:7")
+    assert seen[0][0] == "authorization" and seen[1] == ("cache", ["usuario:foto:7"])
     assert avatar_urls._valid_url(signed(), "avatar/7.png")
     assert not avatar_urls._valid_url(signed("avatar/other.png"), "avatar/7.png")
     assert not avatar_urls._valid_url(signed(age=90000), "avatar/7.png")
@@ -47,12 +47,12 @@ def test_invalid_cache_generates_signed_url_and_sets_ttl(monkeypatch):
     monkeypatch.setattr(config, "AVATAR_R2_ACCESS_KEY_ID", "fake")
     monkeypatch.setattr(config, "AVATAR_R2_SECRET_ACCESS_KEY", "fake")
     monkeypatch.setattr(avatar_urls, "_authorized_photos", lambda *_: [("ana@example.com", 7, "avatar/7.png")])
-    cache = SimpleNamespace(get=lambda _: "https://evil.example/avatar", set=lambda *args, **kw: writes.append((args, kw)), close=lambda: None)
+    cache = SimpleNamespace(mget=lambda _: ["https://evil.example/avatar"], set=lambda *args, **kw: writes.append((args, kw)), close=lambda: None)
     writes = []
     client = SimpleNamespace(generate_presigned_url=lambda *a, **kw: signed())
     with patch("redis.Redis.from_url", return_value=cache), patch("boto3.client", return_value=client):
         urls = avatar_urls.resolve_avatar_urls(CurrentUser(uid="gestor", role="GESTOR"), ["ana@example.com"])
-    assert "ana@example.com" in urls and writes[0][0][0] == "user:avatar:7" and writes[0][1]["ex"] == 86370
+    assert "ana@example.com" in urls and writes[0][0][0] == "usuario:foto:7" and writes[0][1]["ex"] == 86370
 
 
 def test_authorization_failure_does_not_read_cache(monkeypatch):
@@ -62,6 +62,22 @@ def test_authorization_failure_does_not_read_cache(monkeypatch):
     with patch("redis.Redis.from_url") as cache:
         assert avatar_urls.resolve_avatar_urls(CurrentUser(uid="user", role="GESTOR"), ["ana@example.com"]) == {}
         cache.assert_not_called()
+
+
+def test_shared_java_avatar_keys_are_read_in_one_batch_without_renewal(monkeypatch):
+    configure(monkeypatch)
+    monkeypatch.setattr(avatar_urls,'_authorized_photos',lambda *a:[('a@example.com',7,'avatar/7.png'),('b@example.com',8,'avatar/8.png')])
+    calls=[]
+    class Cache:
+        def mget(self,keys):
+            calls.append(keys)
+            return [signed('avatar/7.png'),signed('avatar/8.png')]
+        def set(self,*a,**kw):raise AssertionError('Hit não pode renovar validade.')
+        def close(self):pass
+    with patch('redis.Redis.from_url',return_value=Cache()),patch('boto3.client') as signer:
+        result=avatar_urls.resolve_avatar_urls(CurrentUser(uid='viewer',role='GESTOR'),['a@example.com','b@example.com'])
+    assert calls==[['usuario:foto:7','usuario:foto:8']]
+    assert len(result)==2 and not signer.called
 
 
 def test_authorization_query_limits_manager_to_own_scope(monkeypatch):
@@ -98,10 +114,10 @@ def test_own_photo_uses_authenticated_uid_before_cache(monkeypatch):
     monkeypatch.setattr(avatar_urls, "_authorized_own_photos", own)
     monkeypatch.setattr(avatar_urls, "_authorized_photos", lambda *args: (_ for _ in ()).throw(AssertionError("other user lookup")))
     class Cache:
-        def get(self, key):
+        def mget(self, keys):
             assert seen == ["owner"]
-            assert key == "user:avatar:7"
-            return signed()
+            assert keys == ["usuario:foto:7"]
+            return [signed()]
         def close(self): pass
     with patch("redis.Redis.from_url", return_value=Cache()):
         result = avatar_urls.resolve_avatar_urls(CurrentUser(uid="owner", role="COLABORADOR"), ["__self__"], own=True)
@@ -124,3 +140,17 @@ def test_own_photo_query_has_no_external_selector(monkeypatch):
         def cursor(self): return Cursor()
     monkeypatch.setattr(avatar_urls, "read_only_connection", lambda *args: Connection())
     assert avatar_urls._authorized_own_photos(CurrentUser(uid="owner", role="COLABORADOR")) == []
+
+
+def test_batch_cache_failure_keeps_authorized_photo_fallback(monkeypatch):
+    configure(monkeypatch)
+    monkeypatch.setattr(config, 'AVATAR_R2_ACCESS_KEY_ID', 'fake')
+    monkeypatch.setattr(config, 'AVATAR_R2_SECRET_ACCESS_KEY', 'fake')
+    monkeypatch.setattr(avatar_urls, '_authorized_photos', lambda *_: [('ana@example.com', 7, 'avatar/7.png')])
+    class Cache:
+        def mget(self, keys): raise ConnectionError('simulated')
+        def close(self): pass
+    client = SimpleNamespace(generate_presigned_url=lambda *a, **kw: signed())
+    with patch('redis.Redis.from_url', return_value=Cache()), patch('boto3.client', return_value=client):
+        result = avatar_urls.resolve_avatar_urls(CurrentUser(uid='viewer', role='GESTOR'), ['ana@example.com'])
+    assert list(result) == ['ana@example.com']

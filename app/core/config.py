@@ -95,6 +95,7 @@ FETCH_MCP_ALLOWED_DOMAINS = os.getenv("FETCH_MCP_ALLOWED_DOMAINS", "gov.br")
 FETCH_MCP_CACHE_TTL_SECONDS = _bounded_int_env(
     "FETCH_MCP_CACHE_TTL_SECONDS", 900, 0, 86400,
 )
+FETCH_MCP_REDIS_CACHE_ENABLED = os.getenv("FETCH_MCP_REDIS_CACHE_ENABLED", "true").lower() == "true"
 
 # Agente A2A de pesquisa pública, executado como serviço independente.
 A2A_PUBLIC_RESEARCH_URL = os.getenv("A2A_PUBLIC_RESEARCH_URL", "").strip()
