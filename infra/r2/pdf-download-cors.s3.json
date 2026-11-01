@@ -1,0 +1,12 @@
+{
+  "CORSRules": [
+    {
+      "ID": "astro-pdf-web-download-v1",
+      "AllowedOrigins": ["https://astro-inter.github.io"],
+      "AllowedMethods": ["GET"],
+      "AllowedHeaders": ["Range"],
+      "ExposeHeaders": ["Content-Disposition", "Content-Length", "Content-Range", "ETag"],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}
