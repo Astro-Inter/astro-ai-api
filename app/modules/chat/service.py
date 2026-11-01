@@ -451,7 +451,9 @@ class ChatService:
                             "consulta_operacional": result.get("operational_decision") if result.get("rota") == "consulta_operacional" else None,
                         }, messages=[
                             {"role": "human", "content": request.message},
-                            {"role": "assistant", "content": stored_answer, **({"blocos": [block.model_dump() for block in blocks]} if blocks else {})},
+                            # Persist the public wire representation: date-only fields
+                            # must remain ISO strings, which BSON can encode losslessly.
+                            {"role": "assistant", "content": stored_answer, **({"blocos": [block.model_dump(mode="json") for block in blocks]} if blocks else {})},
                         ])
                     # Compact only after the atomic Mongo update succeeds. An
                     # old checkpoint never overrides data loaded from another worker.

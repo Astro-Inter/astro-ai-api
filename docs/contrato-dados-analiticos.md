@@ -11,10 +11,13 @@ Ordem: `indicadores` → `matriz_conformidade` ou `tabela` v2 → gráfico opcio
 `contexto_dados`. Texto pode aparecer nos demais fluxos; renderizar na ordem do array.
 POST e histórico mantêm os mesmos blocos e versões. Histórico antigo conserva
 tabelas v1, fichas e gráficos existentes; não é recalculado com dados atuais.
+Datas de referência/período são persistidas como strings ISO, compatíveis com
+BSON. Diagnóstico e regressões da correção: [incidente da PR #33](correcao-producao-pr33.md).
 
-Esses três novos tipos exigem atualização de web e mobile antes da publicação da
-API. A PR permanece em rascunho para coordenar isso. Não houve deploy. O cliente
-deve aceitar novos blocos sem descartar toda a mensagem e preservar fallback para
+Esses três novos tipos exigem suporte de web e mobile. A PR #33 foi incorporada
+e a revisão 3ad06be estava publicada em 01/11/2026; a correção de persistência
+documentada acima ainda depende de publicação autorizada. O cliente deve aceitar
+novos blocos sem descartar toda a mensagem e preservar fallback para
 tipos desconhecidos, sem mostrar JSON bruto ou afirmar que recebeu todos os dados.
 
 ## Quantidade versus páginas
@@ -177,5 +180,5 @@ maior aumenta tokens de roteamento; validar latência em homologação.
 Antes do merge/deploy: ambos os clientes devem renderizar indicadores, matriz e
 contexto, paginar tabelas localmente e testar recuperação do histórico. Testar os
 novos contratos com fixture, inclusive vazio, zero, corte de 200 e de bytes. Depois
-homologar com API em staging e coordenar releases. A PR da API fica em rascunho até
-essa compatibilidade; nenhum dado antigo precisa de migração.
+homologar com API em staging e coordenar releases. Novas extensões devem aguardar
+essa compatibilidade antes da publicação; nenhum dado antigo precisa de migração.

@@ -138,6 +138,46 @@ def _continuacao_rh(state: ChatState) -> BuscarOutrosUsuariosArgs | None:
     return None
 
 
+def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
+    """Only an explicit, bounded chart reference reuses trusted query filters.
+
+    Rows, visual pagination and identities never become aggregation inputs.
+    Input guard still runs; tools revalidate the current authenticated scope.
+    """
+    if state["contexto"].get("ultima_rota") != "rh":
+        return None
+    match = re.fullmatch(
+        r"(?:ai |agora )?(?:gere|mostre|crie|faca) (?:um )?grafico (?:de )?"
+        r"(?P<tipo>barras|setores|pizza|rosca|donut|linhas) por "
+        r"(?P<dimensao>cargo|perfil|unidade|situacao) "
+        r"(?:com base n(?:esses|essas) (?:dados|pessoas)|desses dados)"
+        r"(?: considerando todo o escopo autorizado)?(?: por favor)?[.!?]*",
+        _sem_acentos(state["mensagem"]).strip(),
+    )
+    if match is None:
+        return None
+    previous = state.get("consulta_rh")
+    if not isinstance(previous, dict):
+        return "Não encontrei os filtros da listagem anterior. Informe o conjunto que deseja comparar."
+    try:
+        filters = BuscarOutrosUsuariosArgs.model_validate(previous)
+        return OperationalDecision.model_validate({
+            "acao": "consultar_indicadores_equipe",
+            "referencia_listagem_rh": True,
+            "filtros": {
+                "agrupar_por": match["dimensao"],
+                "tipo_grafico": {"barras": "grafico_barras", "setores": "grafico_setores",
+                                 "pizza": "grafico_setores", "rosca": "grafico_rosca",
+                                 "donut": "grafico_rosca", "linhas": "grafico_linhas"}[match["tipo"]],
+                "tipos": filters.tipos or None, "status": filters.status or None,
+                "nome": filters.nome, "cargo": filters.cargo,
+                # Quantity and page of the previous list are deliberately not reused.
+            },
+        })
+    except ValidationError:
+        return "Não consegui reaplicar os filtros da listagem com segurança. Informe os filtros novamente."
+
+
 def _contagem_funcionarios(message: str) -> bool:
     return bool(re.fullmatch(
         r"quantos funcionarios(?: no total)? (?:eu )?tenho",
@@ -532,6 +572,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
+        chart_query = _grafico_da_listagem(state)
+        if chart_query is not None:
+            if isinstance(chart_query, str):
+                return {"rota": "direta", "candidato": chart_query,
+                        "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+            return {"rota": "consulta_operacional", "operational_decision": chart_query.model_dump(mode="json"),
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if _consulta_propria_recente(state["mensagem"]) and state.get("memoria_consultada"):
             conversations = state.get("memoria", {}).get("conversas", [])
             summary = conversations[0].get("resumo", "") if conversations else ""
@@ -565,6 +612,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 decision = await invoke_agent(model, "roteador", OPERATIONAL_PROMPT, state, OperationalDecision)
             except InvalidAgentResponse:
                 return {"rota":"direta", "candidato":"Não consegui identificar os filtros com segurança. Informe a consulta e o registro desejado.", "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
+            # Continuity metadata is assigned by the application, not by a model.
+            decision = decision.model_copy(update={"referencia_listagem_rh": False})
             if decision.acao in {"consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"}:
                 values = decision.model_dump()
                 normalized = _sem_acentos(state["mensagem"])
@@ -573,6 +622,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 previous = state.get("consulta_rh")
                 if (state["contexto"].get("ultima_rota") == "rh" and isinstance(previous, dict)
                         and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", normalized)):
+                    if decision.acao == "consultar_indicadores_equipe":
+                        values["referencia_listagem_rh"] = True
                     for field in ("tipos", "status", "nome", "cargo"):
                         if values["filtros"].get(field) is None and previous.get(field) is not None:
                             values["filtros"][field] = previous[field]
@@ -697,7 +748,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         query_match = re.fullmatch(r"QUERY\s*=\s*(\{.*\})", command, re.DOTALL)
         if query_match:
             try:
-                decision = OperationalDecision.model_validate_json(query_match.group(1))
+                decision = OperationalDecision.model_validate_json(query_match.group(1)).model_copy(
+                    update={"referencia_listagem_rh": False})
             except ValidationError:
                 raise InvalidAgentResponse("roteador") from None
             return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(mode="json"),
@@ -808,7 +860,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         name = decision.acao
         result = await OPERATIONAL_TOOLS[name].ainvoke(
             decision.filtros.model_dump(),
-            config={"configurable":{"usuario_atual":state["usuario_atual"].model_dump()}},
+            config={"configurable":{"usuario_atual":state["usuario_atual"].model_dump(),
+                                    "referencia_listagem_rh":decision.referencia_listagem_rh}},
         )
         if result.get("paginacao") == "local" and result.get("contexto_dados"):
             unit=result["contexto_dados"]["conjunto"]["unidade_total"]

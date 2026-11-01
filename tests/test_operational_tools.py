@@ -67,7 +67,8 @@ def test_untrusted_arguments_rejected(payload):
 
 
 @pytest.mark.parametrize("role",["GESTOR","GESTOR_WORKSPACE"])
-def test_sql_aggregates_before_pagination_and_revalidates_scope(monkeypatch,role):
+@pytest.mark.parametrize("reference",[False,True])
+def test_sql_aggregates_before_pagination_and_revalidates_scope(monkeypatch,role,reference):
     monkeypatch.setattr(tools.app_config,"DATABASE_URL","postgresql://fake")
     calls = []
     class Cursor:
@@ -80,13 +81,16 @@ def test_sql_aggregates_before_pagination_and_revalidates_scope(monkeypatch,role
     @contextmanager
     def fake_conn(dsn): yield Conn()
     monkeypatch.setattr(tools,"read_only_connection",fake_conn)
-    result = run(tools.consultar_indicadores_equipe.ainvoke({},config=context(role)))
+    cfg=context(role)
+    cfg["configurable"]["referencia_listagem_rh"]=reference
+    result = run(tools.consultar_indicadores_equipe.ainvoke({},config=cfg))
     sql,params = calls[0]
     assert sql.index("GROUP BY") < sql.index("LIMIT")
     assert "viewer.status = 'ATIVO'" in sql
     assert "unit.workspace_id = viewer_unit.workspace_id" in sql
     assert "target.unidade_id = viewer.unidade_id" in sql
     assert "fn_seleciona_unidades(%s)" in sql
+    assert ("target.firebase_uid <> viewer.firebase_uid" in sql) is reference
     assert params[:3] == ["viewer",role,"viewer"]
     assert result["grafico"] == [{"categoria":"Técnica","valor":7},{"categoria":"Operador","valor":4}]
     assert result["completo"] is True

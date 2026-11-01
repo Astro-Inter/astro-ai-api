@@ -44,6 +44,7 @@ class ApiArgs(BaseModel):
 
 class OperationalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    referencia_listagem_rh: bool = Field(default=False, description="Contexto interno de continuidade: mantém o recorte cadastral da listagem RH; nunca concede acesso.")
     acao: Literal["consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos", "consultar_vencimentos_conformidades", "consultar_pendencias_equipe", "consultar_conformidade_unidade", "consultar_formularios_pendentes", "consultar_respostas_formulario", "consultar_detalhes_evento", "consultar_candidatos_treinamento", "consultar_matriz_conformidade_equipe", "consultar_cobertura_treinamentos", "consultar_evidencias_pendentes_validacao", "consultar_resultados_treinamento", "consultar_evolucao_conclusoes_equipe", "consultar_conflitos_agenda", "simular_impacto_exigencia_nr", "consultar_origem_conformidade", "consultar_indicadores_cobertura", "comparar_conformidade_unidades"]
     filtros: TeamArgs | ApiArgs | InsightArgs
 
@@ -107,7 +108,7 @@ AND target.tipo = ANY(%s) AND target.id_usuario <> viewer.id_usuario
 """
 
 
-def team_read(action, args, user):
+def team_read(action, args, user, *, referencia_listagem_rh=False):
     if action in {"consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"} and args.tipo_grafico == "grafico_linhas":
         return {"status":"esclarecer", "mensagem":"Os indicadores de equipe representam o cadastro atual, sem série histórica mensal. Posso mostrar barras, setores ou rosca; linhas estão disponíveis para suas conclusões de treinamentos."}
     if action == "consultar_grafico_vencimentos" and (args.dias != 30 or args.incluir_vencidas):
@@ -117,6 +118,10 @@ def team_read(action, args, user):
     types = ["GESTOR", "COLABORADOR"] + (["GESTOR_WORKSPACE"] if user.role == "GESTOR_WORKSPACE" else [])
     params = [user.uid, user.role, user.uid, types]
     scope = SCOPE
+    if action == "consultar_indicadores_equipe" and referencia_listagem_rh:
+        # Same exclusion predicate as buscar_outros_usuarios. NULL UIDs are not
+        # returned by that list; a chart of it must not silently add those rows.
+        scope += " AND target.firebase_uid <> viewer.firebase_uid"
     if args.tipos:
         scope += " AND target.tipo = ANY(%s)"
         params.append(args.tipos)
@@ -229,6 +234,8 @@ FROM aggregated ORDER BY nr LIMIT %s OFFSET %s"""
                 result["tipo_grafico"] = args.tipo_grafico
             else:
                 result["aviso"] = "O gráfico exige todas as categorias e suporta até 12; consulte a tabela paginada."
+            if action == "consultar_indicadores_equipe" and referencia_listagem_rh:
+                result["aviso"] = (result.get("aviso", "") + " Agregação de todo o conjunto autorizado pelos filtros da listagem RH, incluindo seu critério de UID cadastrado; não apenas das linhas enviadas.").strip()
         return result
     except Exception:
         return {"status":"indisponivel","mensagem":"Não foi possível consultar o cadastro. Nenhum resultado foi confirmado."}
@@ -238,6 +245,8 @@ async def execute_team(action, args, config):
     user = user_from(config)
     if user is None or user.role not in MANAGERS:
         return denied()
+    if action == "consultar_indicadores_equipe" and (config or {}).get("configurable", {}).get("referencia_listagem_rh") is True:
+        return await asyncio.to_thread(team_read, action, args, user, referencia_listagem_rh=True)
     return await asyncio.to_thread(team_read, action, args, user)
 
 
