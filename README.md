@@ -120,7 +120,7 @@ antes de gerar vetores ou trocar as coleções em uso.
 ```
 
 Use `OPENROUTER_API_KEY`, `QDRANT_URL` e `QDRANT_API_KEY` no backend. O modelo é
-`openai/text-embedding-3-small`, com **1024 dimensões para FAQ** e Cosine. A memória mantém 1536. Não misture modelos nem reutilize as
+`openai/text-embedding-3-small`, com **1024 dimensões para FAQ** e Cosine. A memória também usa 1024. Não misture modelos nem reutilize as
 coleções legadas. PDFs digitalizados precisam de OCR prévio; revise tabelas e
 layouts complexos. A API não dispara ingestão ao iniciar.
 
@@ -717,7 +717,7 @@ apenas a etapa e o código do erro, sem URL assinada ou credenciais.
 
 Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY` e
 `OPENROUTER_API_KEY`. O MongoDB continua usando `sessoes` com os mesmos contratos.
-`QDRANT_MEMORY_COLLECTION` aponta para uma coleção nova de 1536 dimensões/Cosine,
+`QDRANT_MEMORY_COLLECTION` aponta para uma coleção nova de 1024 dimensões/Cosine,
 com índice tenant `id_user` e identificador `modelo_embedding`. A consulta continua
 filtrando por dono e a sessão atual é excluída. O índice antigo permanece intacto;
 [execute a migração e valide antes do corte](docs/operacao/openrouter.md).

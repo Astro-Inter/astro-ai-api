@@ -7,13 +7,13 @@ from app.modules.chat.errors import ChatError
 
 
 EMBEDDING_MODEL = "openai/text-embedding-3-small"
-EMBEDDING_DIMENSIONS = 1536
-FAQ_EMBEDDING_DIMENSIONS = 1024
+EMBEDDING_DIMENSIONS = 1024
+FAQ_EMBEDDING_DIMENSIONS = EMBEDDING_DIMENSIONS
 
 
 async def gerar_embeddings_batch(textos: list[str], *, dimensions: int = EMBEDDING_DIMENSIONS) -> list[list[float]]:
     """Gera embeddings na ordem dos textos; o chamador divide os lotes."""
-    if type(dimensions) is not int or dimensions not in {FAQ_EMBEDDING_DIMENSIONS, EMBEDDING_DIMENSIONS}:
+    if type(dimensions) is not int or dimensions != EMBEDDING_DIMENSIONS:
         raise ChatError(422, "Dimensao de embedding nao suportada.")
     if not textos or any(not text.strip() for text in textos):
         raise ChatError(422, "Informe textos nao vazios para gerar embeddings.")

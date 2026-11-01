@@ -31,7 +31,7 @@ def pdfs(tmp_path, monkeypatch):
 
 
 async def embed(texts):
-    return [[1.0] + [0.0] * 1535 for _ in texts]
+    return [[1.0] + [0.0] * 1023 for _ in texts]
 
 
 def test_new_collection_preserves_legacy_and_refuses_overwrite(pdfs):
@@ -89,9 +89,9 @@ def test_batch_embeddings_order_cardinality_dimensions_and_redaction(monkeypatch
     original = httpx.AsyncClient
     def handler(request):
         body = json.loads(request.content)
-        assert body["input"] == ["a", "b"] and body["dimensions"] == 1536
+        assert body["input"] == ["a", "b"] and body["dimensions"] == 1024
         assert body["model"] == EMBEDDING_MODEL
-        data = [{"index": 1, "embedding": [2.0] * 1536}, {"index": 0, "embedding": [1.0] * 1536}]
+        data = [{"index": 1, "embedding": [2.0] * 1024}, {"index": 0, "embedding": [1.0] * 1024}]
         return httpx.Response(200, json={"data": data[:1] if invalid else data})
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs))
     if invalid:
@@ -102,7 +102,7 @@ def test_batch_embeddings_order_cardinality_dimensions_and_redaction(monkeypatch
         assert result[0][0] == 1 and result[1][0] == 2
 
 
-@pytest.mark.parametrize("vector", [[1.0] * 1024, [0.0] * 1536, [float("nan")] * 1536, [True] * 1536])
+@pytest.mark.parametrize("vector", [[1.0] * 1536, [0.0] * 1024, [float("nan")] * 1024, [True] * 1024])
 def test_invalid_vector_rejected(monkeypatch, vector):
     monkeypatch.setattr("app.infrastructure.llm.embeddings.request", AsyncMock(return_value={"data": [{"index": 0, "embedding": vector}]}))
     with pytest.raises(ChatError):
@@ -114,6 +114,8 @@ def test_migration_new_targets_validate_ids_payload_and_tenant_filter():
         client = AsyncQdrantClient(":memory:")
         targets = {"faq": "faq_openai_te3s_test", "memory": "memory_openai_te3s_test"}
         await migrate_vectors.create_targets(client, targets)
+        for target in targets.values():
+            assert (await client.get_collection(target)).config.params.vectors.size == 1024
         rows = [(str(uuid4()), "Resumo", {"id_user": owner, "modelo_embedding": EMBEDDING_MODEL}) for owner in ("a", "b")]
         await migrate_vectors.populate(client, targets["memory"], rows, embed)
         matches = await client.query_points(targets["memory"], query=(await embed(["x"]))[0],

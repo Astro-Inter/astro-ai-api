@@ -488,8 +488,8 @@ def test_qdrant_real_sdk_local_collection_and_tenant_filter(monkeypatch):
         vectors = SummaryVectors()
         vectors.client = AsyncQdrantClient(":memory:")
         await vectors.client.create_collection(COLLECTION_MEMORY,
-            vectors_config={"": models.VectorParams(size=1536, distance=models.Distance.COSINE)})
-        vectors.embed = AsyncMock(return_value=[1.0] + [0.0] * 1535)
+            vectors_config={"": models.VectorParams(size=1024, distance=models.Distance.COSINE)})
+        vectors.embed = AsyncMock(return_value=[1.0] + [0.0] * 1023)
         monkeypatch.setattr(config, "QDRANT_URL", "http://localhost:6333")
         # Local Qdrant não usa índices de payload; criar para validar o contrato do SDK.
         sid, other, current = str(uuid4()), str(uuid4()), str(uuid4())
@@ -512,21 +512,22 @@ def test_embeddings_http_contract_and_validation(monkeypatch):
         assert request.headers["Authorization"] == "Bearer fake-openrouter-key"
         assert json.loads(request.content) == {
             "model": "openai/text-embedding-3-small", "input": ["Resumo"], "encoding_format": "float",
-            "dimensions": 1536, "provider": {"data_collection": "deny"},
+            "dimensions": 1024, "provider": {"data_collection": "deny"},
         }
-        return httpx.Response(200, json={"data": [{"embedding": [1.0] * 1536}]})
+        return httpx.Response(200, json={"data": [{"embedding": [1.0] * 1024}]})
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original_client(
         transport=httpx.MockTransport(handler), **kwargs))
-    assert len(asyncio.run(SummaryVectors().embed("Resumo"))) == 1536
+    assert len(asyncio.run(SummaryVectors().embed("Resumo"))) == 1024
 
 
-def test_wrong_vector_dimensions_fail_without_recreation(monkeypatch):
+@pytest.mark.parametrize("size", [768, 1536])
+def test_wrong_vector_dimensions_fail_without_recreation(monkeypatch, size):
     async def scenario():
         monkeypatch.setattr(config, "QDRANT_URL", "http://localhost:6333")
         vectors = SummaryVectors()
         vectors.client = SimpleNamespace(get_collection=AsyncMock(return_value=SimpleNamespace(
             config=SimpleNamespace(params=SimpleNamespace(vectors=models.VectorParams(
-                size=768, distance=models.Distance.COSINE))), payload_schema={})))
+                size=size, distance=models.Distance.COSINE))), payload_schema={})))
         with pytest.raises(ChatError) as error:
             await vectors.connect()
         assert error.value.status_code == 503
@@ -609,13 +610,13 @@ def test_memory_does_not_mix_models_even_with_equal_dimension(monkeypatch):
         store = SummaryVectors()
         store.client = AsyncQdrantClient(":memory:")
         await store.client.create_collection(COLLECTION_MEMORY,
-            vectors_config=models.VectorParams(size=1536, distance=models.Distance.COSINE))
+            vectors_config=models.VectorParams(size=1024, distance=models.Distance.COSINE))
         legacy, valid, current = str(uuid4()), str(uuid4()), str(uuid4())
         await store.client.upsert(COLLECTION_MEMORY, points=[models.PointStruct(
-            id=pid, vector=[1.0] * 1536, payload={"id_user": "owner", "modelo_embedding": model})
+            id=pid, vector=[1.0] * 1024, payload={"id_user": "owner", "modelo_embedding": model})
             for pid, model in [(legacy, "mistral-embed"), (valid, "openai/text-embedding-3-small")]])
         monkeypatch.setattr(config, "QDRANT_URL", "http://localhost:6333")
-        store.embed = AsyncMock(return_value=[1.0] * 1536)
+        store.embed = AsyncMock(return_value=[1.0] * 1024)
         assert await store.search("owner", current, "pergunta") == [valid]
         await store.close()
     asyncio.run(scenario())

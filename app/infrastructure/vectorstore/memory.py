@@ -39,7 +39,7 @@ class SummaryVectors:
                 vector = vectors
             if (vector is None or vector.size != EMBEDDING_DIMENSIONS
                     or vector.distance != models.Distance.COSINE):
-                raise ChatError(503, "Colecao de memoria incompativel com openai/text-embedding-3-small (1536/Cosine).")
+                raise ChatError(503, "Colecao de memoria incompativel com openai/text-embedding-3-small (1024/Cosine).")
             if "id_user" not in info.payload_schema:
                 await self.client.create_payload_index(
                     COLLECTION_MEMORY, "id_user",

@@ -10,7 +10,7 @@ from qdrant_client import AsyncQdrantClient, models
 
 from app.core import config
 from app.core.pii import redact_for_embedding
-from app.infrastructure.llm.embeddings import EMBEDDING_DIMENSIONS, FAQ_EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, gerar_embeddings_batch, gerar_embeddings_faq
+from app.infrastructure.llm.embeddings import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, gerar_embeddings_batch, gerar_embeddings_faq
 
 PRICE_PER_TOKEN_USD = 0.00000002  # Catálogo OpenRouter, 26/10/2026; reconfirmar antes de aplicar.
 
@@ -66,7 +66,7 @@ async def create_targets(client, targets):
             raise ValueError("Escolha destinos novos com _openai_te3s_; nenhuma colecao existente pode ser reutilizada.")
     for kind, target in targets.items():
         await client.create_collection(target, vectors_config=models.VectorParams(
-            size=FAQ_EMBEDDING_DIMENSIONS if kind == "faq" else EMBEDDING_DIMENSIONS, distance=models.Distance.COSINE))
+            size=EMBEDDING_DIMENSIONS, distance=models.Distance.COSINE))
         await client.create_payload_index(target, "modelo_embedding", models.PayloadSchemaType.KEYWORD, wait=True)
     await client.create_payload_index(targets["memory"], "id_user",
                                      models.KeywordIndexParams(type="keyword", is_tenant=True), wait=True)

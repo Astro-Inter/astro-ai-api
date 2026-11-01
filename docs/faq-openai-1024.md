@@ -1,6 +1,6 @@
-# FAQ OpenAI em 1024 dimensões
+# FAQ e memória OpenAI em 1024 dimensões
 
-A pedido do usuário, FAQ usa `openai/text-embedding-3-small` pelo OpenRouter com `dimensions: 1024`. A memória continua usando o mesmo modelo com 1536 dimensões; não foi convertida nem alterada. Consultas FAQ, ingestão de PDFs e migração dos textos FAQ usam o wrapper `gerar_embeddings_faq`, que exige resposta com exatamente 1024 números finitos não nulos. O helper genérico mantém default 1536 para a memória. O modelo remoto não pode ignorar a dimensão e devolver 1536 sem que a resposta seja rejeitada.
+A pedido do usuário, FAQ usa `openai/text-embedding-3-small` pelo OpenRouter com `dimensions: 1024`. A memória passa a usar o mesmo modelo e também 1024 dimensões em geração, gravação e busca. Nenhum vetor remoto foi convertido ou alterado. Consultas FAQ, ingestão de PDFs e migração dos textos FAQ usam o wrapper `gerar_embeddings_faq`, que exige resposta com exatamente 1024 números finitos não nulos. O helper genérico também exige 1024 para a memória. O modelo remoto não pode ignorar a dimensão e devolver 1536 sem que a resposta seja rejeitada.
 
 O default de `QDRANT_FAQ_COLLECTION` e os exemplos de ambiente passam a `faq_chunks`. A leitura aceita esse nome sem exigir o sufixo da antiga migração, mas valida dimensão 1024/Cosine e metadado `modelo_embedding=openai/text-embedding-3-small`. O filtro permanece em cada busca. Não há troca automática para outra coleção ou para outro provedor.
 
@@ -24,14 +24,16 @@ O inventário real limitado encontrou 8 trechos, teto conservador de 5131 tokens
 
 O destino precisa ser novo e conter `_openai_te3s_`; o script recusa fonte=destino, coleção existente, texto/fonte/página ausente, mais de 10000 registros, drift de fingerprint, volume ou teto divergente. Após escrita, valida IDs, payload e contagem. Falha deixa o destino parcial separado e não muda a configuração. A origem continua intacta para recuperação. Não ativa coleção nem modifica permissões. Não apagar dados para liberar o mesmo nome.
 
-A operação conjunta existente `migrate_vectors` também foi alinhada: destino FAQ 1024, memória 1536, com geradores respectivos. Sua execução continua sujeita ao inventário e autorização já documentados. Não usá-la para contornar pendências da memória.
+A operação conjunta existente `migrate_vectors` também foi alinhada: destino FAQ 1024, memória 1024, com geradores respectivos. Sua execução continua sujeita ao inventário e autorização já documentados. Não usá-la para contornar pendências da memória.
 
 ## Homologação antes de usar dados reindexados
 
 O limiar 0,35 e top 6 existentes não foram baixados. A calibração antiga de 1536 não comprova qualidade em 1024. Antes do corte autorizado, repetir perguntas positivas/negativas do documento, cobertura de citações/páginas, PDF e revisão do Juiz. Validar os dados reais, não apenas a dimensão. Nenhuma resposta documental ou PDF deve ser liberado sem evidência e aprovação.
 
-Foi feita uma única confirmação paga mínima com frase pública: o OpenRouter retornou exatamente **1024 dimensões**, 11 tokens, custo observado **US$ 0,00000022**. Nenhum vetor foi gravado. Os demais testes usam mocks/Qdrant em memória. Não houve deploy, merge, alteração de `.env` privado ou assinatura de PDF. Sobrescritas efetivas em AWS/Render ainda devem ser verificadas na publicação autorizada.
+Foi feita uma única confirmação paga mínima com frase pública: o OpenRouter retornou exatamente **1024 dimensões**, 11 tokens, custo observado **US$ 0,00000022**. Nenhum vetor foi gravado. Os demais testes usam mocks/Qdrant em memória. Não houve deploy, merge, alteração de `.env` privado ou assinatura de PDF. O transporte de ambas as funções é exclusivamente o OpenRouter; referências Mistral nesta documentação descrevem metadados históricos dos pontos, não um provedor ativo no código. Sobrescritas efetivas em AWS/Render ainda devem ser verificadas na publicação autorizada.
 
 Documentação oficial: [API de embeddings](https://openrouter.ai/docs/api-reference/embeddings), [catálogo do modelo](https://openrouter.ai/openai/text-embedding-3-small).
 
 Validação final: **1106 testes passaram**, com 15 avisos de dependências; 57 testes focados de FAQ/embeddings/migração passaram. Compileall, diff --check e varredura dos arquivos preparados contra segredos locais passaram. A confirmação real não substitui a calibração e reindexação pendentes.
+
+A configuração de destino da memória permanece explícita em `QDRANT_MEMORY_COLLECTION`. A coleção remota `memoria_resumos` da imagem tem 1024 dimensões; o código agora tem o mesmo tamanho, mas não troca destinos nem reutiliza automaticamente pontos de modelo desconhecido. Continuam valendo o filtro obrigatório por `id_user`, exclusão da sessão atual e modelo de embedding, e a fonte canônica MongoDB. A migração e reconciliação desses resumos continuam separadas do ajuste de dimensão.

@@ -208,7 +208,7 @@ def test_current_collection_with_mistral_vectors_is_not_queried_with_openai(monk
     asyncio.run(run())
 
 
-def test_faq_request_dimensions_are_1024_and_memory_default_stays_1536(monkeypatch):
+def test_faq_and_memory_request_same_1024_dimensions(monkeypatch):
     from app.infrastructure.llm import embeddings
     calls=[]
     async def request(path, payload, **kwargs):
@@ -217,6 +217,6 @@ def test_faq_request_dimensions_are_1024_and_memory_default_stays_1536(monkeypat
     monkeypatch.setattr(embeddings,'request',request)
     async def run():
         assert len((await embeddings.gerar_embeddings_faq(['Texto FAQ']))[0])==1024
-        assert len((await embeddings.gerar_embeddings_batch(['Resumo memória']))[0])==1536
-        assert calls==[1024,1536]
+        assert len((await embeddings.gerar_embeddings_batch(['Resumo memória']))[0])==1024
+        assert calls==[1024,1024]
     asyncio.run(run())
