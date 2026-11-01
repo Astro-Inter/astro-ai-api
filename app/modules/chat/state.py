@@ -16,6 +16,7 @@ class ChatState(TypedDict, total=False):
     memoria_consultada: bool
     # Histórico público já revisado, nunca respostas intermediárias dos agentes.
     historico: list[dict[str, str]]
+    contexto_sessao: str
     mensagem: str
     contexto: dict
     rota: str

@@ -144,8 +144,6 @@ def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
     Rows, visual pagination and identities never become aggregation inputs.
     Input guard still runs; tools revalidate the current authenticated scope.
     """
-    if state["contexto"].get("ultima_rota") != "rh":
-        return None
     match = re.fullmatch(
         r"(?:ai |agora )?(?:gere|mostre|crie|faca) (?:um )?grafico (?:de )?"
         r"(?P<tipo>barras|setores|pizza|rosca|donut|linhas) por "
@@ -154,6 +152,14 @@ def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
         r"(?: considerando todo o escopo autorizado)?(?: por favor)?[.!?]*",
         _sem_acentos(state["mensagem"]).strip(),
     )
+    if match is None:
+        match = re.fullmatch(
+            r"com base n(?:essa|esta) listagem,? (?:mostre|gere|faca|crie) "
+            r"(?:a |os )?(?:equipe|usuarios|funcionarios) por "
+            r"(?P<dimensao>cargo|perfil|unidade|situacao) em um grafico (?:de )?"
+            r"(?P<tipo>barras|setores|pizza|rosca|donut|linhas)(?: por favor)?[.!?]*",
+            _sem_acentos(state["mensagem"]).strip(),
+        )
     if match is None:
         return None
     previous = state.get("consulta_rh")
@@ -597,6 +603,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         if isinstance(event,OperationalDecision):
             return {"rota":"consulta_operacional","operational_decision":event.model_dump(mode="json"),
                     "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if (state.get("historico") and state["historico"][-1].get("perfil_origem") == "usuario_autenticado"
+                and re.fullmatch(r"(?:gere|crie|faca) um pdf com (?:esses|estes|os meus) dados(?: por favor)?[.!?]*",
+                                 _sem_acentos(state["mensagem"]).strip())):
+            return {"rota": "rh", "rh_decision": RhToolDecision(acao="buscar_meus_dados"),
+                    "agentes_chamados": state["agentes_chamados"]+["roteador"]}
         current=explicit_read(state["mensagem"])
         from app.modules.agenda.tools import AgendaToolDecision
         if isinstance(current,AgendaToolDecision):
@@ -666,7 +677,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 if re.search(r"\b(rosca|donut)\b", normalized):
                     values["filtros"]["tipo_grafico"] = "grafico_rosca"
                 previous = state.get("consulta_rh")
-                if (state["contexto"].get("ultima_rota") == "rh" and isinstance(previous, dict)
+                if (isinstance(previous, dict)
                         and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", normalized)):
                     if decision.acao == "consultar_indicadores_equipe":
                         values["referencia_listagem_rh"] = True

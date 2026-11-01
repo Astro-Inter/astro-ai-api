@@ -529,3 +529,18 @@ podem não ter blocos; nesses casos, use `content`.
 ## Persistência Mongo
 
 Os exemplos acima descrevem o contrato HTTP. No Mongo, o proprietário usa `usuario_id` e as mensagens usam `papel` e `conteudo`; o repositório traduz os nomes ao carregar e gravar. Reservas usam `reserva_token`/`reserva_ate`; tarefas de resumo usam `resumo_tarefa_*`. Consulte [a migração coordenada](../mongo-padronizacao.md) antes de publicar esta versão.
+
+
+## Continuidade do contexto da sessão (SCRUM-167)
+
+O backend reconstrói o contexto pelo Mongo a cada mensagem, incluindo uma projeção
+limitada dos blocos anteriores e recuperação local de trechos mais antigos. Não
+há mudança no contrato público. Web e mobile devem enviar o mesmo `session_id`
+para continuar a conversa e manter o isolamento entre contas. A paginação das
+tabelas continua local. O histórico entregue permanece integral dentro dos
+limites existentes; apenas a projeção privada enviada aos agentes é abreviada.
+
+Filtros da listagem são preservados após consultar a própria ficha. Gráficos
+baseados nela reconsultam a agregação completa autorizada. Referências ambíguas
+continuam pedindo esclarecimento; histórico não concede acesso nem substitui
+fontes atuais. Consulte o [diagnóstico, limites e roteiro de homologação](../diagnostico-contexto-sessoes.md).

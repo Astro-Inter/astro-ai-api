@@ -19,6 +19,7 @@ from app.infrastructure.vectorstore.memory import SummaryVectors
 from app.modules.chat.errors import ChatError
 from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import build_chat_graph, _pedido_pdf
+from app.modules.chat.session_context import recent_history, earlier_context, recover_rh_query
 from app.modules.operational.insights import TOOLS as INSIGHT_TOOLS
 from app.modules.chat.analytic_blocks import build_analytic_blocks
 from app.modules.chat.pdf_delivery import asks_for_pdf_link, populate_file_blocks
@@ -49,12 +50,6 @@ MAX_MESSAGES = 200
 MAX_SESSION_CHARACTERS = 240000
 
 
-def recent_history(messages):
-    history = [{"role": "user" if m["role"] == "human" else "assistant", "content": m["content"]}
-               for m in messages[-20:]]
-    while sum(len(message["content"]) for message in history) > 24000:
-        del history[:2]
-    return history
 
 
 class ChatService:
@@ -236,20 +231,23 @@ class ChatService:
                 if (len(messages) >= MAX_MESSAGES or sum(len(m["content"]) for m in messages)
                         + len(request.message) + 6000 > MAX_SESSION_CHARACTERS):
                     raise ChatError(409, "Limite da conversa atingido. Encerre e inicie outra sessao.")
-                history = recent_history(messages)
+                history = recent_history(messages, request.message)
+                rh_query = doc.get("consulta_rh") or recover_rh_query(messages)
+                session_context = earlier_context(messages, history[-2:], request.message)
                 graph_messages = checkpoint_messages(history, len(messages) - len(history))
                 graph_messages.append(HumanMessage(content=request.message, id=f"mongo-{len(messages)}"))
                 result = await self.graph.ainvoke({
                     "messages": Overwrite(graph_messages),
                     "usuario_atual": user, "session_id": session_id,
                     "historico": history,
+                    "contexto_sessao": session_context,
                     "mensagem": request.message,
                     "contexto": {
                         "workspace_id": None, "data_hora": datetime.now(CHAT_TIMEZONE).isoformat(),
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
                         "possui_acao_pendente": bool(doc.get("acao_pendente")),
                         "consulta_operacional": doc.get("consulta_operacional"),
-                        "consulta_rh": doc.get("consulta_rh"),
+                        "consulta_rh": rh_query,
                         "formato_resposta": "markdown" if markdown else "texto_simples",
                         "ferramentas_disponiveis": [
                             "buscar_historico", "consultar_normas",
@@ -313,7 +311,7 @@ class ChatService:
                     "agentes_chamados": [], "guardar_turno": False,
                     "pdf_solicitado": False, "pdf_url": None, "pdf_metadata": None,
                     "resposta_deterministica": False,
-                    "consulta_rh": doc.get("consulta_rh"),
+                    "consulta_rh": rh_query,
                     "eventos_referencias": doc.get("eventos_referencias", []),
                     "ultimo_pdf": previous_pdf,
                 }, config=checkpoint_turn.config)
@@ -457,7 +455,8 @@ class ChatService:
                             "ultima_rota": result["rota"],
                             "acao_pendente": result.get("acao_pendente"),
                             "consulta_rh": result.get("consulta_rh"),
-                            "consulta_operacional": result.get("operational_decision") if result.get("rota") == "consulta_operacional" else None,
+                            "consulta_operacional": (result.get("operational_decision") if result.get("rota") == "consulta_operacional"
+                                                       else doc.get("consulta_operacional")),
                             "eventos_referencias": result.get("eventos_referencias", []),
                         }, messages=[
                             {"role": "human", "content": request.message},

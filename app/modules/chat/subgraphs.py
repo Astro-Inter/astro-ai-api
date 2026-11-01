@@ -207,7 +207,11 @@ def _filtros_conformidade(message: str, history: list[dict] | None = None) -> Co
         # no formato produzido pela aplicação, contendo exatamente uma pessoa.
         if not re.search(r"\b(?:del[ae]|dess[ae] pessoa|ess[ae] pessoa|el[ae])\b", message, re.IGNORECASE):
             return None
-        last_answer = next((item["content"] for item in reversed(history or []) if item["role"] == "assistant"), "")
+        previous = next((item for item in reversed(history or []) if item["role"] == "assistant"), {})
+        focus = previous.get("pessoa_em_foco")
+        if isinstance(focus, str):
+            return ConsultarConformidadeUsuarioArgs(pessoa=focus)
+        last_answer = previous.get("content", "")
         if not re.match(r"Encontrei 1 usuário\(s\):", last_answer):
             return None
         emails = set(re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", last_answer))
@@ -848,7 +852,7 @@ def build_rh_graph(model: AgentModel):
             "consulta_rh": (
                 decision.filtros.model_dump()
                 if tool_name == "buscar_outros_usuarios" and result.get("status") in {"ok", "sem_dados"}
-                else None
+                else state.get("consulta_rh") if tool_name != "buscar_outros_usuarios" else None
             ),
             "candidato": (
                 _formatar_meus_dados(result)
@@ -1155,7 +1159,8 @@ def build_faq_graph(model: AgentModel, search_faq=None):
         public_requested = _pedido_fontes_publicas_faq(state["mensagem"])
         jobs = []
         if search_faq is not None:
-            jobs.append(("faq", search_faq(state["mensagem"])))
+            from app.modules.chat.session_context import faq_search_query
+            jobs.append(("faq", search_faq(faq_search_query(state))))
         if public_requested:
             jobs.append(("publico", consultar_fontes_publicas(
                 state["mensagem"], area="faq_politicas",
