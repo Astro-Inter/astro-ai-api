@@ -12,7 +12,7 @@ class FakeCursor:
     def __init__(self, profile=(7,), total=1, rows=None):
         self.profile = profile
         self.total = total
-        self.rows = rows or []
+        self.rows = [tuple(row)+(12,) if len(row)==16 else row for row in (rows or [])]
         self.calls = []
         self.last_query = ""
 
@@ -177,6 +177,7 @@ def test_pending_training_is_scoped_to_authenticated_user_and_returns_schedule(m
         "data_validade": None,
         "data_validacao": None,
         "motivo_rejeicao": None,
+        "evento_id": 12,
     }
     assert "firebase-user" not in str(result)
     assert "id_usuario" not in str(result)
@@ -269,6 +270,15 @@ def test_evolucao_mensal_restrita_ao_usuario_e_inclui_zeros(monkeypatch):
     assert result["status"] == "ok" and list(result["categorias"].items()) == rows
     assert cursor.calls[0][1] == ["firebase-user"] and cursor.calls[1][1] == [7]
     assert "participacao.usuario_id = %s" in cursor.calls[1][0]
+
+
+def test_complete_personal_month_series_with_all_zeros_is_success(monkeypatch):
+    from app.modules.agenda.tools import consultar_evolucao_treinamentos
+    rows=[(f"2026-{m:02d}",0) for m in range(1,13)]
+    cursor=FakeCursor(rows=rows)
+    setup_database(monkeypatch,cursor)
+    result=consultar_evolucao_treinamentos.invoke({},config=tool_config())
+    assert result["status"]=="ok" and list(result["categorias"].items())==rows
     assert "conclusao.status = 'CONCLUIDO'" in cursor.calls[1][0]
     assert consultar_evolucao_treinamentos.invoke({}, config=tool_config(role="ADMIN"))["status"] == "nao_autorizado"
 

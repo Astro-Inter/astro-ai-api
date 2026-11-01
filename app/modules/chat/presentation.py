@@ -12,6 +12,9 @@ def presentation_evidence(name: str, data: dict) -> dict | None:
         return {"blocos":kinds,"linhas_validadas":data["retornada"],"total":data["total"],"paginacao":"local"}
     if data.get("status") != "ok":
         return None
+    if name in {"consultar_grafico_treinamentos", "consultar_evolucao_treinamentos"} and data.get("categorias"):
+        return {"blocos": [data.get("tipo_grafico", "grafico_barras")],
+                "categorias_grafico": len(data["categorias"]), "valores_zero_preservados": True}
     if name in {"buscar_meus_dados", "consultar_conformidade_usuario"}:
         return {"blocos": ["ficha_usuario"]}
     if name == "buscar_outros_usuarios" and data.get("consulta") == "listar" and data.get("usuarios"):

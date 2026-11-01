@@ -5,6 +5,29 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 
+def populate_file_blocks(blocks, delivery):
+    """Called only after session ownership is checked, never in model context."""
+    for block in blocks:
+        if block.tipo != "arquivo":
+            continue
+        block.url=None
+        expires=block.expira_em
+        if expires.tzinfo is None:
+            expires=expires.replace(tzinfo=timezone.utc)
+        if expires <= datetime.now(timezone.utc):
+            block.estado="expirado"
+            continue
+        delivery=delivery or {}
+        _,url=previous_pdf_reply(delivery)
+        if str(block.id)!=delivery.get("id"):
+            url=None
+        if url:
+            block.url=url
+            block.estado="disponivel"
+        else:
+            block.estado="indisponivel"
+
+
 def _normalized(value: str) -> str:
     return ''.join(c for c in unicodedata.normalize('NFKD', value.casefold())
                    if not unicodedata.combining(c)).strip().rstrip('.!? ').strip()
@@ -24,8 +47,9 @@ def previous_pdf_reply(delivery: dict) -> tuple[str, str | None]:
         expires = datetime.fromisoformat(expires) if isinstance(expires, str) else expires
         if isinstance(expires, datetime) and expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)  # Mongo UTC storage.
-        valid = (isinstance(url, str) and urlparse(url).scheme == 'https'
-                 and bool(urlparse(url).netloc) and isinstance(expires, datetime)
+        valid = (isinstance(url, str) and len(url)<=8192 and urlparse(url).scheme == 'https'
+                 and bool(urlparse(url).hostname) and not urlparse(url).username and not urlparse(url).password
+                 and isinstance(expires, datetime)
                  and expires > datetime.now(timezone.utc))
     except (TypeError, ValueError):
         valid = False

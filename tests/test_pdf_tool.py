@@ -77,6 +77,7 @@ def test_pdf_tool_uploads_only_generated_bytes_and_returns_signed_url(monkeypatc
         "status": "ok",
         "url": "https://r2.example/arquivo.pdf?assinatura=teste",
         "expira_em_segundos": 18000,
+        "nome": "relatorio-de-rh.pdf", "tamanho_bytes": len(fake.upload["Body"]),
     }
     assert fake.signed[0] == "get_object"
     assert fake.signed[1]["Bucket"] == "astro-ai-files"

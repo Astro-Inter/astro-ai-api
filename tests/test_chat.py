@@ -201,7 +201,7 @@ def test_agenda_agent_consults_training_instead_of_sst(chat_client, monkeypatch)
                 "Operação segura", "Treinamento de máquinas", None,
                 "GESTOR", False, "ATIVO", "Turma A",
                 datetime(2026, 9, 20, 8), datetime(2026, 9, 20, 12),
-                12, "Máquinas", "PENDENTE", None, None, None, None,
+                12, "Máquinas", "PENDENTE", None, None, None, None, 12,
             )]
 
     class Connection:
@@ -294,7 +294,7 @@ def test_next_event_uses_database_without_google_oauth(chat_client, monkeypatch)
             return [(
                 "Evento futuro", "Treinamento", None, "GESTOR", False, "ATIVO",
                 "Turma A", datetime(2027, 9, 20, 8), datetime(2027, 9, 20, 12),
-                None, None, "PENDENTE", None, None, None, None,
+                None, None, "PENDENTE", None, None, None, None, 12,
             )]
 
     class Connection:
@@ -1554,8 +1554,9 @@ def test_pdf_request_uses_approved_faq_answer_and_returns_temporary_link(chat_cl
 
     assert response.status_code == 200
     body = response.json()
-    assert "[Baixar PDF](https://r2.example/arquivo.pdf?assinatura=teste)" in texto_resposta(body)
-    assert "link válido por 5 horas" in texto_resposta(body)
+    assert body["blocos"][-1]["tipo"] == "arquivo"
+    assert body["blocos"][-1]["url"] == "https://r2.example/arquivo.pdf?assinatura=teste"
+    assert body["blocos"][-1]["estado"] == "disponivel"
     assert "Fonte: normas.pdf, página 1." in texto_resposta(body)
     assert "Paráfrase indevida" not in texto_resposta(body)
     assert body["agentes_chamados"] == [
@@ -1597,7 +1598,7 @@ def test_pdf_promise_is_routed_to_content_and_waits_for_download(chat_client, mo
     assert response.status_code == 200
     assert completed == [True]
     answer = texto_resposta(response.json())
-    assert "[Baixar PDF](https://r2.example/arquivo.pdf?assinatura=teste)" in answer
+    assert response.json()["blocos"][-1]["url"] == "https://r2.example/arquivo.pdf?assinatura=teste"
     assert "O Astro centraliza orientações internas." in answer
     assert "Gerarei" not in answer and "Em breve" not in answer
     assert "consultar_normas" in response.json()["agentes_chamados"]
@@ -1678,8 +1679,8 @@ def test_pdf_link_is_plain_text_when_markdown_is_disabled(chat_client, monkeypat
     assert response.status_code == 200
     answer = texto_resposta(response.json())
     assert "[Baixar PDF](" not in answer
-    assert "Baixar PDF: https://r2.example/arquivo.pdf?assinatura=teste" in answer
-    assert "Link válido por 5 horas." in answer
+    assert response.json()["blocos"][-1]["url"] == "https://r2.example/arquivo.pdf?assinatura=teste"
+    assert response.json()["blocos"][-1]["estado"] == "disponivel"
     stored = application.state.chat_service.repository.docs[response.json()["session_id"]]
     assert "assinatura=teste" not in stored["mensagens"][-1]["content"]
     assert stored["mensagens"][-1]["content"].endswith(

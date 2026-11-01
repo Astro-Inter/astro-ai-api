@@ -378,3 +378,10 @@ estado vazio/zero e reabertura do histórico. Não interpretar o tipo como barra
 **Publicação bloqueada até suporte web e mobile:** o novo discriminador pode ser
 rejeitado por parsers antigos. Publicar e validar os clientes compatíveis antes
 de promover esta API; não houve habilitação em produção neste trabalho.
+
+
+## Arquivos PDF e correções de entrega
+
+PDFs gerados passam a usar [arquivo v1](arquivos-chat.md), em vez de link embutido no texto. O contrato inclui nome, UUID, tamanho opcional, MIME, URL temporária, expiração e estado. Web/mobile precisam desse suporte antes da publicação da extensão. Histórico é reautorizado pelo dono da sessão e não renova o link.
+
+A [homologação ampliada](homologacao-ampliada-pr34.md) descreve a correção das datas BSON, da aprovação dos blocos, da mudança explícita de intenção, da série pessoal zerada e da seleção de eventos. A listagem de eventos agora inclui evento_id; a referência seleciona um registro e não concede acesso.

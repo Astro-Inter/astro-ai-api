@@ -120,11 +120,11 @@ def test_reviewer_cannot_invent_enrollment_after_empty_training_query(chat_clien
     })
     response = client.post('/chat/messages', json={'message': 'Tenho algum treinamento a realizar?'})
     assert response.status_code == 200
-    assert texto_resposta(response.json()) == 'Não encontrei treinamentos ativos pendentes atribuídos a você.'
+    assert 'Não consegui validar' in texto_resposta(response.json())
     assert 'guardrail_saida' not in [call[0] for call in model.calls]
 
 
-def test_real_tool_result_survives_reviewer_quota(chat_client, monkeypatch):
+def test_real_tool_result_requires_available_reviewer(chat_client, monkeypatch):
     client, model, _ = chat_client
 
     class OwnData:
@@ -137,8 +137,8 @@ def test_real_tool_result_survives_reviewer_quota(chat_client, monkeypatch):
     monkeypatch.setitem(subgraphs.RH_TOOLS, 'buscar_meus_dados', OwnData())
     model.complete = exhausted
     response = client.post('/chat/messages', json={'message': 'Qual é meu nome?'})
-    assert response.status_code == 200
-    assert 'Pessoa Teste' in texto_resposta(response.json())
+    assert response.status_code == 503
+    assert 'Pessoa Teste' not in str(response.json())
 
 
 def test_quota_header_reaches_api_without_returning_provider_payload(chat_client):
@@ -215,12 +215,12 @@ def test_pdf_corrected_after_judge_review_is_generated_and_link_can_be_recovered
     first = client.post('/chat/messages', json={'message': 'Consegue fazer um PDF para mim explicando o que é o Astro?'})
     assert first.status_code == 200
     assert len(uploads) == 1
-    assert 'Baixar PDF' in texto_resposta(first.json()) and 'Vou gerar' not in texto_resposta(first.json())
+    assert first.json()['blocos'][-1]['tipo']=='arquivo' and 'Vou gerar' not in texto_resposta(first.json())
     sid = first.json()['session_id']
     model.replies['guardrail_entrada'] = 'malformed'
     recovered = client.post('/chat/messages', json={'message': 'Cadê o arquivo?', 'session_id': sid})
-    assert 'https://r2.example/arquivo.pdf?assinatura=teste' in texto_resposta(recovered.json())
-    assert 'prazo original não é renovado' in texto_resposta(recovered.json())
+    assert recovered.json()['blocos'][-1]['url']=='https://r2.example/arquivo.pdf?assinatura=teste'
+    assert recovered.json()['blocos'][-1]['expira_em']==first.json()['blocos'][-1]['expira_em']
     assert len(uploads) == 1
     doc = application.state.chat_service.repository.docs[sid]
     assert 'assinatura=teste' not in str(doc['mensagens'])

@@ -128,3 +128,8 @@ no ambiente publicado autorizado. Web/mobile não precisam alterar o contrato pa
 esta correção; permanecem responsáveis pela renderização e paginação local já
 documentadas na PR #33. O HTTP 500 original não deve ser compensado no cliente
 inventando indicadores, removendo validações ou recalculando o gráfico pela tabela.
+
+
+## Continuação da investigação
+
+O anexo de homologação web trouxe casos adicionais tratados na [homologação ampliada da PR #34](homologacao-ampliada-pr34.md). A correção original mantém o contrato; a extensão solicitada de [arquivo PDF v1](arquivos-chat.md) acrescenta discriminador e exige suporte dos clientes antes de publicação. A saída determinística agora respeita vereditos negativos e indisponibilidade do Juiz; não fabrica aprovação.

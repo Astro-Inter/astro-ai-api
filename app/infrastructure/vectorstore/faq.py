@@ -1,4 +1,5 @@
 from pathlib import PureWindowsPath
+import logging
 
 from qdrant_client import AsyncQdrantClient, models
 
@@ -97,7 +98,9 @@ class FaqVectors:
             return snippets
         except ChatError:
             raise
-        except Exception:
+        except Exception as error:
+            from app.diagnostics import diagnostic
+            logging.getLogger(__name__).warning("Consulta FAQ indisponivel",extra=diagnostic(error))
             raise ChatError(503, "Consulta as normas indisponivel.") from None
 
     async def close(self):

@@ -572,6 +572,26 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
+        from app.modules.chat.current_intent import explicit_read, selected_event
+        previous=state["contexto"].get("consulta_operacional") or {}
+        pending=(previous.get("acao")=="consultar_resultados_treinamento" and not (previous.get("filtros") or {}).get("evento_id"))
+        event=selected_event(state["mensagem"],state.get("eventos_referencias",[]),pending)
+        if isinstance(event,str):
+            return {"rota":"direta","candidato":event,"agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if isinstance(event,OperationalDecision):
+            return {"rota":"consulta_operacional","operational_decision":event.model_dump(mode="json"),
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        current=explicit_read(state["mensagem"])
+        from app.modules.agenda.tools import AgendaToolDecision
+        if isinstance(current,AgendaToolDecision):
+            return {"rota":"agenda","agenda_decision":current,
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if isinstance(current,OperationalDecision):
+            return {"rota":"consulta_operacional","operational_decision":current.model_dump(mode="json"),
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if isinstance(current,RhToolDecision):
+            return {"rota":"rh","rh_decision":current,
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
         chart_query = _grafico_da_listagem(state)
         if chart_query is not None:
             if isinstance(chart_query, str):
@@ -866,11 +886,17 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         if result.get("paginacao") == "local" and result.get("contexto_dados"):
             unit=result["contexto_dados"]["conjunto"]["unidade_total"]
             candidate=f"Retornados {result['retornada']} de {result['total']} {unit} autorizados. Quantidade solicitada: {result['solicitada']}."
+            if name=="consultar_conflitos_agenda" and result["total"]==0:
+                context=result["contexto_dados"]
+                candidate=(f"Não encontrei treinamentos com horários sobrepostos no período de {context['inicio']} a {context['fim']}, "
+                           f"no escopo: {context['escopo']}. "+candidate)
             if result.get("limitado"):
                 candidate+=f" Coleta limitada por segurança: {result['motivo_limite']}."
             elif result.get("tem_mais"):
                 candidate+=" Conjunto tabular parcial conforme a quantidade solicitada."
-            candidate+=" Indicadores e gráficos consideram o conjunto autorizado completo descrito nos critérios."
+            candidate+=" Os indicadores usam o conjunto autorizado completo descrito nos critérios."
+            if result.get("grafico"):
+                candidate+=" O gráfico usa esse mesmo conjunto completo, sem limitar aos registros da tabela."
             if result.get("aviso"):
                 candidate+=" "+result["aviso"]
         elif result.get("status") == "ok":
@@ -1092,10 +1118,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         except ChatError as error:
             if not state.get("resposta_deterministica"):
                 raise
-            # The application has formatted the actual, authorized tool return.
-            # A failed optional reviewer must not hide a receipt or a real query.
-            logger.warning("Revisor indisponivel; preservando resposta da tool tipo=%s", type(error).__name__)
-            decision = JudgeDecision(status="aprovado", motivo="Resultado formatado pela aplicação a partir da ferramenta autorizada.", problemas=[])
+            logger.warning("Revisor indisponivel; resposta nao aprovada tipo=%s", type(error).__name__)
+            raise ChatError(503, "Revisao da resposta indisponivel. Tente novamente em instantes.",
+                            reason=error.reason or "review_unavailable", retry_after=error.retry_after) from None
         return {
             "avaliacao_juiz": decision.model_dump(),
             "agentes_chamados": state["agentes_chamados"] + ["juiz"],
@@ -1109,6 +1134,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
             }
         if state.get("resposta_deterministica"):
+            if state.get("avaliacao_juiz", {}).get("status") != "aprovado":
+                return {"resposta": "Não consegui validar os dados desta resposta. Nenhum componente foi liberado; tente novamente.",
+                        "guardar_turno": False,
+                        "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}
             # No LLM rewrite can add policies, enrollment, invitations or facts
             # to a response assembled by the application's tool formatters.
             return {
@@ -1221,6 +1250,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         if result.get("status") == "ok" and isinstance(url, str) and url.strip():
             return {
                 "pdf_url": url,
+                "pdf_metadata": {"nome": result.get("nome", "consulta-astro.pdf"),
+                                 "tamanho_bytes": result.get("tamanho_bytes")},
                 "resposta": content,
                 "agentes_chamados": state["agentes_chamados"] + ["gerar_pdf"],
             }

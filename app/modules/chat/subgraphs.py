@@ -601,6 +601,7 @@ def _formatar_treinamentos(result: dict) -> str:
         "PENDENTE": "pendente", "REJEITADO": "rejeitado", "CONCLUIDO": "concluído",
     }
     for training in result["treinamentos"]:
+        reference = training.get("evento_id")
         details = [
             f"turma: {training['turma']}",
             f"início: {training['data_inicio']}",
@@ -615,6 +616,8 @@ def _formatar_treinamentos(result: dict) -> str:
             details.append("evidência obrigatória")
         if training.get("data_validade"):
             details.append(f"validade: {training['data_validade']}")
+        if type(reference) is int:
+            details.append(f"referência do evento: {reference}")
         lines.append(f"- {training['titulo']} | " + " | ".join(details))
         if training.get("descricao"):
             lines.append(f"  {training['descricao'][:160]}")
@@ -632,7 +635,7 @@ def _formatar_treinamentos(result: dict) -> str:
 def _evidencia_treinamentos(result: dict) -> dict:
     """Envia ao Juiz só os campos que podem aparecer na resposta formatada."""
     visible_fields = (
-        "titulo", "turma", "data_inicio", "data_termino", "nr",
+        "titulo", "evento_id", "turma", "data_inicio", "data_termino", "nr",
         "status_evento", "status_participacao", "modo_conclusao",
         "evidencia_obrigatoria", "data_validade",
     )
@@ -1032,7 +1035,7 @@ def build_agenda_graph(model: AgentModel):
                          ", ".join(f"{name}: {count}" for name, count in categories.items()) +
                          f". Total: {total}.") if result.get("status") in {"ok", "sem_dados"} else result.get("mensagem", "Consulta indisponível.")
             return {"resultado_tool": result, "resposta_deterministica": True, "candidato": candidate,
-                    "resultado": {"dominio": "agenda", "intencao": "consultar", "status": "concluido" if result.get("status") == "ok" else "sem_dados" if result.get("status") == "sem_dados" else "indisponivel", "resposta": candidate, "recomendacao": "", "evidencia_tool": {"nome": tool_name, "resultado": result}},
+                    "resultado": {"dominio": "agenda", "intencao": "consultar", "status": "concluido" if result.get("status") == "ok" else "sem_dados" if result.get("status") == "sem_dados" else "indisponivel", "resposta": candidate, "recomendacao": "", "apresentacao": presentation_evidence(tool_name,result), "evidencia_tool": {"nome": tool_name, "resultado": result}},
                     "acao_pendente": None, "agentes_chamados": state["agentes_chamados"] + [tool_name]}
         filters = state["agenda_decision"].filtros
         decision = state["agenda_decision"]
@@ -1075,6 +1078,9 @@ def build_agenda_graph(model: AgentModel):
             },
             "candidato": candidate,
             "acao_pendente": None,
+            "eventos_referencias": [{"evento_id":item["evento_id"],"titulo":item["titulo"]}
+                                    for item in result.get("eventos",result.get("treinamentos",[]))
+                                    if type(item.get("evento_id")) is int and isinstance(item.get("titulo"),str)][:50],
             "agentes_chamados": state["agentes_chamados"] + [tool_name],
         }
 

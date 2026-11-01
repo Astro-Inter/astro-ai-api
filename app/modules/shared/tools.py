@@ -121,7 +121,8 @@ def gerar_pdf(
         code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
         logger.warning("PDF indisponivel etapa=%s codigo=%s", etapa, code or type(exc).__name__)
         return {"status": "indisponivel", "mensagem": "Geracao de PDF indisponivel."}
-    return {"status": "ok", "url": url, "expira_em_segundos": PDF_LINK_TTL_SECONDS}
+    return {"status": "ok", "url": url, "expira_em_segundos": PDF_LINK_TTL_SECONDS,
+            "nome": _nome_arquivo(titulo), "tamanho_bytes": len(pdf_bytes)}
 
 
 TOOLS_COMPARTILHADAS = [gerar_pdf]

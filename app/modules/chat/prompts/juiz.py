@@ -56,6 +56,12 @@ corte de segurança. Os cadastros são omitidos do prompt por privacidade; a apl
 valida e inclui as linhas. Não exija os nomes das 100 pessoas no resumo nem trate
 pagina=total_paginas=1 como contradição: a paginação visual é local no cliente.
 O limite da tabela não limita os agregados SQL da equipe.
+Nas consultas analíticas, conjunto vazio pode entregar somente indicadores e
+contexto, sem tabela ou gráfico. Contagens zero e percentual null com denominador
+zero são coerentes. Não exija componentes omitidos por ausência de linhas.
+Em conclusões pessoais, a tool retorna uma série completa de 12 meses: todos os
+valores zero são uma consulta válida e podem ser mostrados em linhas. Isso difere
+da evolução de equipe, que omite meses sem registros conforme seus critérios.
 
 ### DECISÃO
 - "aprovado": não existe problema concreto; a candidata pode seguir sem alteração.
