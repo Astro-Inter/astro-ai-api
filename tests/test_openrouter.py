@@ -142,7 +142,7 @@ def test_jev_uncertainty_and_failure_use_luna(transport, monkeypatch, decision):
     calls, outcomes = transport
     monkeypatch.setattr(config, "OPENROUTER_JEV_ENABLED", True)
     outcomes.extend([decision, completion("Pode esclarecer?")])
-    assert asyncio.run(models.LanguageModels().complete("roteador", [])) == "Pode esclarecer?"
+    assert asyncio.run(models.LanguageModels().complete("roteador", [HumanMessage(content="Preciso consultar RH")])) == "Pode esclarecer?"
     assert len(calls) == 2
     assert json.loads(calls[-1].content)["model"] == models.TEXT_MODEL
 
@@ -153,8 +153,8 @@ def test_alpha_failure_circuit_does_not_add_calls(transport, monkeypatch):
     outcomes.extend([httpx.Response(503, json={}), completion("Pergunta?"), completion("Pergunta?")])
     backend = models.LanguageModels()
     async def scenario():
-        await backend.complete("roteador", [])
-        await backend.complete("roteador", [])
+        await backend.complete("roteador", [HumanMessage(content="Preciso consultar RH")])
+        await backend.complete("roteador", [HumanMessage(content="Preciso consultar RH")])
     asyncio.run(scenario())
     assert len(calls) == 3
 

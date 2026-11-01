@@ -22,7 +22,7 @@ Branch de implementação: `feat/SCRUM-453-criar-endpoint-de-sessoes-na-ia`.
 - Gravação do título, prévia e atualização junto com os novos turnos persistidos.
 - Compatibilidade com sessões antigas que ainda não têm título ou prévia gravados.
 - Retomada por `/iniciar`, preservando o UUID e todas as mensagens.
-- Validação da propriedade da sessão nos endpoints de histórico, início, encerramento
+- Validação da propriedade da sessão nos endpoints de histórico e início
   e envio de mensagens, usando a autenticação Firebase existente.
 - Contratos, exemplos e erros documentados no OpenAPI e em `/docs`.
 
@@ -32,7 +32,7 @@ A alteração de comportamento em `/iniciar` permite reabrir uma sessão encerra
 
 ### Atualização: resumos automáticos (SCRUM-474)
 
-Novos clientes não precisam chamar `/encerrar` para produzir memória. Após a
+O cliente não chama encerramento para produzir memória. Após a
 publicação e ativação do serviço `astro-session-summary-service`, um Cron no
 Cloudflare consulta as sessões de hora em hora e gera resumos após 24 horas
 completas sem novas mensagens. A sessão continua `ativa` e pode receber mensagens
@@ -43,9 +43,9 @@ internas e geração de resumo não reiniciam esse prazo. Uma nova mensagem inva
 a versão anterior do resumo; o serviço revalida a data e a quantidade de mensagens
 antes de salvar. O histórico e os contratos de listagem permanecem os mesmos.
 
-`/encerrar` está marcado como deprecated no OpenAPI, mas permanece disponível
-para clientes antigos. Uma sessão encerrada por esse fluxo ainda exige `/iniciar`
-antes de continuar. Gerar o resumo automático não exige essa retomada.
+`POST /sessions/{session_id}/encerrar` foi removido e retorna `404`; não aparece
+no OpenAPI. Remova a chamada no web/mobile. Sessões encerradas legadas ainda
+exigem `/iniciar` para continuar. O resumo automático não encerra a sessão.
 
 | Operação | Endpoint | Entrega nesta tarefa |
 | --- | --- | --- |
@@ -53,7 +53,6 @@ antes de continuar. Gerar o resumo automático não exige essa retomada.
 | Carregar histórico | `GET /sessions/{session_id}/messages` | Contrato existente preservado. |
 | Iniciar ou retomar | `POST /sessions/{session_id}/iniciar` | Retomada de sessões encerradas com o mesmo UUID. |
 | Enviar mensagem ou criar conversa | `POST /chat/messages` | Contrato existente; novos turnos também atualizam os metadados da listagem. |
-| Encerrar conversa | `POST /sessions/{session_id}/encerrar` | Contrato existente; conversa permanece consultável e pode ser retomada. |
 
 ## Autenticação e ambiente
 
@@ -75,7 +74,7 @@ Os clientes usam as credenciais da própria conta; o backend define o escopo da 
 | Todas as operações | `Authorization: Bearer <Firebase ID token>` |
 | Envio de mensagem com JSON | Também `Content-Type: application/json` |
 
-`/iniciar` e `/encerrar` não recebem corpo JSON. Os dados das conversas nas respostas
+`/iniciar` não recebe corpo JSON. Os dados das conversas nas respostas
 de sucesso têm `Cache-Control: no-store`. Caso o aplicativo mantenha estado local,
 associe esse estado à conta autenticada e limpe-o no logout ou na troca de conta.
 
@@ -132,7 +131,7 @@ UUID decrescente. Os estados `ativa`, `encerrando` e `encerrada` são incluídos
 Cada página contém apenas sessões do usuário autenticado, sem alterar status,
 datas ou mensagens. A paginação não é um snapshot: uma sessão atualizada pode
 mudar de posição entre páginas. Recarregue a primeira página após enviar uma
-mensagem, retomar ou encerrar. Ao trocar de conta, descarte a lista e o cursor.
+mensagem ou retomar. Ao trocar de conta, descarte a lista e o cursor.
 
 O título vem da primeira pergunta persistida, com até 80 caracteres. Uma sessão
 vazia tem título `Nova conversa` e prévia vazia. A prévia usa a última mensagem
@@ -217,13 +216,12 @@ A chamada não recebe corpo JSON e retorna:
 
 O UUID, o histórico e a data de criação são preservados. Repetir `/iniciar` em
 uma sessão já ativa não apaga mensagens nem atualiza as datas. O resumo anterior
-e qualquer confirmação de ação pendente são invalidados na retomada. O próximo
-encerramento refaz o resumo incluindo a continuação e atualiza o mesmo ponto
-vetorial. Os limites totais de 200 mensagens e 240 mil caracteres permanecem;
+e qualquer confirmação de ação pendente são invalidados na retomada. O serviço automático poderá refazer o resumo após a inatividade,
+incluindo a continuação e atualizando o mesmo ponto vetorial. Os limites totais de 200 mensagens e 240 mil caracteres permanecem;
 ao atingi-los, crie outra conversa.
 
-Se o estado for `encerrando`, repita `/encerrar` para concluir a operação antes
-de retomar. `/iniciar` retorna `409` durante encerramento ou outra operação da
+Se o estado legado for `encerrando`, solicite recuperação ao suporte antes
+de retomar; não há mais endpoint público de encerramento. `/iniciar` retorna `409` durante encerramento ou outra operação da
 mesma conversa. Espere a operação em andamento terminar antes de tentar novamente.
 
 ```http
@@ -292,40 +290,26 @@ O botão de nova conversa pode abrir uma tela local vazia, com `session_id` aind
 ausente. O UUID passa a ser definido quando a primeira mensagem retorna com sucesso.
 Durante esse envio, bloqueie o botão para evitar duas requisições de criação.
 
-## Encerrar e tratar erros
+## Tratar erros e estados legados
 
-`POST /sessions/{session_id}/encerrar`, sem corpo JSON, mantém o histórico e
-retorna `status: "encerrada"`, `resumo` e `resumo_indexado`. Uma sessão vazia
-encerra com resumo nulo. Repetir um encerramento já concluído retorna o mesmo
-resultado. A conversa continua acessível na listagem e pode ser retomada.
-
-Exemplo ilustrativo de resposta (`200`):
-
-```json
-{
-  "session_id": "94229143-d20b-4766-80a4-05341435c236",
-  "status": "encerrada",
-  "resumo": "O usuário consultou as NRs e os treinamentos de sua unidade.",
-  "resumo_indexado": true
-}
-```
-
-`resumo_indexado` indica o resultado da indexação do resumo, e não deve ser usado
-para decidir se o histórico pode ser aberto. Uma sessão encerrada continua
-consultável mesmo quando esse campo é `false`.
+Não há operação pública de encerramento. Sair da tela preserva a sessão ativa;
+o resumo automático continua independente da navegação. Histórico de sessões
+encerradas legadas permanece disponível. Nenhum dado é apagado ou reclassificado
+pela remoção da rota. Estados `encerrando` exigem recuperação operacional pelo
+suporte; não tente liberar o estado pelo cliente nem chamar a rota removida.
 
 | HTTP | Causa e ação do cliente |
 | --- | --- |
 | `400` | Cursor malformado, incompatível ou de outra conta. Reinicie a listagem sem cursor. |
 | `401` | Token ausente, inválido, expirado ou revogado. Renove a autenticação Firebase. |
 | `403` | Usuário autenticado sem acesso reconhecido ao Astro. |
-| `404` | Sessão inexistente ou de outro usuário ao consultar/encerrar; UUID alheio também é rejeitado no chat e em `/iniciar`. |
+| `404` | Sessão inexistente ou de outro usuário ao consultar/retomar; UUID alheio também é rejeitado no chat e em `/iniciar`. |
 | `409` | Operação concorrente, encerramento pendente, sessão encerrada no chat ou limite total de histórico. Confira o status e aplique o fluxo correspondente. |
 | `422` | UUID, corpo, `limit`, comprimento do cursor ou parâmetro de query inválido. Corrija a requisição. |
 | `429` | Limite de operações simultâneas atingido; tente novamente depois. |
-| `502` | Resposta dos agentes ou embedding inválido durante chat/encerramento. |
+| `502` | Resposta dos agentes ou embedding inválido durante o chat. |
 | `503` | Autenticação, autorização, banco ou provedor temporariamente indisponível. |
-| `504` | Tempo de operação excedido. No encerramento, repita `/encerrar` para concluir. |
+| `504` | Tempo de operação excedido. Não repita requisições indefinidamente; recarregue o estado antes de tentar novamente. |
 
 Erros da aplicação usam `{"detail": "mensagem do erro"}`. Por exemplo, um
 cursor inválido retorna `{"detail": "Cursor invalido para esta consulta."}`.
@@ -374,8 +358,8 @@ Mantenha na camada de estado da funcionalidade:
 - UID da conta à qual o estado local pertence, sem enviá-lo nos requests.
 - `session_id` selecionado, ou ausência de UUID para uma conversa nova.
 - `status` da sessão carregada e lista de `mensagens` do histórico.
-- Estados de carregamento inicial, próxima página, abertura, envio, retomada
-  e encerramento, além dos respectivos erros.
+- Estados de carregamento inicial, próxima página, abertura, envio e retomada,
+  além dos respectivos erros.
 
 O Firebase ID token deve ser obtido pela integração de autenticação existente.
 Ao trocar de conta, cancele ou descarte respostas pendentes da conta anterior e
@@ -403,8 +387,8 @@ devolvido pela API. Ao receber `400`, reinicie a listagem sem cursor.
 4. Se estiver `ativa`, permita o envio com o UUID selecionado.
 5. Se estiver `encerrada`, chame `/iniciar` ao escolher continuar a conversa
    ou antes do primeiro novo envio; aguarde sucesso para enviar a mensagem.
-6. Se estiver `encerrando`, permita consultar o histórico e concluir o encerramento
-   por `/encerrar`. Depois de concluído, a sessão pode ser retomada por `/iniciar`.
+6. Se estiver no estado legado `encerrando`, permita ler o histórico e solicite
+   recuperação pelo suporte. Não altere o estado nem chame uma rota removida.
 7. Ao receber `404`, informe que a conversa não está disponível e atualize a lista.
    Não tente criar uma sessão vazia com esse UUID como recuperação do histórico.
 
@@ -412,20 +396,18 @@ Abrir a tela não precisa chamar `/iniciar`. A retomada é uma operação de esc
 e deve acontecer quando o usuário decidir continuar a conversa. Use os UUIDs
 obtidos da API para esse fluxo.
 
-### Envio, atualização e encerramento
+### Envio e atualização
 
 1. Valide o texto e bloqueie envios simultâneos para a mesma conversa.
 2. Para conversa nova, envie somente `message`. Para continuação, envie também
    o `session_id` selecionado.
 3. Após sucesso, guarde o UUID da resposta e renderize os `blocos` na ordem recebida, sem duplicar o texto.
 4. Atualize a primeira página da lista para refletir título, prévia e posição recentes.
-5. Quando o usuário escolher encerrar, faça `/encerrar` e aguarde o resultado.
-6. Após encerramento concluído, guarde `status: "encerrada"` e atualize a lista.
-7. Ao voltar ao aplicativo ou à conversa, recarregue o histórico/status para
+5. Ao sair da tela, preserve o UUID para continuar depois; não faça encerramento.
+6. Ao voltar ao aplicativo ou à conversa, recarregue o histórico/status para
    incorporar mudanças feitas no web ou em outro dispositivo.
 
-Sair da tela não exige encerrar a sessão. Vincule o encerramento à ação definida
-pelo produto. Esta entrega usa consultas HTTP; a sincronização entre clientes
+Sair da tela preserva a sessão; a rota de encerramento foi removida. Esta entrega usa consultas HTTP; a sincronização entre clientes
 ocorre ao recarregar lista e histórico.
 
 Pseudocódigo do fluxo de envio:
@@ -433,11 +415,11 @@ Pseudocódigo do fluxo de envio:
 ```text
 enviar(texto):
     validar texto entre 1 e 4.000 caracteres
-    se há envio, retomada ou encerramento local em andamento:
+    se há envio ou retomada local em andamento:
         aguardar essa operação
 
     se existe sessão selecionada e seu status é encerrando:
-        solicitar conclusão do encerramento antes de continuar
+        solicitar recuperação do estado legado ao suporte antes de continuar
         retornar
 
     se existe sessão selecionada e seu status é encerrada:
@@ -463,9 +445,9 @@ enviar(texto):
 ### Concorrência e falhas de rede
 
 Web e mobile podem operar sobre o mesmo UUID. Mesmo com o botão local bloqueado,
-outra plataforma pode estar enviando ou encerrando a conversa; o backend pode
+outra plataforma pode estar enviando ou retomando a conversa; o backend pode
 retornar `409`. Aguarde a operação e consulte novamente o histórico/status antes
-de decidir entre enviar, retomar ou finalizar o encerramento.
+de decidir entre enviar, retomar ou solicitar recuperação do estado legado ao suporte.
 
 Em falha de rede ou timeout no envio, a resposta pode não ter chegado ao cliente
 mesmo que o servidor tenha concluído a gravação. Para um UUID conhecido, consulte
@@ -477,7 +459,6 @@ recarregue a listagem para o usuário conferir a conversa criada. Não faça ret
 automático de criação: cada envio sem `session_id` pode criar outra sessão.
 O título sozinho não é um identificador único para correlacionar requisições.
 
-No encerramento, a API permite repetir `/encerrar` para concluir etapas pendentes.
 Em `401`, atualize a autenticação Firebase antes de tentar novamente. Evite
 repetições ilimitadas de requisições que retornem erro.
 
@@ -494,7 +475,7 @@ repetições ilimitadas de requisições que retornem erro.
 - [ ] Sessão em encerramento recebe tratamento antes de novo envio.
 - [ ] Título e prévia aparecem como texto simples; histórico respeita o conteúdo salvo.
 - [ ] Datas UTC são convertidas apenas para apresentação no fuso da interface.
-- [ ] Encerramento mantém a conversa na listagem e permite consulta posterior.
+- [ ] Sair da tela preserva a sessão e não chama a rota de encerramento removida.
 - [ ] Mudanças feitas no web aparecem no mobile ao atualizar lista e histórico.
 - [ ] Token expirado, erros de validação, concorrência e falhas de rede têm tratamento.
 - [ ] Logout/troca de conta limpa os dados locais e descarta respostas antigas.
@@ -529,3 +510,18 @@ podem não ter blocos; nesses casos, use `content`.
 ## Persistência Mongo
 
 Os exemplos acima descrevem o contrato HTTP. No Mongo, o proprietário usa `usuario_id` e as mensagens usam `papel` e `conteudo`; o repositório traduz os nomes ao carregar e gravar. Reservas usam `reserva_token`/`reserva_ate`; tarefas de resumo usam `resumo_tarefa_*`. Consulte [a migração coordenada](../mongo-padronizacao.md) antes de publicar esta versão.
+
+
+## Continuidade do contexto da sessão (SCRUM-167)
+
+O backend reconstrói o contexto pelo Mongo a cada mensagem, incluindo uma projeção
+limitada dos blocos anteriores e recuperação local de trechos mais antigos. Não
+há mudança no contrato público. Web e mobile devem enviar o mesmo `session_id`
+para continuar a conversa e manter o isolamento entre contas. A paginação das
+tabelas continua local. O histórico entregue permanece integral dentro dos
+limites existentes; apenas a projeção privada enviada aos agentes é abreviada.
+
+Filtros da listagem são preservados após consultar a própria ficha. Gráficos
+baseados nela reconsultam a agregação completa autorizada. Referências ambíguas
+continuam pedindo esclarecimento; histórico não concede acesso nem substitui
+fontes atuais. Consulte o [diagnóstico, limites e roteiro de homologação](../diagnostico-contexto-sessoes.md).

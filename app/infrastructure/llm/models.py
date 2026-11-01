@@ -8,6 +8,7 @@ from app.core import config
 from app.infrastructure.llm.openrouter import request
 from app.infrastructure.llm.decisions import classify_route, verify_evidence
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
+from app.observability.chat import record_decision
 
 TEXT_MODEL = "openai/gpt-6-luna"
 TRUNCATION_RETRY_MAX_TOKENS = 4096
@@ -31,31 +32,48 @@ class LanguageModels:
     def __init__(self):
         self._jev_retry_after = 0.0
 
-    async def _decision(self, function, *args):
-        if not config.OPENROUTER_JEV_ENABLED or time.monotonic() < self._jev_retry_after:
+    async def _decision(self, function, *args, signal="jev_route"):
+        if not config.OPENROUTER_JEV_ENABLED:
+            record_decision(signal, "disabled")
+            return None
+        if time.monotonic() < self._jev_retry_after:
+            record_decision(signal, "circuit_open")
             return None
         try:
             return await function(*args)
         except ChatError as error:
-            if error.reason in {"provider_configuration", "insufficient_credits"}:
+            # Alpha/model access denial need not mean the chat API is denied.
+            if error.reason in {"provider_configuration", "insufficient_credits"} and error.provider_status_code != 403:
                 raise
+            reason = "alpha_access_denied" if error.provider_status_code == 403 else "alpha_unavailable"
         except (KeyError, TypeError, ValueError):
-            pass
+            reason = "invalid_response"
         self._jev_retry_after = time.monotonic() + 60
-        logger.warning("Decisao delegada ao Luna motivo=alpha_indisponivel_ou_invalida")
+        record_decision(signal, reason)
+        logger.warning("Decisao delegada ao Luna motivo=%s", reason)
         return None
 
     async def verify_evidence(self, state: dict) -> bool | None:
-        return await self._decision(verify_evidence, state)
+        return await self._decision(verify_evidence, state, signal="jev_evidence")
 
     async def complete(
         self, agent: str, messages: list[BaseMessage], *, json_mode: bool = False,
     ) -> str:
         serialized = serialize_messages(messages)
         if agent == "roteador" and not json_mode:
-            route = await self._decision(classify_route, serialized)
+            # Few-shot examples teach Luna's output format; they are not session turns.
+            actual = [m for m in messages if not m.additional_kwargs.get("astro_example")]
+            current = [i for i, m in enumerate(actual) if m.additional_kwargs.get("astro_request")]
+            if current and current[-1] != len(actual) - 1:
+                # Tool results / internal repair instructions require the text router.
+                record_decision("jev_route", "text_correction")
+                route = None
+            else:
+                route = await self._decision(classify_route, serialize_messages(actual))
             if route:
+                record_decision("route_engine", "jev")
                 return "ROUTE=" + route
+            record_decision("route_engine", "luna")
         payload = {
             "model": TEXT_MODEL, "messages": serialized, "max_tokens": 1600,
             # O catálogo de Luna não anuncia temperature; none evita raciocínio oculto.

@@ -149,7 +149,7 @@ def test_specialist_flow(chat_client, domain):
     history = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"]
     assert history == [
         {"role": "human", "content": "Preciso de uma orientação."},
-        {"role": "assistant", "content": texto_resposta(body)},
+        {"role": "assistant", "content": texto_resposta(body), "blocos": body["blocos"]},
     ]
     system = model.calls[2][1][0].content
     assert '"uid"' not in system
@@ -1576,6 +1576,10 @@ def test_pdf_request_uses_approved_faq_answer_and_returns_temporary_link(chat_cl
     "Consegue fazer um PDF para mim explicando o que é o Astro?",
     "Crie um PDF sobre o Astro.",
     "Gere um PDF explicando o projeto Astro.",
+    "Transforme a explicação sobre o Astro em PDF.",
+    "Converta a explicação sobre o Astro para PDF.",
+    "Coloque em PDF uma explicação sobre o Astro.",
+    "A explicação sobre o Astro em PDF, por favor.",
 ])
 def test_pdf_promise_is_routed_to_content_and_waits_for_download(chat_client, monkeypatch, message):
     from app.modules.chat import graph as chat_graph
@@ -1601,6 +1605,10 @@ def test_pdf_promise_is_routed_to_content_and_waits_for_download(chat_client, mo
     assert response.json()["blocos"][-1]["url"] == "https://r2.example/arquivo.pdf?assinatura=teste"
     assert "O Astro centraliza orientações internas." in answer
     assert "Gerarei" not in answer and "Em breve" not in answer
+    for name, messages, _ in model.calls:
+        if name in {"roteador", "faq", "juiz", "guardrail_saida"}:
+            assert "ENTREGA DE ARQUIVO PDF NESTE TURNO" in messages[0].content
+            assert '"pdf_solicitado": true' in messages[0].content
     assert "consultar_normas" in response.json()["agentes_chamados"]
     assert response.json()["agentes_chamados"][-1] == "gerar_pdf"
     stored = application.state.chat_service.repository.docs[response.json()["session_id"]]
@@ -1765,6 +1773,22 @@ def test_pdf_is_not_generated_when_guardrail_ignores_negative_judge(chat_client,
     ("Não quero PDF", False),
     ("Como gerar um PDF?", False),
     ("Isso está em PDF?", False),
+    ("O relatório está em PDF?", False),
+    ("Está em PDF?", False),
+    ("Transforme esses dados em PDF", True),
+    ("Converte esse relatório para PDF", True),
+    ("Coloca meus dados em PDF", True),
+    ("Disponibilize o resumo em PDF", True),
+    ("Entregue o relatório como PDF", True),
+    ("Pode ser em PDF?", True),
+    ("A explicação em PDF, por favor.", True),
+    ("Um PDF sobre o Astro", True),
+    ("Não converta para PDF", False),
+    ("Não transforme isso em PDF", False),
+    ("Como posso criar um PDF?", False),
+    ("Como converter um arquivo para PDF?", False),
+    ("Converta este PDF para Word", False),
+    ("Transforme esse PDF em texto", False),
 ])
 def test_pdf_request_requires_creation_intent(message, expected):
     from app.modules.chat.graph import _pedido_pdf

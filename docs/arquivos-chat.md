@@ -97,3 +97,23 @@ mudança nos contratos antigos, mas esta extensão de PDF exige atualização do
 clientes. Coordenar os releases; não fazer merge/deploy sem autorização.
 
 O diagnóstico de falha anterior à geração e as correções de continuidade estão em [homologação de PDF e contexto](homologacao-pdf-contexto-novembro.md).
+
+
+## Intenção de entrega em PDF
+
+Pedidos como “gere um PDF”, “transforme em PDF”, “converta para PDF”, “coloque
+em PDF”, “disponibilize o resumo em PDF” e “a explicação em PDF, por favor”
+ativam a geração. O roteador seleciona o domínio ou consulta que produz o conteúdo;
+os agentes preparam o documento com fontes e dados autorizados. O backend executa
+`gerar_pdf` depois da aprovação do Juiz e guardrail, antes de responder com arquivo v1.
+Texto no chat, Markdown ou promessa de entrega não substituem essa execução.
+
+A intenção detectada fica disponível aos agentes como `pdf_solicitado` no contexto
+interno, sem alteração do contrato público. Assunto ambíguo pede esclarecimento;
+conteúdo sem evidência, fora do escopo ou bloqueado não é exportado. Falha da tool
+não produz cartão de sucesso. Perguntas sobre como criar PDF e negações não geram
+arquivo. “Cadê o PDF?” continua reutilizando a entrega existente, sem renovar URL.
+
+A orientação detalhada de geração é adicionada ao prompt somente quando
+`pdf_solicitado` está ativo; não acrescenta chamadas de IA nem esse texto extra
+a turnos comuns. O prompt-base do roteador continua dentro do orçamento existente.

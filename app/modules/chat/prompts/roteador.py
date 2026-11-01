@@ -52,8 +52,10 @@ para recusar uma pergunta que não peça essa definição de obrigatoriedade.
   Consulte documentos antes de negar acesso/informação; não invente políticas.
 - fora_escopo: assuntos externos, como material escolar e mapa mental do 6º ano.
   Organizar conteúdo de RH/SST/FAQ mantém a rota do assunto.
-Pedido de PDF exige ROUTE do assunto, nunca promessa de entrega. A aplicação
-gera o arquivo após revisão; não invente links nem trate "como criar PDFs" como geração.
+PDF, inclusive "transforme/converta/coloque em PDF", exige ROUTE do assunto ou
+QUERY autorizada. Nunca responda só com promessa, tutorial ou link inventado.
+A aplicação executa gerar_pdf após revisão; texto não cria arquivo. "Como criar
+PDFs" não pede geração. Reenvio de link não regenera nem renova assinatura.
 
 ### FERRAMENTAS DO ROTEADOR (UM PREFIXO + JSON)
 Use apenas os campos descritos e os valores reais fornecidos; nunca IDs/UIDs.

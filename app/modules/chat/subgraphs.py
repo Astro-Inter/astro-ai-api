@@ -207,7 +207,11 @@ def _filtros_conformidade(message: str, history: list[dict] | None = None) -> Co
         # no formato produzido pela aplicação, contendo exatamente uma pessoa.
         if not re.search(r"\b(?:del[ae]|dess[ae] pessoa|ess[ae] pessoa|el[ae])\b", message, re.IGNORECASE):
             return None
-        last_answer = next((item["content"] for item in reversed(history or []) if item["role"] == "assistant"), "")
+        previous = next((item for item in reversed(history or []) if item["role"] == "assistant"), {})
+        focus = previous.get("pessoa_em_foco")
+        if isinstance(focus, str):
+            return ConsultarConformidadeUsuarioArgs(pessoa=focus)
+        last_answer = previous.get("content", "")
         if not re.match(r"Encontrei 1 usuário\(s\):", last_answer):
             return None
         emails = set(re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", last_answer))
@@ -764,6 +768,20 @@ def build_rh_graph(model: AgentModel):
             model, "rh", RH_DECISAO_PROMPT_COMPLETO, state, RhToolDecision,
         )
 
+        # Unsupported personal selectors must not silently become a broad list.
+        if decision.acao == "buscar_outros_usuarios" and state["usuario_atual"].role in {"ADMIN", "GESTOR", "GESTOR_WORKSPACE"}:
+            emails = re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", state["mensagem"])
+            opaque = re.search(r"\b(?:uid|firebase_uid|identificador)\s*[:=]?\s*[A-Za-z0-9_-]{16,128}\b",
+                               state["mensagem"], re.I) or re.search(
+                                   r"\b(?:dados(?: cadastrais)?|cadastro|ficha) (?:de|do|da) [A-Za-z0-9_-]{20,128}\b",
+                                   state["mensagem"], re.I)
+            name = decision.filtros.nome if decision.filtros else None
+            supplied_name = name and name.casefold() in state["mensagem"].casefold() and name not in emails
+            if (emails or opaque) and not supplied_name:
+                return {"rh_route": "fim", "resultado": {"dominio": "rh", "intencao": "consultar", "status": "esclarecer",
+                        "resposta": "Para localizar essa pessoa nesta consulta, informe o nome completo. O filtro de cadastro disponível aqui não pesquisa por e-mail ou UID.",
+                        "recomendacao": "", "esclarecer": "Qual é o nome completo da pessoa?"},
+                        "agentes_chamados": state["agentes_chamados"] + ["rh"]}
         if decision.acao == "responder":
             return {
                 "rh_route": "fim",
@@ -848,7 +866,7 @@ def build_rh_graph(model: AgentModel):
             "consulta_rh": (
                 decision.filtros.model_dump()
                 if tool_name == "buscar_outros_usuarios" and result.get("status") in {"ok", "sem_dados"}
-                else None
+                else state.get("consulta_rh") if tool_name != "buscar_outros_usuarios" else None
             ),
             "candidato": (
                 _formatar_meus_dados(result)
@@ -871,6 +889,12 @@ def build_rh_graph(model: AgentModel):
 
 def build_sst_graph(model: AgentModel):
     async def decide(state: ChatState):
+        from app.modules.chat.current_intent import general_nr_question
+        if general_nr_question(state["mensagem"]):
+            return {"sst_route": "tool",
+                    "sst_decision": SstToolDecision(acao="consultar_orientacoes_sst",
+                        filtros=ConsultarOrientacoesSstArgs(termo="Normas Regulamentadoras", fontes=["mte_normas"])),
+                    "agentes_chamados": state["agentes_chamados"] + ["sst"]}
         conformidade = _filtros_conformidade(state["mensagem"], state["historico"])
         if conformidade is not None:
             return {
@@ -1155,7 +1179,8 @@ def build_faq_graph(model: AgentModel, search_faq=None):
         public_requested = _pedido_fontes_publicas_faq(state["mensagem"])
         jobs = []
         if search_faq is not None:
-            jobs.append(("faq", search_faq(state["mensagem"])))
+            from app.modules.chat.session_context import faq_search_query
+            jobs.append(("faq", search_faq(faq_search_query(state))))
         if public_requested:
             jobs.append(("publico", consultar_fontes_publicas(
                 state["mensagem"], area="faq_politicas",

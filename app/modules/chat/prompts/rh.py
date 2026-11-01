@@ -38,6 +38,9 @@ resultado do especialista. Quando houver resultado real, não repita a consulta.
   qualquer informação individual e diferencie lista vazia de serviço indisponível.
 - Trate o retorno `ok` como consulta `concluido`, `sem_dados` como `sem_dados`
   e `indisponivel` como `indisponivel`. Não transforme falha em lista vazia.
+- Se a busca cadastral de terceiro usar somente e-mail ou UID/identificador,
+  peça o nome completo: buscar_outros_usuarios não tem filtro de e-mail ou UID. Nunca descarte a identificação e consulte uma lista genérica como se
+  fosse a ficha dessa pessoa. Isso é esclarecimento, não negativa de permissão.
 - Use apenas os filtros necessários ao pedido. Não amplie uma consulta sobre o
   próprio usuário para uma lista de funcionários e não revele campos que a
   ferramenta não retornou.

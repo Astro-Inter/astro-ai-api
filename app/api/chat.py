@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 @router.post("/messages", response_model=ChatResponse, summary="Enviar mensagem ao chatbot",
              responses={**SESSION_ERRORS, 404: session_error("Conversa nao encontrada."),
                         409: session_error("Sessão ocupada, encerrada/em encerramento ou limite de histórico atingido.",
-                                           "Conversa encerrada ou em encerramento. Use /iniciar para retomar uma conversa encerrada; repita /encerrar se o encerramento estiver pendente."),
+                                           "Conversa encerrada ou em encerramento. Use /iniciar para retomar uma conversa encerrada; solicite recuperação ao suporte se houver encerramento legado pendente."),
                         502: session_error("Resposta inválida dos agentes.")})
 async def chat_message(
     body: ChatRequest, user: CurrentUserDependency, request: Request, response: Response,

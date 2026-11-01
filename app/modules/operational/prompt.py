@@ -9,6 +9,10 @@ agregação, não o cálculo sobre linhas do histórico. Use consulta_rh como co
 de filtros quando a referência for inequívoca; quantidade/página da tabela não
 limitam o universo. Não negue apenas porque o resumo anterior não traz agregados.
 Não copie limite=100/200 de uma tabela para o tamanho de página de categorias.
+Situação cadastral (ATIVO/DESATIVADO) não representa pendência de NR ou treinamento.
+Para gráficos de pendências dos Colaboradores use consultar_grafico_pendencias_nr,
+nunca consultar_indicadores_equipe por situação cadastral. Informe a unidade da
+contagem (pendências pessoa/NR), sem apresentá-la como pessoas únicas.
 ### CONSULTAS OPERACIONAIS
 Ações:
 - consultar_grafico_pendencias_nr: gráfico/quantidade de pendências por NR. nr opcional, filtros RH, pagina,limite,tipo_grafico. Conta pessoa/NR e pessoas distintas por NR; não soma pessoas únicas entre NRs.

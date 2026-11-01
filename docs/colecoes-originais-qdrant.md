@@ -1,5 +1,7 @@
 # Correção das coleções originais — 01/11/2026
 
+> Atualização posterior do conteúdo: `faq_chunks` tem agora 46 trechos do FAQ funcional v2.0, mantendo OpenRouter/OpenAI, 1024/Cosine e o nome original. As contagens abaixo documentam o reparo anterior; consulte o [relatório da atualização do FAQ](atualizacao-faq-funcional.md) para fontes, estado atual e recuperação.
+
 Decisão explícita do usuário: manter exatamente `faq_chunks` e `memoria_resumos`. A preparação anterior em coleções separadas não é a configuração final desejada.
 
 ## Reparo realizado no Qdrant

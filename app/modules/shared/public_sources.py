@@ -17,6 +17,7 @@ from app.core.pii import redact_for_embedding
 
 
 PublicSourceId = Literal[
+    "mte_normas",
     "mte_sst",
     "mte_nr1",
     "mte_legislacao_sst",
@@ -37,6 +38,12 @@ class PublicSource:
 
 
 PUBLIC_SOURCES: dict[PublicSourceId, PublicSource] = {
+    "mte_normas": PublicSource(
+        titulo="Normas Regulamentadoras — conceito e finalidade",
+        orgao="Ministério do Trabalho e Emprego",
+        url=("https://www.gov.br/trabalho-e-emprego/pt-br/assuntos/inspecao-do-trabalho/"
+             "seguranca-e-saude-no-trabalho/ctpp-nrs/normas-regulamentadoras-nrs"),
+    ),
     "mte_sst": PublicSource(
         titulo="Segurança e Saúde no Trabalho",
         orgao="Ministério do Trabalho e Emprego",
@@ -110,6 +117,7 @@ AREA_SOURCES: dict[PublicSourceArea, tuple[PublicSourceId, ...]] = {
         "fundacentro_publicacoes",
         "anvisa_manuais_saude",
         "mte_nr1",
+        "mte_normas",  # Last: existing default first-four fetches stay unchanged.
     ),
 }
 
@@ -321,8 +329,13 @@ async def consultar_fontes_publicas(
             result = await get_public_research_a2a_client().consult(
                 termo, area=area, fontes=fontes, limite_fontes=limite_fontes,
             )
-            logger.info("Pesquisa pública concluída via A2A")
-            return result
+            if fontes == ["mte_normas"] and result.get("status") != "ok":
+                # A separately deployed research agent may still use the older catalog.
+                # The local fixed source remains governed by this app's allowlist.
+                logger.info("Conceito de NR sem fonte no A2A; consultando catálogo MCP local")
+            else:
+                logger.info("Pesquisa pública concluída via A2A")
+                return result
         except Exception:
             # Nenhum texto remoto é incluído no log ou no prompt após falha.
             logger.warning("Pesquisa A2A indisponível; usando consulta MCP local")

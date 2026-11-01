@@ -1,5 +1,7 @@
 # FAQ e memória OpenAI em 1024 dimensões
 
+> Atualização posterior do conteúdo: `faq_chunks` tem agora 46 trechos do FAQ funcional v2.0, mantendo OpenRouter/OpenAI, 1024/Cosine e o nome original. As contagens abaixo documentam o reparo anterior; consulte o [relatório da atualização do FAQ](atualizacao-faq-funcional.md) para fontes, estado atual e recuperação.
+
 A pedido do usuário, FAQ usa `openai/text-embedding-3-small` pelo OpenRouter com `dimensions: 1024`. A memória passa a usar o mesmo modelo e também 1024 dimensões em geração, gravação e busca. Nenhum vetor remoto foi convertido ou alterado. Consultas FAQ, ingestão de PDFs e migração dos textos FAQ usam o wrapper `gerar_embeddings_faq`, que exige resposta com exatamente 1024 números finitos não nulos. O helper genérico também exige 1024 para a memória. O modelo remoto não pode ignorar a dimensão e devolver 1536 sem que a resposta seja rejeitada.
 
 O default de `QDRANT_FAQ_COLLECTION` e os exemplos de ambiente passam a `faq_chunks`. A leitura aceita esse nome sem exigir o sufixo da antiga migração, mas valida dimensão 1024/Cosine e metadado `modelo_embedding=openai/text-embedding-3-small`. O filtro permanece em cada busca. Não há troca automática para outra coleção ou para outro provedor.

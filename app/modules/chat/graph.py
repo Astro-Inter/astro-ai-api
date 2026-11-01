@@ -12,6 +12,7 @@ from app.core import config
 from app.infrastructure.checkpoints import COMPLETE_TURN_NODE
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.agents import invoke_agent
+from app.observability.chat import record_decision
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.public_replies import public_reply
 from app.modules.chat.pdf_delivery import asks_for_pdf_link, previous_pdf_reply, remove_delivery_promises
@@ -144,8 +145,6 @@ def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
     Rows, visual pagination and identities never become aggregation inputs.
     Input guard still runs; tools revalidate the current authenticated scope.
     """
-    if state["contexto"].get("ultima_rota") != "rh":
-        return None
     match = re.fullmatch(
         r"(?:ai |agora )?(?:gere|mostre|crie|faca) (?:um )?grafico (?:de )?"
         r"(?P<tipo>barras|setores|pizza|rosca|donut|linhas) por "
@@ -154,6 +153,14 @@ def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
         r"(?: considerando todo o escopo autorizado)?(?: por favor)?[.!?]*",
         _sem_acentos(state["mensagem"]).strip(),
     )
+    if match is None:
+        match = re.fullmatch(
+            r"com base n(?:essa|esta) listagem,? (?:mostre|gere|faca|crie) "
+            r"(?:a |os )?(?:equipe|usuarios|funcionarios) por "
+            r"(?P<dimensao>cargo|perfil|unidade|situacao) em um grafico (?:de )?"
+            r"(?P<tipo>barras|setores|pizza|rosca|donut|linhas)(?: por favor)?[.!?]*",
+            _sem_acentos(state["mensagem"]).strip(),
+        )
     if match is None:
         return None
     previous = state.get("consulta_rh")
@@ -260,18 +267,24 @@ def _pedido_politica_interna(message: str) -> bool:
 
 def _pedido_pdf(message: str) -> bool:
     """Distingue pedido de arquivo de uma pergunta genérica sobre PDFs."""
-    normalized = _sem_acentos(message)
+    normalized = " ".join(_sem_acentos(message).split())
     if not re.search(r"\bpdfs?\b", normalized):
         return False
-    if re.search(r"\b(?:sem\s+pdf|nao\s+(?:quero|preciso|gere|gerar|crie|criar|faca|envie)\b)", normalized):
+    if re.search(r"\b(?:sem\s+pdf|nao\s+(?:quero|preciso|gere|gerar|crie|criar|faca|envie|transforme|converta|coloque|exporte)\b)", normalized):
         return False
-    if re.search(r"\bcomo\s+(?:gerar|criar|fazer|exportar)\b", normalized):
+    if re.search(r"\bcomo\s+(?:(?:eu\s+)?(?:posso|consigo|devo)\s+)?(?:gerar|criar|fazer|exportar|converter|transformar)\b", normalized):
         return False
-    return bool(re.search(
-        r"\b(?:gere|gerar|crie|criar|faca|fazer|exporte|exportar|"
-        r"salve|salvar|produza|quero|preciso|gostaria|mande|envie)\b|^pdf\b",
-        normalized,
-    ))
+    if re.fullmatch(r"(?:(?:isso|isto|(?:o|a|esse|essa|este|esta|meu|minha) [\w ]{1,60}) )?(?:esta|ja esta|e) em pdf[.!?]*", normalized):
+        return False
+    if re.search(r"\b(?:converta|converte|converter|transforme|transforma|transformar)\b.*\bpdf\b"
+                 r".*\b(?:em|para) (?:texto|word|docx|imagem|png|jpg)\b", normalized):
+        return False  # PDF is the input, not the requested output format.
+    verbs = (r"\b(?:gere|gera|gerar|crie|cria|criar|faca|faz|fazer|exporte|exporta|exportar|"
+             r"salve|salva|salvar|produza|produzir|quero|preciso|gostaria|mande|manda|mandar|envie|envia|enviar|"
+             r"transforme|transforma|transformar|converta|converte|converter|coloque|coloca|colocar|"
+             r"disponibilize|disponibiliza|disponibilizar|entregue|entrega|entregar)\b")
+    return bool(re.search(verbs, normalized) or re.match(r"^(?:um )?pdf\b", normalized)
+                or re.search(r"\b(?:em|para|no formato|versao em) (?:um )?pdf(?:[, ]*(?:por favor)?)?[.!?]*$", normalized))
 
 
 
@@ -565,6 +578,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         decision = await invoke_agent(
             model, "guardrail_entrada", GUARDRAIL_ENTRADA_PROMPT_COMPLETO, state, InputDecision,
         )
+        record_decision("input_guard", decision.decisao)
         approved = decision.decisao == "aprovar"
         if exposes_internal_instructions(decision.mensagem):
             return {
@@ -581,7 +595,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question
         previous=state["contexto"].get("consulta_operacional") or {}
         pdf_query=distribution_pdf(state["mensagem"],previous)
         if isinstance(pdf_query,str):
@@ -597,6 +611,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         if isinstance(event,OperationalDecision):
             return {"rota":"consulta_operacional","operational_decision":event.model_dump(mode="json"),
                     "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if (state.get("historico") and state["historico"][-1].get("perfil_origem") == "usuario_autenticado"
+                and re.fullmatch(r"(?:gere|crie|faca) um pdf com (?:esses|estes|os meus) dados(?: por favor)?[.!?]*",
+                                 _sem_acentos(state["mensagem"]).strip())):
+            return {"rota": "rh", "rh_decision": RhToolDecision(acao="buscar_meus_dados"),
+                    "agentes_chamados": state["agentes_chamados"]+["roteador"]}
+        if general_nr_question(state["mensagem"]):
+            return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         current=explicit_read(state["mensagem"])
         from app.modules.agenda.tools import AgendaToolDecision
         if isinstance(current,AgendaToolDecision):
@@ -666,7 +687,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 if re.search(r"\b(rosca|donut)\b", normalized):
                     values["filtros"]["tipo_grafico"] = "grafico_rosca"
                 previous = state.get("consulta_rh")
-                if (state["contexto"].get("ultima_rota") == "rh" and isinstance(previous, dict)
+                if (isinstance(previous, dict)
                         and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", normalized)):
                     if decision.acao == "consultar_indicadores_equipe":
                         values["referencia_listagem_rh"] = True
@@ -1188,6 +1209,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             raise ChatError(503, "Revisao da resposta indisponivel. Tente novamente em instantes.",
                             reason=error.reason or "review_unavailable", retry_after=error.retry_after,
                             stage=error.stage or "juiz") from None
+        record_decision("judge", decision.status)
         return {
             "avaliacao_juiz": decision.model_dump(),
             "agentes_chamados": state["agentes_chamados"] + ["juiz"],
@@ -1202,6 +1224,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             }
         if state.get("resposta_deterministica"):
             if state.get("avaliacao_juiz", {}).get("status") != "aprovado":
+                record_decision("output_guard", "blocked_by_judge")
                 from app.diagnostics import emit
                 verdict=state.get('avaliacao_juiz',{})
                 tool=state.get('resultado',{}).get('evidencia_tool',{}).get('nome')
@@ -1212,6 +1235,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 return {"resposta": "Não consegui validar os dados desta resposta. Nenhum componente foi liberado; tente novamente.",
                         "guardar_turno": False,
                         "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}
+            record_decision("output_guard", "approved_deterministic")
             # No LLM rewrite can add policies, enrollment, invitations or facts
             # to a response assembled by the application's tool formatters.
             return {
@@ -1242,6 +1266,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         decision = await invoke_agent(
             model, "guardrail_saida", GUARDRAIL_SAIDA_PROMPT_COMPLETO, state, OutputDecision,
         )
+        record_decision("output_guard", decision.status)
         judge_status = state["avaliacao_juiz"]["status"]
         if judge_status != "aprovado" and (
             decision.status == "aprovado"
@@ -1283,8 +1308,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 and callable(getattr(model, "verify_evidence", None))):
             checked_state = {**state, "resposta": response, "candidato": response}
             supported = await model.verify_evidence(checked_state)
-            if supported is None:
+            if supported is not True:
+                # A numeric alpha verdict is a review signal, not an explained veto.
+                # Recheck the final text against the same evidence with the textual Judge.
                 review = await invoke_agent(model, "juiz", JUIZ_PROMPT_COMPLETO, checked_state, JudgeDecision)
+                record_decision("evidence_review", review.status)
                 supported = review.status == "aprovado"
             result["agentes_chamados"] += ["verificador_evidencias"]
             if not supported:
