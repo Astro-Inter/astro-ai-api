@@ -1,6 +1,6 @@
 # Consultas de gestão de equipe no chatbot
 
-As oito consultas são tools LangChain no domínio operacional existente do
+As dez consultas são tools LangChain no domínio operacional existente do
 LangGraph. Não são novos endpoints REST independentes: o cliente continua usando
 `POST /chat/messages` e `GET /sessions/{session_id}/messages`. Roteador seleciona
 uma ação estruturada; o backend autoriza a leitura; Juiz e guardrail revisam; o
@@ -18,6 +18,8 @@ Não há aprovação, alteração, inscrição ou envio de mensagens nessas tool
 | `consultar_evolucao_conclusoes_equipe` | Mostre a evolução mensal das conclusões da equipe | nome, cargo, unidade, nr, inicio, fim, tipo_grafico linhas/barras | Contagens mensais de conclusões registradas; gráfico de linhas por padrão |
 | `consultar_conflitos_agenda` | Tenho treinamentos no mesmo horário? | escopo, nome, cargo, unidade, inicio, fim | Pares de turmas atribuídas com intervalo sobreposto |
 | `simular_impacto_exigencia_nr` | Se exigirmos NR-35 neste cargo, qual o impacto? | nr e cargo ou unidade obrigatórios; tipo_grafico barras/setores | Distribuição dos registros atuais sob a hipótese, incluindo quantas pessoas já têm a exigência cadastrada |
+| `consultar_indicadores_cobertura` | Mostre indicadores de cobertura da equipe | nome, cargo, unidade, nr | Cartões globais, tabela por NR e barras de lacunas sem encaminhamento |
+| `comparar_conformidade_unidades` | Compare a conformidade entre unidades | nome, cargo, unidade, nr | Pessoas, pares aplicáveis/vigentes e percentual com denominador por unidade |
 | `consultar_origem_conformidade` | De onde veio esta conformidade? | conformidade_id obrigatório, escopo, nome, cargo, unidade, nr | Origem cadastrada e referências de conclusão/formulário sem consultar seu conteúdo |
 
 Referências numéricas são seletores de registros, não identidades autenticadas.
@@ -29,7 +31,7 @@ esclarecimento para resultados de evento/origem, nunca seleção inventada pelo 
 
 | Consulta | Colaborador | Gestor | Gestor workspace | ADMIN |
 | --- | --- | --- | --- | --- |
-| Matriz, cobertura e evolução | Não | Equipe autorizada da unidade | Equipe das unidades autorizadas do workspace | Não |
+| Matriz, cobertura, indicadores, comparação e evolução | Não | Equipe autorizada da unidade | Equipe das unidades autorizadas do workspace | Não |
 | Evidências pendentes | Não | Apenas eventos que criou | Apenas eventos que criou | Não |
 | Resultados do evento | Não | Escopo de eventos da API Java | Escopo de eventos da API Java | Não |
 | Conflitos e origem individual | Somente próprio cadastro | Próprio cadastro ou equipe autorizada | Próprio cadastro ou equipe autorizada | Não |
@@ -58,7 +60,8 @@ informa essa contagem; não cria link para download, abre, aprova ou rejeita arq
 - Matriz/cobertura usam usuários ativos e a interseção de `cargo_nr` e `unidade_nr`,
   excluindo NRs revogadas. NRs não aplicáveis são omitidas, sem transformar ausência
   de linha em “vigente”. O formato é pessoa/NR em tabela longa para não exceder o
-  contrato de dez colunas; o frontend não precisa de um bloco novo de matriz.
+  contrato de dez colunas; o novo bloco `matriz_conformidade` v1 identifica
+  pessoa por referência estável e NR, permitindo apresentação específica no cliente.
 - O registro aplicável mais recente por maior validade/ID define VIGENTE, VENCIDA,
   SEM_VALIDADE ou SEM_REGISTRO. Data nula não prova vigência. Atividade agendada
   exige evento ativo, turma com término ainda não passado e ausência de conclusão
@@ -90,53 +93,43 @@ informa essa contagem; não cria link para download, abre, aprova ou rejeita arq
   ignorados. `inicio` e `fim` são datas ISO, devem vir juntos, em ordem e até 366 dias.
   Identidade, role e workspace não são argumentos aceitos pelas tools.
 
-## Limites e impacto operacional
+## Limites, blocos e clientes
 
-Paginação destas consultas analíticas é a existente das tools operacionais:
-`pagina` a partir de 1, até 1000; `limite` padrão 20, máximo 50 linhas por página.
-Não é o mesmo fluxo da tabela v2 de listagem simples de 200 usuários: aqui uma
-pessoa pode gerar várias linhas/NRs e a quantidade pode representar categorias.
-A contagem completa acompanha a página; página vazia não é apresentada como total
-zero. Falha de backend não produz sucesso parcial.
+Contrato exato, exemplos JSON e instruções para web/mobile estão em
+[blocos analíticos e paginação local](contrato-dados-analiticos.md).
 
-Cada tool SQL abre uma conexão somente leitura e executa contagem + página no mesmo
-snapshot REPEATABLE READ, com timeout de statement de 5s e orçamento compartilhado
-de conexões. Não varre todas as páginas nem faz fan-out por pessoa. Resultados de
-evento fazem um único GET Java com timeout de 12s, limite de corpo de 2 MB, sem
-redirects ou novas tentativas em cascata. Não há chamadas extras de IA por linha,
-lote ou arquivo; roteamento continua em uma decisão operacional Luna, seguida da
-revisão existente. O catálogo de ações cresce no prompt, com impacto de tokens
-por decisão; resultados continuam limitados e não carregam anexos.
+As dez consultas usam quantidade padrão 100, coleta máxima 200 e lotes internos
+máximos de 50, no mesmo snapshot autorizado e com ordenação estável. O frontend
+pagina o conjunto recebido sem novas chamadas. `limite` é quantidade solicitada;
+`pagina` só aceita 1. Não pedir próxima página ao chatbot neste fluxo.
 
-## Blocos, clientes e histórico
+Retorno informa solicitada, retornada, total, limitado, tem_mais e motivo_limite.
+Há limite de 2 MiB no envelope analítico e orçamento conservador de 1.500.000 bytes
+para linhas. Total e indicadores consideram a população autorizada, não a amostra.
+As demais tools antigas mantêm seus contratos próprios; não houve remoção geral
+da paginação de agenda/mensagens/notificações.
 
-Não há novo tipo visual. Retornos positivos usam `tabela` v1 e, quando completo e
-com no máximo 12 categorias, `grafico_barras`, `grafico_setores` ou `grafico_linhas`
-v1. Evolução aceita linhas (padrão) ou barras; setores solicitam esclarecimento.
-Agregações ocorrem antes da paginação. Gráfico é omitido quando a página não inclui
-todas as categorias. Simulação usa unidade pessoas; resultados/evolução usam o
-valor de contrato participações, descrevendo no título que se trata de conclusões
-na série mensal. Não somar pessoas únicas entre categorias.
+Ordem: `indicadores` v1, `matriz_conformidade` v1 ou `tabela` v2, gráfico opcional,
+`contexto_dados` v1. Fonte, filtros efetivos, referência, período e critérios seguem
+estruturados. Histórico mantém a mesma ordem e versões do POST, sem recalcular
+mensagens antigas. Bloqueio do Juiz/guardrail impede emitir esses blocos.
 
-Exemplo de pedido HTTP (sessão omitida cria conversa):
+Gráficos são agregados independentemente da quantidade de linhas e limitados a
+12 categorias completas; acima disso são omitidos com aviso. Comparação entre
+unidades usa contagens no gráfico, e percentual com numerador/denominador na tabela;
+base zero produz null. Evolução usa linhas por padrão. Meses sem registro são
+omitidos, não zeros. Não somar pessoas únicas entre situações ou confundir pessoa
+com pares pessoa/NR. Cobertura global é anterior ao filtro de encaminhamento da
+lista; o universo está explícito nos cartões e critérios.
 
-```json
-{"message":"Mostre a evolução das conclusões da equipe por mês"}
-```
+Mais leituras SQL calculam métricas e gráficos globais, com timeout de statement
+existente e sem fan-out por pessoa. Evento faz um único GET Java, timeout 12s,
+limite 2 MB e sem redirects. Nenhuma chamada extra de IA foi adicionada por linha,
+cartão ou gráfico; o Juiz recebe agregados e plano visual sem as linhas brutas.
 
-Decisão interna correspondente:
-
-```json
-{"acao":"consultar_evolucao_conclusoes_equipe","filtros":{"tipo_grafico":"grafico_linhas","pagina":1,"limite":20}}
-```
-
-O cliente renderiza os blocos recebidos na ordem, apresenta tabelas com referências
-como valores (não botões de autorização), preserva fonte/unidade e os avisos. O
-histórico mantém os mesmos blocos do POST; o texto de fallback é abreviado se
-necessário e não substitui o conjunto tabular. Perguntas por próxima página destas
-tools reexecutam a consulta com identidade/escopo atuais. Dados antigos não são
-reconstruídos ou migrados automaticamente. Não houve deploy nesta implementação.
-
+**Publicação coordenada:** web e mobile precisam suportar os três tipos novos e
+paginação local de tabela v2/matriz antes do deploy da API. PR em rascunho enquanto
+há essa dependência. Não houve deploy nem migração de dados.
 
 Resultados de leitura real e limitações estão em [homologação](homologacao-consultas-gestao.md).
 

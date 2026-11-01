@@ -324,3 +324,13 @@ dados para compensar esses problemas visuais.
 ## Consultas de gestão: reutilização dos blocos
 
 Matriz/cobertura usam tabelas longas pessoa/NR; resultados, evolução e simulação podem anexar gráficos existentes. Não há novo discriminador visual. Ver [contrato e limitações das consultas](consultas-gestao-equipe.md#blocos-clientes-e-histórico). Tabelas v1 analíticas continuam com até 50 linhas por página, distintas da listagem simples de usuários v2.
+
+
+## Extensão de gestão: cartões, matriz e contexto
+
+As dez tools de gestão passam a usar paginação local, `tabela` v2 e três tipos
+novos: `indicadores`, `matriz_conformidade` e `contexto_dados`, todos v1.
+O contrato completo e a coordenação de publicação estão em
+[contrato de dados analíticos](contrato-dados-analiticos.md).
+Essa extensão substitui a paginação de servidor dessas dez consultas, mantendo
+as demais tools antigas com seus contratos próprios.

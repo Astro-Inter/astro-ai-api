@@ -1005,3 +1005,5 @@ A matriz de acesso, critérios e configuração das oito novas tools está em
 
 
 As consultas de matriz de conformidade, cobertura, fila de validação, resultados de treinamento, evolução de conclusões, conflitos de agenda, simulação e origem de conformidade estão documentadas em [consultas de gestão de equipe](docs/consultas-gestao-equipe.md). Todas são leituras autorizadas pelo backend.
+
+Os novos cartões de indicadores, a matriz pessoa/NR, os metadados de contexto e a paginação local das dez consultas de gestão seguem o [contrato de dados analíticos](docs/contrato-dados-analiticos.md). Web e mobile precisam desses tipos antes da publicação coordenada da API.
