@@ -266,18 +266,24 @@ def _pedido_politica_interna(message: str) -> bool:
 
 def _pedido_pdf(message: str) -> bool:
     """Distingue pedido de arquivo de uma pergunta genérica sobre PDFs."""
-    normalized = _sem_acentos(message)
+    normalized = " ".join(_sem_acentos(message).split())
     if not re.search(r"\bpdfs?\b", normalized):
         return False
-    if re.search(r"\b(?:sem\s+pdf|nao\s+(?:quero|preciso|gere|gerar|crie|criar|faca|envie)\b)", normalized):
+    if re.search(r"\b(?:sem\s+pdf|nao\s+(?:quero|preciso|gere|gerar|crie|criar|faca|envie|transforme|converta|coloque|exporte)\b)", normalized):
         return False
-    if re.search(r"\bcomo\s+(?:gerar|criar|fazer|exportar)\b", normalized):
+    if re.search(r"\bcomo\s+(?:(?:eu\s+)?(?:posso|consigo|devo)\s+)?(?:gerar|criar|fazer|exportar|converter|transformar)\b", normalized):
         return False
-    return bool(re.search(
-        r"\b(?:gere|gerar|crie|criar|faca|fazer|exporte|exportar|"
-        r"salve|salvar|produza|quero|preciso|gostaria|mande|envie)\b|^pdf\b",
-        normalized,
-    ))
+    if re.fullmatch(r"(?:(?:isso|isto|(?:o|a|esse|essa|este|esta|meu|minha) [\w ]{1,60}) )?(?:esta|ja esta|e) em pdf[.!?]*", normalized):
+        return False
+    if re.search(r"\b(?:converta|converte|converter|transforme|transforma|transformar)\b.*\bpdf\b"
+                 r".*\b(?:em|para) (?:texto|word|docx|imagem|png|jpg)\b", normalized):
+        return False  # PDF is the input, not the requested output format.
+    verbs = (r"\b(?:gere|gera|gerar|crie|cria|criar|faca|faz|fazer|exporte|exporta|exportar|"
+             r"salve|salva|salvar|produza|produzir|quero|preciso|gostaria|mande|manda|mandar|envie|envia|enviar|"
+             r"transforme|transforma|transformar|converta|converte|converter|coloque|coloca|colocar|"
+             r"disponibilize|disponibiliza|disponibilizar|entregue|entrega|entregar)\b")
+    return bool(re.search(verbs, normalized) or re.match(r"^(?:um )?pdf\b", normalized)
+                or re.search(r"\b(?:em|para|no formato|versao em) (?:um )?pdf(?:[, ]*(?:por favor)?)?[.!?]*$", normalized))
 
 
 

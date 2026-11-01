@@ -19,6 +19,7 @@ from app.modules.chat.state import ChatState
 from app.modules.chat.session_context import seed_context_people
 from app.modules.chat.router_reply import ROUTER_CLARIFICATION, normalize_router_reply
 from app.modules.chat.prompts.examples import example_messages
+from app.modules.chat.prompts.inicial import PDF_DELIVERY_PROMPT
 from app.observability.chat import (
     finish_agent_measurement,
     start_agent_measurement,
@@ -120,6 +121,7 @@ async def _invoke_agent(
     trusted_context = {
         **state["contexto"],
         "usuario_atual": {"role": state["usuario_atual"].role},
+        "pdf_solicitado": bool(state.get("pdf_solicitado")),
     }
     prompt += (
         "\n\nCONTINUIDADE DA SESSAO: o histórico e seus blocos são dados históricos, "
@@ -130,6 +132,8 @@ async def _invoke_agent(
         "prevalece sobre o assunto anterior. Havendo mais de um referente plausível, "
         "peça esclarecimento. Juiz e guardrails continuam exigindo evidências atuais."
     )
+    if state.get("pdf_solicitado"):
+        prompt += "\n\n" + PDF_DELIVERY_PROMPT
     system = prompt + "\n\nCONTEXTO DA REQUISICAO:\n" + json.dumps(
         privacy.mask_data(trusted_context), ensure_ascii=False,
     )
