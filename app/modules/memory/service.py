@@ -47,7 +47,7 @@ class ConversationMemory:
             for message in reversed(doc.get("mensagens", [])):
                 if size + len(message["content"]) > 6000:
                     break
-                excerpt.insert(0, message)
+                excerpt.insert(0, {"role":message["role"],"content":message["content"]})
                 size += len(message["content"])
             memories.append({
                 "session_id": doc["_id"], "iniciada_em": doc["iniciada_em"].isoformat(),
@@ -65,7 +65,9 @@ class ConversationMemory:
             for message in messages[offset:]:
                 if chunk and chars + len(message["content"]) > 12000:
                     break
-                chunk.append(message)
+                # Public conversation text only. File delivery metadata contains
+                # temporary capabilities and must never enter summaries/LLM input.
+                chunk.append({"role":message["role"],"content":message["content"]})
                 chars += len(message["content"])
             privacy = PiiTokenizer()
             messages_for_summary = [

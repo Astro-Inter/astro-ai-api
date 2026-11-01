@@ -21,10 +21,11 @@ from app.modules.chat.formatting import markdown_para_texto_simples
 from app.modules.chat.graph import build_chat_graph, _pedido_pdf
 from app.modules.operational.insights import TOOLS as INSIGHT_TOOLS
 from app.modules.chat.analytic_blocks import build_analytic_blocks
-from app.modules.chat.pdf_delivery import asks_for_pdf_link
+from app.modules.chat.pdf_delivery import asks_for_pdf_link, populate_file_blocks
 from app.modules.chat.schemas import (
     ChatRequest,
     ChatResponse,
+    BlocoArquivo,
     BlocoTexto, BlocoGrafico, BlocoGraficoSetores, BlocoGraficoRosca, BlocoGraficoLinhas, BlocoTabela, ColunaTabela, BlocoGaleriaUsuarios, CelulaImagem, BlocoFichaUsuario, ConformidadeFicha, PontoGrafico,
     SessionMessage,
     SessionMessagesResponse,
@@ -145,6 +146,10 @@ class ChatService:
                 if message.get("role") in {"human", "assistant"}
                 and isinstance(message.get("content"), str)
             ]
+            source_messages=[message for message in doc.get("mensagens",[])
+                             if message.get("role") in {"human","assistant"} and isinstance(message.get("content"),str)]
+            for message,source in zip(messages,source_messages):
+                populate_file_blocks(message.blocos,(doc.get("pdf_entregas") or {}).get(source.get("pdf_referencia")))
             await self._populate_avatars(messages, user)
             status = doc.get("status", "ativa")
             if status not in {"ativa", "encerrando", "encerrada"}:
@@ -304,9 +309,10 @@ class ChatService:
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
                     "agentes_chamados": [], "guardar_turno": False,
-                    "pdf_solicitado": False, "pdf_url": None,
+                    "pdf_solicitado": False, "pdf_url": None, "pdf_metadata": None,
                     "resposta_deterministica": False,
                     "consulta_rh": doc.get("consulta_rh"),
+                    "eventos_referencias": doc.get("eventos_referencias", []),
                     "ultimo_pdf": previous_pdf,
                 }, config=checkpoint_turn.config)
                 observation.mark_result(result)
@@ -315,22 +321,12 @@ class ChatService:
                 if not markdown:
                     public_answer = markdown_para_texto_simples(public_answer)
                 stored_answer = public_answer
+                pdf_delivery=None
                 if pdf_url:
-                    validity = (
-                        f"link válido por {PDF_LINK_TTL_HOURS} horas"
-                        if result.get("pdf_solicitado")
-                        else "link temporário; o prazo original não é renovado"
-                    )
-                    if markdown:
-                        public_answer += (
-                            f"\n\n[Baixar PDF]({pdf_url}) "
-                            f"({validity})."
-                        )
-                    else:
-                        public_answer += (
-                            f"\n\nBaixar PDF: {pdf_url}\n"
-                            f"{validity.capitalize()}."
-                        )
+                    pdf_delivery=({**(result.get("pdf_metadata") or {}),"url":pdf_url,
+                                   "expira_em":utc_now()+timedelta(hours=PDF_LINK_TTL_HOURS)}
+                                  if result.get("pdf_solicitado") else dict(previous_pdf or {}))
+                    pdf_delivery.setdefault("id",str(uuid4()))
                     stored_answer += "\n\nPDF gerado e link temporário entregue."
                 # The graph has already released this authorized deterministic result.
                 # Transport conversion must not change eligibility for visual blocks.
@@ -429,17 +425,24 @@ class ChatService:
                             result.get("resultado", {}).get("evidencia_tool", {}).get("nome", "none"),
                             result.get("avaliacao_juiz", {}).get("status", "none"),
                             ",".join(block.tipo for block in blocks) or "texto")
+                if result.get("rota")=="consulta_operacional" and not blocks:
+                    blocks=[BlocoTexto(conteudo=public_answer[i:i+6000]) for i in range(0,len(public_answer),6000)]
+                if pdf_delivery:
+                    if not blocks:
+                        blocks=[BlocoTexto(conteudo=public_answer[i:i+6000]) for i in range(0,len(public_answer),6000)]
+                    blocks.append(BlocoArquivo(id=pdf_delivery["id"],nome=pdf_delivery.get("nome","consulta-astro.pdf"),
+                                              tamanho_bytes=pdf_delivery.get("tamanho_bytes"),
+                                              expira_em=pdf_delivery["expira_em"],url=None))
                 response = ChatResponse(session_id=session_id,
                                         agentes_chamados=result["agentes_chamados"],
                                         blocos=blocks or [BlocoTexto(conteudo=public_answer[i:i + 6000])
                                                          for i in range(0, len(public_answer), 6000)])
                 if result["guardar_turno"]:
                     delivery_fields = {}
+                    if pdf_delivery:
+                        delivery_fields["pdf_entregas"]={**(doc.get("pdf_entregas") or {}),pdf_delivery["id"]:pdf_delivery}
                     if result.get("pdf_solicitado"):
-                        delivery_fields["ultimo_pdf"] = {
-                            "url": pdf_url,
-                            "expira_em": utc_now() + timedelta(hours=PDF_LINK_TTL_HOURS) if pdf_url else None,
-                        }
+                        delivery_fields["ultimo_pdf"] = pdf_delivery or {"url":None,"expira_em":None}
                     await self.repository.update(session_id, user.uid, token,
                         {
                             **delivery_fields,
@@ -449,9 +452,14 @@ class ChatService:
                             "acao_pendente": result.get("acao_pendente"),
                             "consulta_rh": result.get("consulta_rh"),
                             "consulta_operacional": result.get("operational_decision") if result.get("rota") == "consulta_operacional" else None,
+                            "eventos_referencias": result.get("eventos_referencias", []),
                         }, messages=[
                             {"role": "human", "content": request.message},
-                            {"role": "assistant", "content": stored_answer, **({"blocos": [block.model_dump() for block in blocks]} if blocks else {})},
+                            # Persist the public wire representation: date-only fields
+                            # must remain ISO strings, which BSON can encode losslessly.
+                            {"role": "assistant", "content": stored_answer,
+                             **({"pdf_referencia":pdf_delivery["id"]} if pdf_delivery else {}),
+                             **({"blocos": [block.model_dump(mode="json") for block in blocks]} if blocks else {})},
                         ])
                     # Compact only after the atomic Mongo update succeeds. An
                     # old checkpoint never overrides data loaded from another worker.
@@ -460,8 +468,10 @@ class ChatService:
                         {"role": "assistant", "content": stored_answer},
                     ])
                     await checkpoint_turn.commit(public_history, len(messages) + 2 - len(public_history))
-                # A URL assinada é acrescentada só após a gravação: não vai para Mongo, agentes ou traces.
+                # Avatar URLs are transient. PDF URLs live only in private delivery
+                # metadata; public blocks/history and model input never persist them.
                 await self._populate_avatars([response], user)
+                populate_file_blocks(response.blocos,pdf_delivery)
                 return response
 
     async def end(self, session_id: UUID, user: CurrentUser):

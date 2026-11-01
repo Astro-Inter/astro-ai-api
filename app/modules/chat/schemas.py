@@ -21,6 +21,34 @@ class BlocoTexto(BaseModel):
     conteudo: str = Field(min_length=1, max_length=6000)
 
 
+class BlocoArquivo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tipo: Literal["arquivo"] = "arquivo"
+    versao: Literal[1] = 1
+    id: UUID
+    nome: str = Field(min_length=5, max_length=100, pattern=r"^[a-zA-Z0-9_-]+\.pdf$")
+    mime_type: Literal["application/pdf"] = "application/pdf"
+    tamanho_bytes: int | None = Field(default=None, ge=1, le=2000000)
+    url: str | None = Field(default=None, max_length=8192)
+    expira_em: datetime
+    estado: Literal["disponivel", "expirado", "indisponivel"] = "disponivel"
+
+    @field_validator("expira_em")
+    @classmethod
+    def normalizar_expiracao(cls,value):
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+    @field_validator("url")
+    @classmethod
+    def validar_url(cls,value):
+        from urllib.parse import urlparse
+        if value is not None:
+            parsed=urlparse(value)
+            if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError("Link de arquivo inválido.")
+        return value
+
+
 class PontoGrafico(BaseModel):
     model_config = ConfigDict(extra="forbid")
     categoria: str = Field(min_length=1, max_length=100)
@@ -261,7 +289,7 @@ class BlocoFichaUsuario(BaseModel):
         return value.strip() or None if isinstance(value, str) else value
 
 
-BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoRosca | BlocoGraficoLinhas | BlocoTabela | BlocoMatrizConformidade | BlocoIndicadores | BlocoContextoDados | BlocoGaleriaUsuarios | BlocoFichaUsuario, Field(discriminator="tipo")]
+BlocoResposta = Annotated[BlocoTexto | BlocoArquivo | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoRosca | BlocoGraficoLinhas | BlocoTabela | BlocoMatrizConformidade | BlocoIndicadores | BlocoContextoDados | BlocoGaleriaUsuarios | BlocoFichaUsuario, Field(discriminator="tipo")]
 
 
 class ChatResponse(BaseModel):

@@ -1,5 +1,6 @@
 """Consultas de gestão somente leitura; autorização é sempre aplicada no backend."""
 import asyncio
+import logging
 from datetime import date, datetime, timezone
 from typing import Literal
 
@@ -280,7 +281,9 @@ def sql_read(action,args,user):
                     elif total:
                         warning+=" Gráfico omitido: exige todas as categorias e no máximo 12."
         return finish(action,args,user,rows,columns,total,title,warning,items,reason,reference,graph_data)
-    except Exception:
+    except Exception as error:
+        from app.diagnostics import diagnostic
+        logging.getLogger(__name__).warning("Consulta analitica falhou acao=%s",action,extra=diagnostic(error))
         return {"status":"indisponivel","mensagem":"Não foi possível consultar o cadastro. Nenhum resultado foi confirmado."}
 
 

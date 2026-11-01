@@ -192,7 +192,8 @@ def _consultar_participacoes(situacao, pagina, limite, config, *, proximos=False
                conclusao.data_conclusao,
                conclusao.data_validade,
                conclusao.data_validacao,
-               conclusao.motivo_rejeicao
+               conclusao.motivo_rejeicao,
+               evento.id_evento
           {from_clause}
          ORDER BY turma.data_inicial, turma.id_turma
          LIMIT %s OFFSET %s
@@ -239,6 +240,7 @@ def _consultar_participacoes(situacao, pagina, limite, config, *, proximos=False
             "data_validade": _valor_publico(row[13]),
             "data_validacao": _valor_publico(row[14]),
             "motivo_rejeicao": row[15][:300] if row[15] else None,
+            "evento_id": row[16],
         })
     return {
         "status": "ok" if total else "sem_dados",
@@ -349,7 +351,9 @@ def consultar_evolucao_treinamentos(config: RunnableConfig = None) -> dict:
         months = [month for month, _ in rows]
         if len(set(months)) != 12 or months != sorted(months):
             raise ValueError("invalid_monthly_series")
-        return {"status": "ok" if sum(count for _, count in rows) else "sem_dados",
+        # A complete calendar series is a successful query even if every count
+        # is zero; sem_dados would suppress a legitimate requested line chart.
+        return {"status": "ok",
                 "categorias": dict(rows), "fonte": "Conclusões pessoais de treinamentos em eventos ativos",
                 "tipo_grafico": "grafico_linhas"}
     except Exception:

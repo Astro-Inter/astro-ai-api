@@ -37,6 +37,8 @@ class ChatState(TypedDict, total=False):
     guardar_turno: bool
     pdf_solicitado: bool
     pdf_url: str | None
+    pdf_metadata: dict | None
     resposta_deterministica: bool
     consulta_rh: dict | None
     ultimo_pdf: dict | None
+    eventos_referencias: list[dict]

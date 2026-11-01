@@ -138,6 +138,46 @@ def _continuacao_rh(state: ChatState) -> BuscarOutrosUsuariosArgs | None:
     return None
 
 
+def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
+    """Only an explicit, bounded chart reference reuses trusted query filters.
+
+    Rows, visual pagination and identities never become aggregation inputs.
+    Input guard still runs; tools revalidate the current authenticated scope.
+    """
+    if state["contexto"].get("ultima_rota") != "rh":
+        return None
+    match = re.fullmatch(
+        r"(?:ai |agora )?(?:gere|mostre|crie|faca) (?:um )?grafico (?:de )?"
+        r"(?P<tipo>barras|setores|pizza|rosca|donut|linhas) por "
+        r"(?P<dimensao>cargo|perfil|unidade|situacao) "
+        r"(?:com base n(?:esses|essas) (?:dados|pessoas)|desses dados)"
+        r"(?: considerando todo o escopo autorizado)?(?: por favor)?[.!?]*",
+        _sem_acentos(state["mensagem"]).strip(),
+    )
+    if match is None:
+        return None
+    previous = state.get("consulta_rh")
+    if not isinstance(previous, dict):
+        return "Não encontrei os filtros da listagem anterior. Informe o conjunto que deseja comparar."
+    try:
+        filters = BuscarOutrosUsuariosArgs.model_validate(previous)
+        return OperationalDecision.model_validate({
+            "acao": "consultar_indicadores_equipe",
+            "referencia_listagem_rh": True,
+            "filtros": {
+                "agrupar_por": match["dimensao"],
+                "tipo_grafico": {"barras": "grafico_barras", "setores": "grafico_setores",
+                                 "pizza": "grafico_setores", "rosca": "grafico_rosca",
+                                 "donut": "grafico_rosca", "linhas": "grafico_linhas"}[match["tipo"]],
+                "tipos": filters.tipos or None, "status": filters.status or None,
+                "nome": filters.nome, "cargo": filters.cargo,
+                # Quantity and page of the previous list are deliberately not reused.
+            },
+        })
+    except ValidationError:
+        return "Não consegui reaplicar os filtros da listagem com segurança. Informe os filtros novamente."
+
+
 def _contagem_funcionarios(message: str) -> bool:
     return bool(re.fullmatch(
         r"quantos funcionarios(?: no total)? (?:eu )?tenho",
@@ -532,6 +572,33 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
+        from app.modules.chat.current_intent import explicit_read, selected_event
+        previous=state["contexto"].get("consulta_operacional") or {}
+        pending=(previous.get("acao")=="consultar_resultados_treinamento" and not (previous.get("filtros") or {}).get("evento_id"))
+        event=selected_event(state["mensagem"],state.get("eventos_referencias",[]),pending)
+        if isinstance(event,str):
+            return {"rota":"direta","candidato":event,"agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if isinstance(event,OperationalDecision):
+            return {"rota":"consulta_operacional","operational_decision":event.model_dump(mode="json"),
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        current=explicit_read(state["mensagem"])
+        from app.modules.agenda.tools import AgendaToolDecision
+        if isinstance(current,AgendaToolDecision):
+            return {"rota":"agenda","agenda_decision":current,
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if isinstance(current,OperationalDecision):
+            return {"rota":"consulta_operacional","operational_decision":current.model_dump(mode="json"),
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if isinstance(current,RhToolDecision):
+            return {"rota":"rh","rh_decision":current,
+                    "agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        chart_query = _grafico_da_listagem(state)
+        if chart_query is not None:
+            if isinstance(chart_query, str):
+                return {"rota": "direta", "candidato": chart_query,
+                        "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+            return {"rota": "consulta_operacional", "operational_decision": chart_query.model_dump(mode="json"),
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if _consulta_propria_recente(state["mensagem"]) and state.get("memoria_consultada"):
             conversations = state.get("memoria", {}).get("conversas", [])
             summary = conversations[0].get("resumo", "") if conversations else ""
@@ -565,6 +632,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 decision = await invoke_agent(model, "roteador", OPERATIONAL_PROMPT, state, OperationalDecision)
             except InvalidAgentResponse:
                 return {"rota":"direta", "candidato":"Não consegui identificar os filtros com segurança. Informe a consulta e o registro desejado.", "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
+            # Continuity metadata is assigned by the application, not by a model.
+            decision = decision.model_copy(update={"referencia_listagem_rh": False})
             if decision.acao in {"consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"}:
                 values = decision.model_dump()
                 normalized = _sem_acentos(state["mensagem"])
@@ -573,6 +642,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 previous = state.get("consulta_rh")
                 if (state["contexto"].get("ultima_rota") == "rh" and isinstance(previous, dict)
                         and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", normalized)):
+                    if decision.acao == "consultar_indicadores_equipe":
+                        values["referencia_listagem_rh"] = True
                     for field in ("tipos", "status", "nome", "cargo"):
                         if values["filtros"].get(field) is None and previous.get(field) is not None:
                             values["filtros"][field] = previous[field]
@@ -697,7 +768,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         query_match = re.fullmatch(r"QUERY\s*=\s*(\{.*\})", command, re.DOTALL)
         if query_match:
             try:
-                decision = OperationalDecision.model_validate_json(query_match.group(1))
+                decision = OperationalDecision.model_validate_json(query_match.group(1)).model_copy(
+                    update={"referencia_listagem_rh": False})
             except ValidationError:
                 raise InvalidAgentResponse("roteador") from None
             return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(mode="json"),
@@ -808,16 +880,23 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         name = decision.acao
         result = await OPERATIONAL_TOOLS[name].ainvoke(
             decision.filtros.model_dump(),
-            config={"configurable":{"usuario_atual":state["usuario_atual"].model_dump()}},
+            config={"configurable":{"usuario_atual":state["usuario_atual"].model_dump(),
+                                    "referencia_listagem_rh":decision.referencia_listagem_rh}},
         )
         if result.get("paginacao") == "local" and result.get("contexto_dados"):
             unit=result["contexto_dados"]["conjunto"]["unidade_total"]
             candidate=f"Retornados {result['retornada']} de {result['total']} {unit} autorizados. Quantidade solicitada: {result['solicitada']}."
+            if name=="consultar_conflitos_agenda" and result["total"]==0:
+                context=result["contexto_dados"]
+                candidate=(f"Não encontrei treinamentos com horários sobrepostos no período de {context['inicio']} a {context['fim']}, "
+                           f"no escopo: {context['escopo']}. "+candidate)
             if result.get("limitado"):
                 candidate+=f" Coleta limitada por segurança: {result['motivo_limite']}."
             elif result.get("tem_mais"):
                 candidate+=" Conjunto tabular parcial conforme a quantidade solicitada."
-            candidate+=" Indicadores e gráficos consideram o conjunto autorizado completo descrito nos critérios."
+            candidate+=" Os indicadores usam o conjunto autorizado completo descrito nos critérios."
+            if result.get("grafico"):
+                candidate+=" O gráfico usa esse mesmo conjunto completo, sem limitar aos registros da tabela."
             if result.get("aviso"):
                 candidate+=" "+result["aviso"]
         elif result.get("status") == "ok":
@@ -1039,10 +1118,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         except ChatError as error:
             if not state.get("resposta_deterministica"):
                 raise
-            # The application has formatted the actual, authorized tool return.
-            # A failed optional reviewer must not hide a receipt or a real query.
-            logger.warning("Revisor indisponivel; preservando resposta da tool tipo=%s", type(error).__name__)
-            decision = JudgeDecision(status="aprovado", motivo="Resultado formatado pela aplicação a partir da ferramenta autorizada.", problemas=[])
+            logger.warning("Revisor indisponivel; resposta nao aprovada tipo=%s", type(error).__name__)
+            raise ChatError(503, "Revisao da resposta indisponivel. Tente novamente em instantes.",
+                            reason=error.reason or "review_unavailable", retry_after=error.retry_after) from None
         return {
             "avaliacao_juiz": decision.model_dump(),
             "agentes_chamados": state["agentes_chamados"] + ["juiz"],
@@ -1056,6 +1134,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"],
             }
         if state.get("resposta_deterministica"):
+            if state.get("avaliacao_juiz", {}).get("status") != "aprovado":
+                return {"resposta": "Não consegui validar os dados desta resposta. Nenhum componente foi liberado; tente novamente.",
+                        "guardar_turno": False,
+                        "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}
             # No LLM rewrite can add policies, enrollment, invitations or facts
             # to a response assembled by the application's tool formatters.
             return {
@@ -1168,6 +1250,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         if result.get("status") == "ok" and isinstance(url, str) and url.strip():
             return {
                 "pdf_url": url,
+                "pdf_metadata": {"nome": result.get("nome", "consulta-astro.pdf"),
+                                 "tamanho_bytes": result.get("tamanho_bytes")},
                 "resposta": content,
                 "agentes_chamados": state["agentes_chamados"] + ["gerar_pdf"],
             }
