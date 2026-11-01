@@ -941,6 +941,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             candidate = "\n".join(lines)
             if len(candidate) > 5500:
                 candidate = candidate[:5000] + "\n[Resumo abreviado; consulte a tabela e a paginação.]"
+            if name=='consultar_indicadores_equipe' and result.get('completo') and result.get('grafico'):
+                points=result['grafico']
+                total_people=sum(point['valor'] for point in points)
+                candidate=(f"{result['titulo']}: "+'; '.join(f"{p['categoria']}: {p['valor']}" for p in points)
+                           +f". Total do conjunto autorizado pelos filtros: {total_people} pessoas em {len(points)} categorias. "
+                           "A agregação foi consultada no cadastro completo autorizado, independentemente das linhas enviadas na tabela anterior ou da página visual.")
+                if result.get('aviso'):candidate+=' '+result['aviso']
         else:
             candidate = result.get("mensagem", "Nenhum registro nesta página; isso não comprova ausência em outras páginas.")
         if name=='consultar_detalhes_evento' and result.get('status')=='ok':
@@ -1164,7 +1171,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 raise
             logger.warning("Revisor indisponivel; resposta nao aprovada tipo=%s", type(error).__name__)
             raise ChatError(503, "Revisao da resposta indisponivel. Tente novamente em instantes.",
-                            reason=error.reason or "review_unavailable", retry_after=error.retry_after) from None
+                            reason=error.reason or "review_unavailable", retry_after=error.retry_after,
+                            stage=error.stage or "juiz") from None
         return {
             "avaliacao_juiz": decision.model_dump(),
             "agentes_chamados": state["agentes_chamados"] + ["juiz"],
@@ -1179,6 +1187,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             }
         if state.get("resposta_deterministica"):
             if state.get("avaliacao_juiz", {}).get("status") != "aprovado":
+                from app.diagnostics import emit
+                verdict=state.get('avaliacao_juiz',{})
+                tool=state.get('resultado',{}).get('evidencia_tool',{}).get('nome')
+                allowed_tools=set(OPERATIONAL_TOOLS)|{'buscar_outros_usuarios','buscar_meus_dados','consultar_eventos','consultar_treinamentos','consultar_evolucao_treinamentos','consultar_grafico_treinamentos'}
+                emit('chat_review_not_approved',level='WARNING',sink=logger,
+                     review_status=verdict.get('status') if verdict.get('status') in {'revisar','rejeitado'} else 'unknown',
+                     tool=tool if tool in allowed_tools else 'other',issue_count=len(verdict.get('problemas',[])))
                 return {"resposta": "Não consegui validar os dados desta resposta. Nenhum componente foi liberado; tente novamente.",
                         "guardar_turno": False,
                         "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}

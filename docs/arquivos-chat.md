@@ -51,6 +51,10 @@ para validar o link: isso expõe capacidades e pode baixar um arquivo desnecess�
 Botão habilitado apenas com estado disponivel, URL presente e prazo ainda válido.
 O relógio do cliente ajuda a desabilitar o botão, mas não substitui a autorização
 do servidor e do armazenamento. Tratar erro de download sem inventar outro link.
+Para downloads via fetch no web, o bucket também precisa permitir a origem por
+CORS. Consulte a [auditoria e política candidata restrita](homologacao-web-recorrencia-cors.md).
+O CORS da API não é o CORS do armazenamento; ausência de headers não autoriza
+renovar assinaturas ou tornar o bucket público.
 
 Quando expirado, mostrar “Link expirado; solicite a geração novamente”. Quando
 indisponível ou URL null, mostrar indisponibilidade; não oferecer link quebrado.
