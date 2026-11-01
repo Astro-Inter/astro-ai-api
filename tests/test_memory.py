@@ -486,6 +486,7 @@ def test_expired_lease_cannot_write_after_another_worker():
 def test_qdrant_real_sdk_local_collection_and_tenant_filter(monkeypatch):
     async def scenario():
         vectors = SummaryVectors()
+        monkeypatch.setattr("app.infrastructure.vectorstore.memory.COLLECTION_MEMORY", "memoria_resumos")
         vectors.client = AsyncQdrantClient(":memory:")
         await vectors.client.create_collection(COLLECTION_MEMORY,
             vectors_config={"": models.VectorParams(size=1024, distance=models.Distance.COSINE)})
