@@ -20,7 +20,7 @@ MANAGERS = {"GESTOR", "GESTOR_WORKSPACE"}
 class TeamArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     agrupar_por: Literal["cargo", "unidade", "perfil", "situacao"] = "cargo"
-    tipo_grafico: Literal["grafico_barras", "grafico_setores", "grafico_linhas"] = "grafico_barras"
+    tipo_grafico: Literal["grafico_barras", "grafico_setores", "grafico_rosca", "grafico_linhas"] = "grafico_barras"
     tipos: list[Literal["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]] | None = Field(default=None, min_length=1, max_length=3)
     status: list[Literal["ATIVO", "PRE_CADASTRADO", "DESATIVADO"]] | None = Field(default=None, min_length=1, max_length=3)
     nome: str | None = Field(default=None, min_length=1, max_length=120)
@@ -109,7 +109,7 @@ AND target.tipo = ANY(%s) AND target.id_usuario <> viewer.id_usuario
 
 def team_read(action, args, user):
     if action in {"consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"} and args.tipo_grafico == "grafico_linhas":
-        return {"status":"esclarecer", "mensagem":"Os indicadores de equipe representam o cadastro atual, sem série histórica mensal. Posso mostrar barras ou setores; linhas estão disponíveis para suas conclusões de treinamentos."}
+        return {"status":"esclarecer", "mensagem":"Os indicadores de equipe representam o cadastro atual, sem série histórica mensal. Posso mostrar barras, setores ou rosca; linhas estão disponíveis para suas conclusões de treinamentos."}
     if action == "consultar_grafico_vencimentos" and (args.dias != 30 or args.incluir_vencidas):
         return {"status":"esclarecer", "mensagem":"Este gráfico usa faixas fixas, incluindo vencidas e sem validade. Para período personalizado, consulte a lista de vencimentos."}
     if not app_config.DATABASE_URL:
@@ -411,7 +411,7 @@ def is_operational_request(message, last_route=""):
     text = "".join(c for c in unicodedata.normalize("NFKD", message.casefold()) if not unicodedata.combining(c))
     if re.search(r"\bformularios?\b", text) and re.search(r"\b(pendentes?|respostas?|responder|responderam|preenchimento)\b", text):
         return True
-    if re.search(r"\b(pendencias?|vencimentos?|vencidas?|prazos?)\b", text) and re.search(r"\b(graficos?|barras|setores|pizza|faixas|distribuicao|quantidade)\b", text):
+    if re.search(r"\b(pendencias?|vencimentos?|vencidas?|prazos?)\b", text) and re.search(r"\b(graficos?|barras|setores|pizza|rosca|donut|faixas|distribuicao|quantidade)\b", text):
         return True
     if "conformidade" in text and re.search(r"\bunidade\b|\bvenc", text):
         return True
@@ -423,4 +423,4 @@ def is_operational_request(message, last_route=""):
         return True
     if re.search(r"\b(ficha|detalhes|turmas)\b", text) and re.search(r"\b(treinamentos?|eventos?)\b", text):
         return True
-    return bool(re.search(r"\b(graficos?|barras|setores|pizza|distribuicao|indicadores)\b", text) and (re.search(r"\b(equipe|funcionarios?|usuarios?|colaboradores|cargos?|perfil|perfis)\b", text) or (last_route == "rh" and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", text) and not re.search(r"\b(treinamentos?|eventos?)\b", text))))
+    return bool(re.search(r"\b(graficos?|barras|setores|pizza|rosca|donut|distribuicao|indicadores)\b", text) and (re.search(r"\b(equipe|funcionarios?|usuarios?|colaboradores|cargos?|perfil|perfis)\b", text) or (last_route == "rh" and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", text) and not re.search(r"\b(treinamentos?|eventos?)\b", text))))

@@ -25,7 +25,7 @@ from app.modules.chat.pdf_delivery import asks_for_pdf_link
 from app.modules.chat.schemas import (
     ChatRequest,
     ChatResponse,
-    BlocoTexto, BlocoGrafico, BlocoGraficoSetores, BlocoGraficoLinhas, BlocoTabela, ColunaTabela, BlocoGaleriaUsuarios, CelulaImagem, BlocoFichaUsuario, ConformidadeFicha, PontoGrafico,
+    BlocoTexto, BlocoGrafico, BlocoGraficoSetores, BlocoGraficoRosca, BlocoGraficoLinhas, BlocoTabela, ColunaTabela, BlocoGaleriaUsuarios, CelulaImagem, BlocoFichaUsuario, ConformidadeFicha, PontoGrafico,
     SessionMessage,
     SessionMessagesResponse,
     SessionResponse,
@@ -344,7 +344,7 @@ class ChatService:
                         and chart_data.get("status") == "ok"):
                     counts = chart_data["categorias"]
                     kind = chart_data.get("tipo_grafico", "grafico_barras")
-                    graph_class = {"grafico_barras": BlocoGrafico, "grafico_setores": BlocoGraficoSetores, "grafico_linhas": BlocoGraficoLinhas}.get(kind)
+                    graph_class = {"grafico_barras": BlocoGrafico, "grafico_setores": BlocoGraficoSetores, "grafico_rosca": BlocoGraficoRosca, "grafico_linhas": BlocoGraficoLinhas}.get(kind)
                     if graph_class is None:
                         raise ChatError(502, "Tipo de gráfico inválido.")
                     title = "Suas conclusões por mês" if kind == "grafico_linhas" else "Seus treinamentos por situação"
@@ -404,7 +404,7 @@ class ChatService:
                         colunas=chart_data["colunas"], linhas=chart_data["linhas"],
                         pagina=chart_data["pagina"], total_paginas=chart_data["total_paginas"], total=chart_data["total"]))
                     if chart_data.get("grafico"):
-                        chart_class = {"grafico_setores": BlocoGraficoSetores, "grafico_linhas": BlocoGraficoLinhas}.get(chart_data.get("tipo_grafico"), BlocoGrafico)
+                        chart_class = {"grafico_setores": BlocoGraficoSetores, "grafico_linhas": BlocoGraficoLinhas, "grafico_rosca": BlocoGraficoRosca}.get(chart_data.get("tipo_grafico"), BlocoGrafico)
                         blocks.append(chart_class(titulo=chart_data["titulo"], dados=chart_data["grafico"],
                                                   unidade=chart_data.get("unidade_grafico", "pessoas"), fonte=chart_data["fonte"]))
                     summary = f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} registro(s)."

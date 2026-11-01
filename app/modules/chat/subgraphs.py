@@ -981,7 +981,7 @@ def pedido_grafico_treinamentos(message: str) -> bool:
     text = "".join(c for c in unicodedata.normalize("NFKD", message.casefold()) if not unicodedata.combining(c))
     if re.search(r"\b(concluid[oa]s?|mensal)\b", text) and not re.search(r"\b(linhas?|evolucao|mensal)\b", text):
         return False
-    return bool(re.search(r"\b(grafico|dashboard|visualizacao)\b", text)
+    return bool(re.search(r"\b(grafico|dashboard|visualizacao|rosca|donut)\b", text)
                 and re.search(r"\b(treinamentos?|capacitac(?:ao|oes))\b", text)
                 and re.search(r"\b(meus?|minhas?|para mim)\b", text)
                 and not re.search(r"\b(empresa|unidade|equipe|todos|outros|ano|mes|periodo|vencid[oa]s?|pendentes?|rejeitad[oa]s?)\b|\d", text))
@@ -1020,7 +1020,7 @@ def build_agenda_graph(model: AgentModel):
     async def use_tool(state: ChatState):
         if state["agenda_decision"] == "grafico_pessoal":
             normalized = "".join(c for c in unicodedata.normalize("NFKD", state["mensagem"].casefold()) if not unicodedata.combining(c))
-            chart_type = "grafico_linhas" if re.search(r"\b(linhas?|evolucao|mensal)\b", normalized) else "grafico_setores" if re.search(r"\b(setores?|pizza|circular)\b", normalized) else "grafico_barras"
+            chart_type = "grafico_linhas" if re.search(r"\b(linhas?|evolucao|mensal)\b", normalized) else "grafico_rosca" if re.search(r"\b(rosca|donut)\b", normalized) else "grafico_setores" if re.search(r"\b(setores?|pizza|circular)\b", normalized) else "grafico_barras"
             tool_name = "consultar_evolucao_treinamentos" if chart_type == "grafico_linhas" else "consultar_grafico_treinamentos"
             result = await AGENDA_TOOLS[tool_name].ainvoke(
                 {}, config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}})

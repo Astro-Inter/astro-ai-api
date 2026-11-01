@@ -252,7 +252,7 @@ def test_invalid_form_uuid_does_not_reach_java(monkeypatch):
     assert result["status"] == "esclarecer"
 
 
-@pytest.mark.parametrize("kind",["grafico_barras","grafico_setores"])
+@pytest.mark.parametrize("kind",["grafico_barras","grafico_setores","grafico_rosca"])
 def test_team_chart_preserves_requested_type(monkeypatch,kind):
     monkeypatch.setattr(tools.app_config,"DATABASE_URL","postgresql://fake")
     class Cursor:
