@@ -69,5 +69,6 @@ async def request(path: str, payload: dict, *, stage: str, attempts: int = 2) ->
                   402: "insufficient_credits", 404: "model_unavailable",
                   429: "rate_limited"}.get(status, "provider_failure")
         raise ChatError(503, "Servico de IA indisponivel. Tente novamente em instantes.",
-                        reason=reason, stage=stage, retry_after=delay if status == 429 else None) from None
+                        reason=reason, stage=stage, retry_after=delay if status == 429 else None,
+                        provider_status_code=status) from None
     raise ChatError(503, "Servico de IA indisponivel.", reason="provider_failure", stage=stage)

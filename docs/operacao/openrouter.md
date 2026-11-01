@@ -44,7 +44,9 @@ A integração permanece no OpenRouter, usando uma única chave de backend.
 
 `OPENROUTER_JEV_ENABLED=true` habilita a seleção `rh/sst/agenda/faq/luna`.
 A entrada contém até sete mensagens recentes pseudonimizadas, com orçamento de
-8000 caracteres de histórico; o prompt extenso do roteador fica somente no Luna.
+8000 caracteres de histórico; o prompt extenso e os exemplos fictícios do roteador
+ficam somente no Luna. Intenções conhecidas de PDF, gráficos e referências
+contextuais seguem diretamente para o roteador textual, sem chamada Jev adicional.
 A rota especializada só é aceita quando escolha, probabilidade da escolha,
 confiança e `noul` são válidos e os três sinais numéricos atingem 0,90. Esses
 limiares são conservadores e precisam de calibração com o domínio do Astro.
@@ -56,7 +58,9 @@ A API é **alpha**, sem assumir garantias da versão estável de chat. Não são
 streaming, temperature, texto gerado ou ferramentas em Decisions. Campos adicionais
 são ignorados; tipos, rótulos e distribuições esperados são validados. Não há
 substituição por `jev-latest`. Erro/contrato alpha inválido abre circuito de 60s por
-instância e usa Luna pelo OpenRouter. Baixa confiança também usa Luna. Chave
+instância e usa Luna pelo OpenRouter. HTTP 403 da API alpha também delega a
+Luna; não significa que chat esteja indisponível. HTTP 401 e 402 permanecem fatais.
+Baixa confiança também usa Luna. Chave
 inválida e saldo insuficiente interrompem a inferência, pois afetam a conta inteira.
 Desabilitar Jev conserva o roteador textual. A rubrica é interna; probabilidades
 altas não comprovam acerto nem concedem permissões.
@@ -65,9 +69,10 @@ altas não comprovam acerto nem concedem permissões.
 checagem adicional inspirada na aula. Depois da revisão textual, respostas geradas
 podem ser comparadas às fontes do turno com `choice=apoiada/parcial/sem_apoio` e
 `noul`. Somente `apoiada` com sinais >=0,70 mantém o texto exatamente como estava.
-Reprovação com confiança produz uma frase fixa de abstenção, impede histórico e
-PDF desse turno e descarta prévias pendentes. Dúvida/falha alpha delega a verificação
-do texto final ao Juiz Luna. O Juiz original continua produzindo motivos e problemas.
+Resultado negativo, divergente, incerto ou falha alpha delega a verificação do
+texto final ao Juiz Luna, contra as mesmas evidências. Somente aprovação textual
+libera o resultado; revisão/rejeição produz abstenção, impede histórico e PDF desse
+turno e descarta prévias pendentes. Jev não produz justificativa nem veto explicado. O Juiz original continua produzindo motivos e problemas.
 Respostas formatadas deterministicamente de ferramentas autorizadas conservam os
 comprovantes e não recebem essa chamada adicional. Rejeitar uma frase não desfaz
 uma operação: autorização e confirmação continuam ocorrendo antes da ferramenta.
@@ -75,7 +80,7 @@ uma operação: autorização e confirmação continuam ocorrendo antes da ferra
 Custo/latência: a classificação pode substituir uma chamada Luna em casos claros;
 o fallback usa Jev + Luna. O teste real de Agenda preferiu fallback com o limiar
 conservador. A checagem final acrescenta uma chamada Jev por resposta elegível e,
-na dúvida, mais uma do Juiz. Por isso permanece desativada até avaliação rotulada;
+em resultado negativo ou incerto, mais uma do Juiz. Por isso permanece desativada até avaliação rotulada;
 não há repetição automática de Jev nem nova geração após abstenção.
 
 ## Erros e observabilidade
@@ -253,3 +258,5 @@ operacional registra contagens e scores, sem textos de memória ou identificador
 de usuários. A autorização para merge/deploy dos Workers foi recebida; a proteção
 do GitHub exige outra aprovação e os repositórios não permitem auto-merge. Nenhuma
 regra foi contornada e nenhuma versão de produção foi alterada.
+
+Diagnóstico adicional de bloqueios, limites da amostra e regressões: [revisão do Jev](../diagnostico-jev-bloqueios.md).

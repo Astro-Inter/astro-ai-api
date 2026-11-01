@@ -12,6 +12,7 @@ from app.core import config
 from app.infrastructure.checkpoints import COMPLETE_TURN_NODE
 from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.agents import invoke_agent
+from app.observability.chat import record_decision
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.public_replies import public_reply
 from app.modules.chat.pdf_delivery import asks_for_pdf_link, previous_pdf_reply, remove_delivery_promises
@@ -577,6 +578,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         decision = await invoke_agent(
             model, "guardrail_entrada", GUARDRAIL_ENTRADA_PROMPT_COMPLETO, state, InputDecision,
         )
+        record_decision("input_guard", decision.decisao)
         approved = decision.decisao == "aprovar"
         if exposes_internal_instructions(decision.mensagem):
             return {
@@ -593,7 +595,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question
         previous=state["contexto"].get("consulta_operacional") or {}
         pdf_query=distribution_pdf(state["mensagem"],previous)
         if isinstance(pdf_query,str):
@@ -614,6 +616,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                                  _sem_acentos(state["mensagem"]).strip())):
             return {"rota": "rh", "rh_decision": RhToolDecision(acao="buscar_meus_dados"),
                     "agentes_chamados": state["agentes_chamados"]+["roteador"]}
+        if general_nr_question(state["mensagem"]):
+            return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         current=explicit_read(state["mensagem"])
         from app.modules.agenda.tools import AgendaToolDecision
         if isinstance(current,AgendaToolDecision):
@@ -1205,6 +1209,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             raise ChatError(503, "Revisao da resposta indisponivel. Tente novamente em instantes.",
                             reason=error.reason or "review_unavailable", retry_after=error.retry_after,
                             stage=error.stage or "juiz") from None
+        record_decision("judge", decision.status)
         return {
             "avaliacao_juiz": decision.model_dump(),
             "agentes_chamados": state["agentes_chamados"] + ["juiz"],
@@ -1219,6 +1224,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             }
         if state.get("resposta_deterministica"):
             if state.get("avaliacao_juiz", {}).get("status") != "aprovado":
+                record_decision("output_guard", "blocked_by_judge")
                 from app.diagnostics import emit
                 verdict=state.get('avaliacao_juiz',{})
                 tool=state.get('resultado',{}).get('evidencia_tool',{}).get('nome')
@@ -1229,6 +1235,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 return {"resposta": "Não consegui validar os dados desta resposta. Nenhum componente foi liberado; tente novamente.",
                         "guardar_turno": False,
                         "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}
+            record_decision("output_guard", "approved_deterministic")
             # No LLM rewrite can add policies, enrollment, invitations or facts
             # to a response assembled by the application's tool formatters.
             return {
@@ -1259,6 +1266,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         decision = await invoke_agent(
             model, "guardrail_saida", GUARDRAIL_SAIDA_PROMPT_COMPLETO, state, OutputDecision,
         )
+        record_decision("output_guard", decision.status)
         judge_status = state["avaliacao_juiz"]["status"]
         if judge_status != "aprovado" and (
             decision.status == "aprovado"
@@ -1300,8 +1308,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 and callable(getattr(model, "verify_evidence", None))):
             checked_state = {**state, "resposta": response, "candidato": response}
             supported = await model.verify_evidence(checked_state)
-            if supported is None:
+            if supported is not True:
+                # A numeric alpha verdict is a review signal, not an explained veto.
+                # Recheck the final text against the same evidence with the textual Judge.
                 review = await invoke_agent(model, "juiz", JUIZ_PROMPT_COMPLETO, checked_state, JudgeDecision)
+                record_decision("evidence_review", review.status)
                 supported = review.status == "aprovado"
             result["agentes_chamados"] += ["verificador_evidencias"]
             if not supported:

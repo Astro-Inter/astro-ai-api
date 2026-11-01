@@ -768,6 +768,20 @@ def build_rh_graph(model: AgentModel):
             model, "rh", RH_DECISAO_PROMPT_COMPLETO, state, RhToolDecision,
         )
 
+        # Unsupported personal selectors must not silently become a broad list.
+        if decision.acao == "buscar_outros_usuarios" and state["usuario_atual"].role in {"ADMIN", "GESTOR", "GESTOR_WORKSPACE"}:
+            emails = re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", state["mensagem"])
+            opaque = re.search(r"\b(?:uid|firebase_uid|identificador)\s*[:=]?\s*[A-Za-z0-9_-]{16,128}\b",
+                               state["mensagem"], re.I) or re.search(
+                                   r"\b(?:dados(?: cadastrais)?|cadastro|ficha) (?:de|do|da) [A-Za-z0-9_-]{20,128}\b",
+                                   state["mensagem"], re.I)
+            name = decision.filtros.nome if decision.filtros else None
+            supplied_name = name and name.casefold() in state["mensagem"].casefold() and name not in emails
+            if (emails or opaque) and not supplied_name:
+                return {"rh_route": "fim", "resultado": {"dominio": "rh", "intencao": "consultar", "status": "esclarecer",
+                        "resposta": "Para localizar essa pessoa nesta consulta, informe o nome completo. O filtro de cadastro disponível aqui não pesquisa por e-mail ou UID.",
+                        "recomendacao": "", "esclarecer": "Qual é o nome completo da pessoa?"},
+                        "agentes_chamados": state["agentes_chamados"] + ["rh"]}
         if decision.acao == "responder":
             return {
                 "rh_route": "fim",
@@ -875,6 +889,12 @@ def build_rh_graph(model: AgentModel):
 
 def build_sst_graph(model: AgentModel):
     async def decide(state: ChatState):
+        from app.modules.chat.current_intent import general_nr_question
+        if general_nr_question(state["mensagem"]):
+            return {"sst_route": "tool",
+                    "sst_decision": SstToolDecision(acao="consultar_orientacoes_sst",
+                        filtros=ConsultarOrientacoesSstArgs(termo="Normas Regulamentadoras", fontes=["mte_normas"])),
+                    "agentes_chamados": state["agentes_chamados"] + ["sst"]}
         conformidade = _filtros_conformidade(state["mensagem"], state["historico"])
         if conformidade is not None:
             return {

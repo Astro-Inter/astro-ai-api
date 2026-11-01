@@ -401,7 +401,7 @@ def test_load_session_messages_for_authenticated_owner():
         "total": 2,
         "mensagens": [
             {"role": "user", "content": "Oi", "blocos": []},
-            {"role": "assistant", "content": sent.json()["blocos"][0]["conteudo"], "blocos": []},
+            {"role": "assistant", "content": sent.json()["blocos"][0]["conteudo"], "blocos": sent.json()["blocos"]},
         ],
     }
 

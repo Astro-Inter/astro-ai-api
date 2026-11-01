@@ -149,7 +149,7 @@ def test_specialist_flow(chat_client, domain):
     history = application.state.chat_service.repository.docs[body["session_id"]]["mensagens"]
     assert history == [
         {"role": "human", "content": "Preciso de uma orientação."},
-        {"role": "assistant", "content": texto_resposta(body)},
+        {"role": "assistant", "content": texto_resposta(body), "blocos": body["blocos"]},
     ]
     system = model.calls[2][1][0].content
     assert '"uid"' not in system

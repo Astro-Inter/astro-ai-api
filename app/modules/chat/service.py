@@ -437,10 +437,11 @@ class ChatService:
                     blocks.append(BlocoArquivo(id=pdf_delivery["id"],nome=pdf_delivery.get("nome","consulta-astro.pdf"),
                                               tamanho_bytes=pdf_delivery.get("tamanho_bytes"),
                                               expira_em=pdf_delivery["expira_em"],url=None))
+                # Persist the same public blocks sent by POST, including text-only replies.
+                if not blocks:
+                    blocks = [BlocoTexto(conteudo=public_answer[i:i + 6000]) for i in range(0, len(public_answer), 6000)]
                 response = ChatResponse(session_id=session_id,
-                                        agentes_chamados=result["agentes_chamados"],
-                                        blocos=blocks or [BlocoTexto(conteudo=public_answer[i:i + 6000])
-                                                         for i in range(0, len(public_answer), 6000)])
+                                        agentes_chamados=result["agentes_chamados"], blocos=blocks)
                 if result["guardar_turno"]:
                     delivery_fields = {}
                     if pdf_delivery:

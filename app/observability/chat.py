@@ -73,6 +73,7 @@ class ChatObservation:
     error_reason: str = ""
     agent_calls: list[tuple[str, float]] = field(default_factory=list)
     transitions: list[tuple[str, str, float]] = field(default_factory=list)
+    decision_signals: dict[str, str] = field(default_factory=dict)
     last_agent_name: str | None = None
     last_agent_finished_at: float | None = None
 
@@ -145,6 +146,7 @@ class ChatObservation:
                 separators=(",", ":"),
             ),
         }
+        metadata.update({"decision_" + key: value for key, value in self.decision_signals.items()})
         metadata["provider_calls"] = self.provider_calls
         metadata["provider_cost_calls"] = self.provider_cost_calls
         if self.provider_calls and self.provider_calls == self.provider_cost_calls:
@@ -172,6 +174,29 @@ class ChatObservation:
 _current_observation: ContextVar[ChatObservation | None] = ContextVar(
     "astro_chat_observation", default=None,
 )
+
+
+# Closed vocabularies only: never store model explanations, prompts or identities.
+_DECISION_VALUES = {
+    "route_engine": {"jev", "luna"},
+    "jev_route": {"selected", "low_confidence", "reserved_intent", "empty_input", "context_budget",
+                  "text_correction", "disabled", "circuit_open", "invalid_response", "alpha_unavailable", "alpha_access_denied"},
+    "jev_evidence": {"supported", "uncertain", "review_required", "disabled", "circuit_open",
+                     "invalid_response", "alpha_unavailable", "alpha_access_denied"},
+    "input_guard": {"aprovar", "bloquear", "esclarecer"},
+    "judge": {"aprovado", "revisar", "rejeitado"},
+    "output_guard": {"aprovado", "corrigido", "bloqueado", "blocked_by_judge", "approved_deterministic"},
+    "evidence_review": {"aprovado", "revisar", "rejeitado"},
+}
+
+
+def record_decision(name: str, value: str) -> None:
+    if value not in _DECISION_VALUES.get(name, set()):
+        raise ValueError("Sinal de decisão fora do vocabulário permitido.")
+    observation = _current_observation.get()
+    if observation:
+        observation.decision_signals[name] = value
+    logger.info("chat_decision stage=%s outcome=%s", name, value)
 
 
 def record_provider_call() -> None:

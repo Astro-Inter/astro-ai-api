@@ -82,7 +82,8 @@ def example_messages(name: str, schema_name: str | None = None):
     messages = []
     for question, answer in EXAMPLES.get(name, ()):
         messages.extend((
-            HumanMessage(content="EXEMPLO FICTÍCIO (não é a requisição atual):\n" + question),
-            AIMessage(content=answer),
+            HumanMessage(content="EXEMPLO FICTÍCIO (não é a requisição atual):\n" + question,
+                         additional_kwargs={"astro_example": True}),
+            AIMessage(content=answer, additional_kwargs={"astro_example": True}),
         ))
     return messages

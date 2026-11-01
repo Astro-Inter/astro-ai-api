@@ -7,12 +7,33 @@ from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision
 from app.modules.agenda.tools import AgendaToolDecision, ConsultarEventosArgs
 
 
+def general_nr_question(message):
+    """Recognize a definition request, never a numbered NR or personal obligation."""
+    text = ''.join(c for c in unicodedata.normalize('NFKD', message.casefold()) if not unicodedata.combining(c))
+    text = ' '.join(text.split()).strip().rstrip('.!? ')
+    text = re.sub(r',? por favor$', '', text).strip()
+    noun = r"(?:(?:um|uma|as|os) )?(?:nrs?|normas? regulamentadoras?)"
+    definition = r"(?:o que|o q|oq) (?:e|eh|sao|era|seria) " + noun
+    explanation = r"(?:me )?(?:explique|explica|defina|fale sobre) (?:" + definition + "|" + noun + ")"
+    ordinary = "(?:" + definition + "|" + explanation + ")"
+    return bool(re.fullmatch(ordinary + r"(?: (?:em|no formato|para) (?:um )?pdf)?", text)
+                or re.fullmatch(r"(?:gere|gera|crie|cria|faca|faz) (?:um )?(?:arquivo )?pdf "
+                                r"(?:falando|explicando|sobre) (?:" + ordinary + "|" + noun + ")", text))
+
+
 def explicit_read(message):
     text="".join(c for c in unicodedata.normalize("NFKD",message.casefold()) if not unicodedata.combining(c)).strip().rstrip(".!? ")
     verbs=r"(?:mostre|liste|exiba|quero ver) "
     if text in {"liste meus eventos e treinamentos disponiveis com a referencia para selecionar um",
                 "liste meus eventos com a referencia evento_id para eu selecionar um resumo"}:
         return AgendaToolDecision(acao="consultar_eventos",filtros=ConsultarEventosArgs(proximos=False))
+    chart = re.fullmatch(r"(?:(?:mostre|gere|faca|crie) (?:um )?)?grafico (?:de )?"
+                         r"(?P<kind>pizza|setores|rosca|donut|barras) (?:de )?pendencias "
+                         r"(?:dos? |da |de )?(?:colaboradores|funcionarios|minha equipe|nossa equipe|equipe)(?: por nr)?", text)
+    if chart:
+        kind = {"pizza": "grafico_setores", "setores": "grafico_setores", "rosca": "grafico_rosca",
+                "donut": "grafico_rosca", "barras": "grafico_barras"}[chart['kind']]
+        return OperationalDecision(acao="consultar_grafico_pendencias_nr", filtros={"tipo_grafico": kind})
     scopes=r"(?:da |de |para a )?(?:(?:minha|nossa|a) )?equipe"
     requests=[
         (verbs+r"(?:os )?indicadores de cobertura "+scopes,"consultar_indicadores_cobertura",{}),
