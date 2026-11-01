@@ -319,3 +319,52 @@ Rolagem com teclado, rótulos amigáveis de perfis, espaçamento da ficha e esca
 visual dos gráficos são responsabilidades de apresentação nos clientes. A API
 preserva códigos como `GESTOR_WORKSPACE`, valores e regras de acesso; não altera
 dados para compensar esses problemas visuais.
+
+
+## Gráfico de rosca (`grafico_rosca`, versão 1)
+
+Contrato exato, reutilizando o modelo de setores:
+
+```json
+{
+  "tipo": "grafico_rosca",
+  "versao": 1,
+  "titulo": "Distribuição da equipe por perfil",
+  "dados": [
+    {"categoria": "COLABORADOR", "valor": 100},
+    {"categoria": "GESTOR", "valor": 12}
+  ],
+  "unidade": "pessoas",
+  "fonte": "Consulta autorizada ao cadastro Astro"
+}
+```
+
+Todos os campos são obrigatórios no JSON emitido. `titulo` e `fonte` têm de 1 a
+200 caracteres. `dados` contém de 1 a 12 categorias, com rótulo de 1 a 100
+caracteres e `valor` inteiro não negativo. `unidade` aceita `participações`,
+`pessoas`, `pendências` ou `registros` (padrão do modelo: `participações`).
+Não há HTML, configuração de biblioteca, percentual ou raio no contrato.
+
+Pedidos “gráfico de rosca” e “donut” usam o novo tipo nos mesmos fluxos de setores:
+equipe por cargo/perfil/unidade/situação, pendências por NR, vencimentos e
+participações pessoais de treinamentos. Exemplos: “Mostre rosca da equipe por
+perfil”, “Mostre donut das pendências por NR”, “Gráfico de rosca dos meus
+ treinamentos”. Filtros, autorização, contagens e agregações não mudam; o limite
+da tabela não restringe os agregados. Mais de 12 categorias ou conjunto parcial
+mantêm o comportamento de tabela/aviso existente, sem inventar um gráfico global.
+
+Conjunto vazio (`sem_dados`) não emite gráfico. Uma ou mais categorias zeradas
+são preservadas com valor 0. Se a soma for zero, clientes mostram estado “Sem
+valores para distribuir” e legenda/valores, sem calcular divisão por zero nem
+inventar fatias. Com soma positiva, a participação visual é valor/soma; manter os
+valores originais na legenda. A abertura central e as cores são escolhas da UI.
+
+O bloco passa pela aprovação do Juiz e guardrails existentes. POST e histórico
+usam o mesmo discriminador `tipo` e a mesma versão; ordem dos blocos é preservada.
+Histórico antigo não é convertido. Clientes devem adicionar `grafico_rosca` ao
+parser e ao renderer de rosca, incluindo acessibilidade, legenda, unidade, fonte,
+estado vazio/zero e reabertura do histórico. Não interpretar o tipo como barras.
+
+**Publicação bloqueada até suporte web e mobile:** o novo discriminador pode ser
+rejeitado por parsers antigos. Publicar e validar os clientes compatíveis antes
+de promover esta API; não houve habilitação em produção neste trabalho.

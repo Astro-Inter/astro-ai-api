@@ -177,3 +177,6 @@ Listagens de RH: quantidade solicitada e paginação visual foram separadas. Con
 
 
 `buscar_meus_dados`: consulta completa gera cartão `ficha_usuario` do autenticado, sem status/data de cadastro/CPF ou conformidade automática. Perguntas por campo permanecem em texto. Foto própria é reautorizada pelo UID, inclusive no histórico. Consulte [contrato do cartão](integracao-graficos-chat.md#cartão-do-usuário-autenticado-buscar_meus_dados) para campos opcionais e ajustes web/mobile.
+
+
+Os agregados que aceitam setores também aceitam `tipo_grafico="grafico_rosca"` para pedidos de rosca/donut, sem mudar filtros, escopo ou contagens. Consulte o [contrato de rosca](integracao-graficos-chat.md#gráfico-de-rosca-grafico_rosca-versão-1). Suporte web/mobile é pré-requisito para publicação.

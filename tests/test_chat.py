@@ -2345,6 +2345,8 @@ def test_grafico_nao_e_emitido_quando_juiz_rejeita(chat_client, monkeypatch):
 
 
 @pytest.mark.parametrize("question,tool_name,kind,values", [
+    ("Mostre um gráfico de rosca dos meus treinamentos", "consultar_grafico_treinamentos", "grafico_rosca", {"Pendentes": 3, "Concluídos": 2, "Rejeitados": 1}),
+    ("Mostre donut dos meus treinamentos", "consultar_grafico_treinamentos", "grafico_rosca", {"Pendentes": 0, "Concluídos": 0}),
     ("Mostre um gráfico de setores dos meus treinamentos", "consultar_grafico_treinamentos", "grafico_setores", {"Pendentes": 3, "Concluídos": 2, "Rejeitados": 1}),
     ("Mostre um gráfico de linhas dos meus treinamentos concluídos", "consultar_evolucao_treinamentos", "grafico_linhas", {f"2026-{m:02d}": 2 if m == 5 else 0 for m in range(1, 13)}),
 ])
@@ -2503,7 +2505,7 @@ def test_old_message_draft_is_invalidated_without_sending(chat_client):
     assert "enviar_mensagem" not in response.json()["agentes_chamados"]
 
 
-@pytest.mark.parametrize("chart_kind", ["grafico_barras", "grafico_setores"])
+@pytest.mark.parametrize("chart_kind", ["grafico_barras", "grafico_setores", "grafico_rosca"])
 @pytest.mark.parametrize("tool_name,unit", [("consultar_indicadores_equipe","pessoas"),("consultar_grafico_pendencias_nr","pendências"),("consultar_grafico_vencimentos","registros")])
 @pytest.mark.parametrize("markdown", [True, False])
 def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, monkeypatch, chart_kind, tool_name, unit, markdown):
@@ -2692,3 +2694,51 @@ def test_expiry_blocks_do_not_repeat_title_and_keep_context(chat_client, monkeyp
         assert body["blocos"][1]["dados"][0]["valor"] == 7
     history = client.get(f"/sessions/{body['session_id']}/messages").json()
     assert history["mensagens"][-1]["blocos"] == body["blocos"]
+
+
+@pytest.mark.parametrize("word", ["rosca", "donut"])
+def test_explicit_donut_preserves_filters_and_values(chat_client, monkeypatch, word):
+    from app.modules.operational.tools import REGISTRY
+    seen = []
+    class Tool:
+        async def ainvoke(self, args, config):
+            seen.append(args)
+            return {"status":"ok", "titulo":"Equipe por perfil", "colunas":[{"chave":"categoria","titulo":"Perfil"},{"chave":"quantidade","titulo":"Quantidade"}],
+                    "linhas":[{"categoria":"COLABORADOR","quantidade":0}], "total":1,"pagina":1,"total_paginas":1,
+                    "fonte":"Cadastro autorizado", "unidade_grafico":"pessoas", "tipo_grafico":args["tipo_grafico"],
+                    "grafico":[{"categoria":"COLABORADOR","valor":0}]}
+    monkeypatch.setitem(REGISTRY,"consultar_indicadores_equipe",Tool())
+    client, model, app = chat_client
+    model.replies["roteador"] = json.dumps({"acao":"consultar_indicadores_equipe", "filtros":{
+        "agrupar_por":"perfil", "tipo_grafico":"grafico_setores", "cargo":"Analista", "status":["ATIVO"]}})
+    body=client.post("/chat/messages?markdown=false",json={"message":f"Mostre {word} da equipe por perfil"}).json()
+    assert seen[0]["tipo_grafico"] == "grafico_rosca"
+    assert seen[0]["cargo"] == "Analista" and seen[0]["status"] == ["ATIVO"]
+    chart=next(b for b in body["blocos"] if b["tipo"]=="grafico_rosca")
+    assert chart["dados"] == [{"categoria":"COLABORADOR","valor":0}]
+    assert chart["unidade"]=="pessoas"
+    history=client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"]==body["blocos"]
+
+
+def test_empty_donut_data_returns_text_without_chart(chat_client, monkeypatch):
+    from app.modules.chat import subgraphs
+    class Tool:
+        async def ainvoke(self, args, config):
+            return {"status":"sem_dados", "categorias":{}, "mensagem":"Não há participações disponíveis."}
+    monkeypatch.setitem(subgraphs.AGENDA_TOOLS,"consultar_grafico_treinamentos",Tool())
+    client, model, app=chat_client
+    body=client.post("/chat/messages",json={"message":"Mostre rosca dos meus treinamentos"}).json()
+    assert all(b["tipo"]=="texto" for b in body["blocos"])
+
+
+def test_judge_rejection_still_blocks_donut(chat_client, monkeypatch):
+    from app.modules.chat import subgraphs
+    class Tool:
+        async def ainvoke(self, args, config):
+            return {"status":"ok","categorias":{"Pendentes":2},"fonte":"Teste"}
+    monkeypatch.setitem(subgraphs.AGENDA_TOOLS,"consultar_grafico_treinamentos",Tool())
+    client, model, app=chat_client
+    model.replies["juiz"]=json.dumps({"status":"rejeitado","motivo":"Revisão negativa","problemas":["Dados"]})
+    body=client.post("/chat/messages",json={"message":"Mostre donut dos meus treinamentos"}).json()
+    assert all(b["tipo"]=="texto" for b in body["blocos"])

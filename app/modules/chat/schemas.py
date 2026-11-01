@@ -41,6 +41,10 @@ class BlocoGraficoSetores(BlocoGrafico):
     tipo: Literal["grafico_setores"] = "grafico_setores"
 
 
+class BlocoGraficoRosca(BlocoGrafico):
+    tipo: Literal["grafico_rosca"] = "grafico_rosca"
+
+
 class BlocoGraficoLinhas(BlocoGrafico):
     tipo: Literal["grafico_linhas"] = "grafico_linhas"
 
@@ -152,7 +156,7 @@ class BlocoFichaUsuario(BaseModel):
         return value.strip() or None if isinstance(value, str) else value
 
 
-BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoLinhas | BlocoTabela | BlocoGaleriaUsuarios | BlocoFichaUsuario, Field(discriminator="tipo")]
+BlocoResposta = Annotated[BlocoTexto | BlocoGrafico | BlocoGraficoSetores | BlocoGraficoRosca | BlocoGraficoLinhas | BlocoTabela | BlocoGaleriaUsuarios | BlocoFichaUsuario, Field(discriminator="tipo")]
 
 
 class ChatResponse(BaseModel):
