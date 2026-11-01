@@ -352,7 +352,7 @@ def test_session_routes_authentication_and_ownership():
     app.state.chat_service = service
     sid = str(uuid4())
     with TestClient(app) as client:
-        for action in ("iniciar", "encerrar"):
+        for action in ("iniciar",):
             assert client.post(f"/sessions/{sid}/{action}").status_code == 401
         app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
             uid="owner", role="COLABORADOR",
@@ -364,13 +364,14 @@ def test_session_routes_authentication_and_ownership():
         app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
             uid="other", role="COLABORADOR",
         )
-        for action in ("iniciar", "encerrar"):
+        for action in ("iniciar",):
             assert client.post(f"/sessions/{sid}/{action}").status_code == 404
         assert client.post("/chat/messages", json={"message": "Oi", "session_id": sid}).status_code == 404
         app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(
             uid="owner", role="COLABORADOR",
         )
-        assert client.post(f"/sessions/{sid}/encerrar").json()["resumo_indexado"] is True
+        assert client.post(f"/sessions/{sid}/encerrar").status_code == 404
+        assert not vectors.calls and not [call for call in model.calls if call[0] == "resumo"]
         assert client.post("/sessions/not-uuid/iniciar").status_code == 422
         schema = client.get("/openapi.json").json()
         assert "timezone" not in schema["components"]["schemas"]["ChatRequest"]["properties"]

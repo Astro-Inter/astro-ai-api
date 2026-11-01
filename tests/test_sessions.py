@@ -80,7 +80,7 @@ def test_sessions_require_existing_firebase_auth(sessions_client, monkeypatch, h
     monkeypatch.setattr(auth, "verify_firebase_id_token", invalid_token)
     sid = str(uuid4())
     for method, path in [("get", "/sessions"), ("get", f"/sessions/{sid}/messages"),
-                         ("post", f"/sessions/{sid}/iniciar"), ("post", f"/sessions/{sid}/encerrar")]:
+                         ("post", f"/sessions/{sid}/iniciar")]:
         response = getattr(client, method)(path, headers=headers)
         assert response.status_code == 401
         assert response.headers["www-authenticate"] == "Bearer"
@@ -250,7 +250,8 @@ def test_resume_preserves_uuid_history_and_refreshes_summary(sessions_client):
     model.replies["resumo"] = ['{"resumo":"Resumo inicial."}', '{"resumo":"Resumo com continuação."}']
     sid = client.post("/chat/messages", json={"message": "Primeira pergunta"}).json()["session_id"]
     created = repo.docs[sid]["iniciada_em"]
-    assert client.post(f"/sessions/{sid}/encerrar").status_code == 200
+    # Legacy closed session setup: closure is no longer an HTTP operation.
+    asyncio.run(app.state.chat_service.end(UUID(sid), CurrentUser(uid="owner", role="COLABORADOR")))
     before = deepcopy(repo.docs[sid])
     history = client.get(f"/sessions/{sid}/messages").json()
     assert history["status"] == "encerrada" and history["total"] == 2
@@ -272,8 +273,8 @@ def test_resume_preserves_uuid_history_and_refreshes_summary(sessions_client):
     assert loaded["session_id"] == sid and loaded["total"] == 4 and loaded["status"] == "ativa"
     assert loaded["mensagens"][:2] == history["mensagens"]
     assert repo.docs[sid]["titulo"] == "Primeira pergunta"
-    ended = client.post(f"/sessions/{sid}/encerrar")
-    assert ended.json()["resumo"] == "Resumo com continuação."
+    ended = asyncio.run(app.state.chat_service.end(UUID(sid), CurrentUser(uid="owner", role="COLABORADOR")))
+    assert ended.resumo == "Resumo com continuação."
     summary_calls = [call for call in model.calls if call[0] == "resumo"]
     assert len(summary_calls) == 2
     assert "Primeira pergunta" in summary_calls[-1][1][-1].content
@@ -354,3 +355,26 @@ def test_mongo_initializes_listing_index(monkeypatch):
         assert any(call.args[0] == [("usuario_id", 1), ("atualizada_em", -1), ("_id", -1)]
                    for call in repo.collection.create_index.call_args_list)
     asyncio.run(scenario())
+
+
+def test_removed_end_session_route_is_not_exposed_or_executed(sessions_client):
+    client, repo, app, model = sessions_client
+    sid = seed_session(repo)
+    before = deepcopy(repo.docs)
+    assert "/sessions/{session_id}/encerrar" not in client.get("/openapi.json").json()["paths"]
+    assert client.post(f"/sessions/{sid}/encerrar").status_code == 404
+    app.dependency_overrides.clear()
+    assert client.post(f"/sessions/{sid}/encerrar").status_code == 404
+    assert repo.docs == before and not model.calls
+
+
+def test_pending_legacy_closure_does_not_recommend_removed_endpoint(sessions_client):
+    client, repo, _, _ = sessions_client
+    sid = seed_session(repo, status="encerrando")
+    before = deepcopy(repo.docs)
+    for path, payload in [(f"/sessions/{sid}/iniciar", None),
+                          ("/chat/messages", {"session_id": sid, "message": "Continue"})]:
+        response = client.post(path, json=payload)
+        assert response.status_code == 409
+        assert "/encerrar" not in response.json()["detail"] and "suporte" in response.json()["detail"]
+    assert repo.docs == before

@@ -784,7 +784,7 @@ O índice composto `sessoes_usuario_atualizacao` cobre UID, atualização e UUID
 A paginação usa posição por chave, sem offset e sem carregar todo o histórico
 na lista. Ela não representa um snapshot: uma conversa atualizada entre páginas
 pode se mover para o início; atualize a primeira página depois de enviar,
-retomar ou encerrar. O cursor não substitui a autenticação e uma troca de usuário
+retomar. O cursor não substitui a autenticação e uma troca de usuário
 exige reiniciar a listagem.
 
 O contrato e os exemplos aparecem em `/openapi.json` e `/docs`.
@@ -821,49 +821,23 @@ sem versão são aceitos apenas quando a sessão estiver encerrada.
 `sessoes_inatividade_legado` (`status`, `atualizada_em`). Publicar esta adaptação
 e permitir a criação dos índices antes de habilitar o Cron.
 
-### Iniciar e encerrar (compatibilidade)
+### Iniciar ou retomar sessões
 
-As duas rotas usam o mesmo Bearer do chat, sem corpo JSON:
+`POST /sessions/{session_id}/iniciar` usa o mesmo Bearer do chat, sem corpo JSON.
+Cria uma sessão vazia ou retorna a sessão ativa do próprio usuário; também retoma
+sessões encerradas legadas com o mesmo UUID e histórico. É opcional para novas
+conversas: `POST /chat/messages` cria a sessão quando necessário.
 
-- `POST /sessions/{session_id}/iniciar`: cria uma sessão vazia ou retorna a sessão
-  ativa existente do próprio usuário; também retoma uma sessão encerrada com o
-  mesmo UUID e histórico preservado. O cliente fornece um UUID. Esta chamada é
-  opcional: `POST /chat/messages` também cria a sessão quando necessário.
-- `POST /sessions/{session_id}/encerrar`: **legado/deprecated**, mantido para
-  clientes existentes. Novos clientes não precisam chamar esta rota. Congela a conversa, gera o resumo com
-  Luna pelo OpenRouter, salva-o no Mongo, cria o embedding pelo OpenRouter e faz upsert no Qdrant.
-  O ID do ponto é o mesmo `session_id`; o payload inclui `id_user`, `session_id`,
-  `resumo`, `iniciada_em` e `modelo_embedding`.
+`POST /sessions/{session_id}/encerrar` foi removido do roteamento e do OpenAPI;
+chamadas retornam `404`. Web e mobile devem remover essa chamada. Sair da tela
+não encerra a sessão. Os resumos após 24h de inatividade continuam sob
+responsabilidade do `astro-session-summary-service`, sem fechar a conversa.
 
-Exemplo de resposta de encerramento:
-
-```json
-{
-  "session_id": "94229143-d20b-4766-80a4-05341435c236",
-  "status": "encerrada",
-  "resumo": "O usuário perguntou sobre RH. A consulta de registros estava indisponível.",
-  "resumo_indexado": true
-}
-```
-
-Uma sessão vazia encerra sem chamar LLM/Qdrant, com `resumo: null` e
-`resumo_indexado: false`. Repetir o encerramento concluído retorna o mesmo
-resultado, sem novas chamadas de IA. Para voltar a enviar mensagens a uma sessão
-encerrada, chame `/iniciar` primeiro; sem essa chamada, o chat retorna `409`.
-A retomada mantém todas as mensagens, título, prévia e data de criação. Invalida
-o resumo anterior e a confirmação pendente para que o próximo encerramento
-gere um resumo atualizado de todo o histórico e substitua o mesmo ponto no
-Qdrant. O resumo vetorial antigo é desconsiderado quando não corresponder às
-mensagens atuais, pois o Mongo revalida sua versão. Retomar não reinicia os limites
-de mensagens ou tamanho da sessão.
-
-Se houver falha, o estado fica `encerrando`: **repita a mesma rota de encerramento**.
-O resumo já gerado e o progresso por trechos são preservados, e o upsert com ID
-estável evita duplicação. Só retornamos `encerrada` depois das gravações confirmadas.
-Não há transação distribuída entre Mongo e Qdrant. O worker externo não processa
-sessões em estado `encerrando`, portanto, para este endpoint legado,
-uma falha após a gravação no Qdrant ainda pode exigir nova tentativa para finalizar
-o estado no Mongo. Sessões em encerramento não entram na busca de memória.
+Históricos e estados antigos são preservados. Sessões encerradas legadas ainda
+podem ser retomadas por `/iniciar`, sem reiniciar os limites de tamanho/mensagens.
+Um estado legado `encerrando` mantém a proteção `409` e requer recuperação pelo
+suporte; a API não o libera automaticamente nem orienta chamar a rota removida.
+Nenhuma migração ou alteração de dados é executada por esta remoção.
 
 ### Proteção dos dados enviados à IA
 
@@ -963,12 +937,12 @@ Somente turnos públicos completos são salvos, com `human` e `assistant` gravad
 no mesmo update. Turnos bloqueados e resultados intermediários não são salvos.
 O prompt recebe até 10 turnos/24 mil caracteres da sessão atual; o restante continua
 no Mongo. A sessão aceita até 200 mensagens (100 turnos) e reserva espaço dentro
-de 240 mil caracteres. Ao atingir o limite, encerre-a e inicie outra.
+de 240 mil caracteres. Ao atingir o limite, inicie outra sessão.
 Resumos longos são processados por trechos com progresso persistido.
 
 Não há expiração automática ou exclusão do histórico. Há reserva atômica por
 sessão no Mongo, com lease de 180 segundos e token de posse, para serializar chat
-e encerramento mesmo em workers diferentes. Requisições têm timeout de 120
+e retomada mesmo em workers diferentes. Requisições têm timeout de 120
 segundos; após queda abrupta de um worker, aguarde o lease expirar. Os relógios
 dos servidores devem estar sincronizados. Limite de 20 operações simultâneas por
 processo; configure rate limiting e política de retenção antes de produção.
@@ -976,12 +950,12 @@ processo; configure rate limiting e política de retenção antes de produção.
 - `401`: Bearer ausente ou inválido.
 - `400`: cursor malformado ou pertencente a outro usuário na listagem.
 - `403`: UID autenticado sem um dos quatro níveis de acesso reconhecidos.
-- `404`: sessão de outro usuário, ou sessão inexistente ao consultar/encerrar.
+- `404`: sessão de outro usuário, ou sessão inexistente ao consultar ou retomar.
 - `409`: operação simultânea, sessão encerrada/em encerramento ou limite atingido.
 - `422`: corpo, UUID, `limit` ou tamanho do cursor inválido; parâmetros de query
   desconhecidos na listagem são rejeitados. `timezone` continua fora do contrato.
 - `502`: resposta/embedding inválido; `503`: banco ou provedor indisponível.
-- `504`: timeout; no encerramento, repita a chamada para continuar.
+- `504`: timeout; consulte o histórico antes de reenviar para evitar duplicar mensagens.
 
 O MongoDB é obrigatório para conversar; não existe fallback para histórico em RAM.
 O health permanece público e não testa dependências externas.

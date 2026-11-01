@@ -101,7 +101,7 @@ class ChatService:
             await self.repository.ensure(sid, user.uid)
             async with self.session_lock(sid, user.uid) as (doc, token):
                 if doc.get("status") == "encerrando":
-                    raise ChatError(409, "Conversa em encerramento. Repita /encerrar antes de retomar.")
+                    raise ChatError(409, "Conversa com encerramento legado pendente. Solicite recuperação ao suporte.")
                 if doc.get("status") == "encerrada":
                     await self.checkpoints.discard(user.uid, sid)
                     # Mantém UUID/histórico; o próximo encerramento precisa de novo resumo.
@@ -214,7 +214,7 @@ class ChatService:
                 if doc.get("status", "ativa") != "ativa":
                     raise ChatError(409, "Conversa encerrada ou em encerramento. "
                                     "Use /iniciar para retomar uma conversa encerrada; "
-                                    "repita /encerrar se o encerramento estiver pendente.")
+                                    "solicite recuperação ao suporte se houver encerramento legado pendente.")
                 # Ignore drafts for operations removed from the chatbot, including
                 # those persisted by previous deployments.
                 pending = doc.get("acao_pendente")
@@ -480,6 +480,7 @@ class ChatService:
                 return response
 
     async def end(self, session_id: UUID, user: CurrentUser):
+        """Internal legacy closure/recovery; not exposed by an HTTP route."""
         sid = str(session_id)
         async with self.operation():
             async with self.session_lock(sid, user.uid) as (doc, token):

@@ -69,41 +69,19 @@ async def get_session_messages(
              summary="Iniciar ou retomar uma sessão com o mesmo UUID",
              responses={**SESSION_ERRORS, 404: session_error("Conversa nao encontrada."),
                         409: session_error("Conversa ocupada ou em encerramento.",
-                                           "Conversa em encerramento. Repita /encerrar antes de retomar.")})
+                                           "Conversa com encerramento legado pendente. Solicite recuperação ao suporte.")})
 async def start_session(session_id: UUID, user: CurrentUserDependency,
                         request: Request, response: Response):
     """Retoma uma sessão encerrada sem perder mensagens ou trocar seu UUID.
 
     Retorna uma sessão já ativa e mantém o contrato de criar uma sessão vazia
     para um UUID ainda inexistente. Não aceita UUID pertencente a outro usuário.
-    Em encerramento, finalize /encerrar antes de retomar. Não recebe corpo JSON.
+    Antes de retomar um encerramento legado pendente, solicite recuperação ao suporte.
+    Não recebe corpo JSON.
     Para uma conversa nova, o cliente pode enviar /chat/messages sem session_id.
     """
     response.headers["Cache-Control"] = "no-store"
     try:
         return await request.app.state.chat_service.start(session_id, user)
-    except ChatError as error:
-        raise HTTPException(error.status_code, error.detail) from None
-
-
-@router.post("/{session_id}/encerrar", response_model=SessionResponse,
-             deprecated=True,
-             summary="Encerrar e resumir uma sessão",
-             responses={**SESSION_ERRORS, 404: session_error("Conversa nao encontrada."),
-                        409: session_error("Aguarde a operacao anterior desta conversa."),
-                        502: session_error("Resposta de resumo ou embedding inválida.")})
-async def end_session(session_id: UUID, user: CurrentUserDependency,
-                      request: Request, response: Response):
-    """Encerra sem excluir o histórico; repetir a conclusão retorna o mesmo resultado.
-
-    Endpoint legado de compatibilidade. Novos clientes não precisam encerrar:
-    o serviço externo resume sessões após 24h de inatividade sem mudar seu status.
-
-    Em falha durante o encerramento, repita esta chamada para finalizar.
-    A sessão continua listada e pode ser retomada por /iniciar. Sem corpo JSON.
-    """
-    response.headers["Cache-Control"] = "no-store"
-    try:
-        return await request.app.state.chat_service.end(session_id, user)
     except ChatError as error:
         raise HTTPException(error.status_code, error.detail) from None
