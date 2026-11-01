@@ -19,8 +19,6 @@ class SummaryVectors:
         self.ready = False
 
     async def connect(self):
-        if "_openai_te3s_" not in COLLECTION_MEMORY:
-            raise ChatError(503, "Use uma colecao de memoria nova para text-embedding-3-small.")
         if not self.ready:
             if not config.QDRANT_URL:
                 raise ChatError(503, "Qdrant nao configurado.")

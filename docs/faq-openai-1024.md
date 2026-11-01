@@ -37,3 +37,7 @@ Documentação oficial: [API de embeddings](https://openrouter.ai/docs/api-refer
 Validação final: **1106 testes passaram**, com 15 avisos de dependências; 57 testes focados de FAQ/embeddings/migração passaram. Compileall, diff --check e varredura dos arquivos preparados contra segredos locais passaram. A confirmação real não substitui a calibração e reindexação pendentes.
 
 A configuração de destino da memória permanece explícita em `QDRANT_MEMORY_COLLECTION`. A coleção remota `memoria_resumos` da imagem tem 1024 dimensões; o código agora tem o mesmo tamanho, mas não troca destinos nem reutiliza automaticamente pontos de modelo desconhecido. Continuam valendo o filtro obrigatório por `id_user`, exclusão da sessão atual e modelo de embedding, e a fonte canônica MongoDB. A migração e reconciliação desses resumos continuam separadas do ajuste de dimensão.
+
+## Decisão final: nomes originais
+
+O usuário solicitou explicitamente manter `faq_chunks` e `memoria_resumos`. Elas foram corrigidas no próprio lugar, após snapshots, reutilizando embeddings OpenAI/1024 validados. Não ativar os destinos intermediários descritos anteriormente. Consulte [reparo das coleções originais](colecoes-originais-qdrant.md) para estado, contagens, teste de isolamento e recuperação. A memória precisa também da correção da antiga restrição de nome na aplicação.

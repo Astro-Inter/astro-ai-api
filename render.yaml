@@ -94,7 +94,7 @@ services:
       - key: QDRANT_FAQ_COLLECTION
         value: faq_chunks
       - key: QDRANT_MEMORY_COLLECTION
-        value: memoria_resumos_openai_te3s_v1
+        value: memoria_resumos
       - key: FAQ_SCORE_THRESHOLD
         value: "0.35"
       - key: R2_ACCESS_KEY_ID
