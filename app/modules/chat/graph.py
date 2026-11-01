@@ -150,7 +150,7 @@ def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
         r"(?:ai |agora )?(?:gere|mostre|crie|faca) (?:um )?grafico (?:de )?"
         r"(?P<tipo>barras|setores|pizza|rosca|donut|linhas) por "
         r"(?P<dimensao>cargo|perfil|unidade|situacao) "
-        r"(?:com base n(?:esses|essas) (?:dados|pessoas)|desses dados)"
+        r"(?:com base (?:n(?:esses|essas) (?:dados|pessoas)|n(?:essa|esta) listagem|na listagem anterior)|desses dados)"
         r"(?: considerando todo o escopo autorizado)?(?: por favor)?[.!?]*",
         _sem_acentos(state["mensagem"]).strip(),
     )
@@ -176,6 +176,15 @@ def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
         })
     except ValidationError:
         return "Não consegui reaplicar os filtros da listagem com segurança. Informe os filtros novamente."
+
+
+def _evolucao_pessoal_sem_indicador(message: str) -> bool:
+    """A personal scope is explicit, but a monthly cadence does not name a metric."""
+    return bool(re.fullmatch(
+        r"(?:mostre|gere|crie|faca)(?: a)? minha evolucao mensal "
+        r"(?:em|num|em um)(?: um)? grafico (?:de )?linhas(?: por favor)?[.!?]*",
+        _sem_acentos(message).strip(),
+    ))
 
 
 def _contagem_funcionarios(message: str) -> bool:
@@ -603,6 +612,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         # "evolução + conclusões" classifier, which otherwise selects team data.
         if pedido_grafico_treinamentos(state["mensagem"]):
             return {"rota":"agenda","agentes_chamados":state["agentes_chamados"]+["roteador"]}
+        if _evolucao_pessoal_sem_indicador(state["mensagem"]):
+            return {"rota": "direta", "candidato": (
+                "Qual indicador pessoal você quer acompanhar por mês: suas conclusões "
+                "de treinamentos ou outro? Para conclusões de treinamentos, posso "
+                "consultar os últimos 12 meses."
+            ), "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         chart_query = _grafico_da_listagem(state)
         if chart_query is not None:
             if isinstance(chart_query, str):

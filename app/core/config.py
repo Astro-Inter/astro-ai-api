@@ -69,7 +69,7 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_JEV_ENABLED = os.getenv("OPENROUTER_JEV_ENABLED", "true").lower() == "true"
 OPENROUTER_EVIDENCE_CHECK_ENABLED = os.getenv("OPENROUTER_EVIDENCE_CHECK_ENABLED", "false").lower() == "true"
-QDRANT_FAQ_COLLECTION = os.getenv("QDRANT_FAQ_COLLECTION", "faq_chunks_openai_te3s_v1")
+QDRANT_FAQ_COLLECTION = os.getenv("QDRANT_FAQ_COLLECTION", "faq_chunks")
 QDRANT_MEMORY_COLLECTION = os.getenv("QDRANT_MEMORY_COLLECTION", "memoria_resumos_openai_te3s_v1")
 # Provisório até calibrar com perguntas rotuladas da base real.
 try:

@@ -2,10 +2,12 @@ from pathlib import PureWindowsPath
 import logging
 
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.core import config
 from app.infrastructure.llm.embeddings import (
-    EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, gerar_embeddings_batch,
+    FAQ_EMBEDDING_DIMENSIONS as EMBEDDING_DIMENSIONS, EMBEDDING_MODEL,
+    gerar_embeddings_faq as gerar_embeddings_batch,
 )
 from app.modules.chat.errors import ChatError
 
@@ -35,8 +37,6 @@ class FaqVectors:
         self.ready = False
 
     async def connect(self):
-        if "_openai_te3s_" not in COLLECTION_FAQ:
-            raise ChatError(503, "Use uma colecao FAQ nova para text-embedding-3-small.")
         if not self.ready:
             if not config.QDRANT_URL:
                 raise ChatError(503, "Consulta as normas indisponivel.")
@@ -58,15 +58,24 @@ class FaqVectors:
             if (vector is None or vector.size != EMBEDDING_DIMENSIONS
                     or vector.distance != models.Distance.COSINE):
                 raise ChatError(
-                    503, "Colecao FAQ incompativel com openai/text-embedding-3-small (1536/Cosine).",
+                    503, "Colecao FAQ incompativel com openai/text-embedding-3-small (1024/Cosine).",
                 )
+            matching = await self.client.count(COLLECTION_FAQ, exact=True,
+                count_filter=models.Filter(must=[models.FieldCondition(
+                    key="modelo_embedding", match=models.MatchValue(value=EMBEDDING_MODEL))]))
+            if matching.count == 0 and (await self.client.count(COLLECTION_FAQ, exact=True)).count > 0:
+                raise ChatError(503, "FAQ ainda nao indexado com o modelo OpenAI. Reindexacao necessaria.",
+                                reason="faq_model_incompatible", stage="faq_metadata")
             self.ready = True
         return self.client
 
     async def search(self, query: str) -> list[dict]:
+        stage = "faq_metadata"
         try:
             client = await self.connect()
+            stage = "faq_embeddings"
             vector = (await gerar_embeddings_batch([query]))[0]
+            stage = "faq_query"
             result = await client.query_points(
                 COLLECTION_FAQ,
                 query=vector,
@@ -78,6 +87,7 @@ class FaqVectors:
                 with_payload=True,
                 with_vectors=False,
             )
+            stage = "faq_payload"
             snippets = []
             for point in result.points:
                 payload = point.payload or {}
@@ -98,10 +108,21 @@ class FaqVectors:
             return snippets
         except ChatError:
             raise
+        except UnexpectedResponse as error:
+            # Driver messages may contain endpoint credentials or payloads.
+            # Only classify controlled status/stage, never copy response bodies.
+            missing = stage == "faq_metadata" and error.status_code == 404
+            reason = "faq_collection_missing" if missing else "faq_vector_service_failure"
+            from app.diagnostics import diagnostic
+            fields = {**diagnostic(error), "event": "faq_search_failed", "operation": stage,
+                      "status": error.status_code,
+                      "error_code": "FAQ_COLLECTION_MISSING" if missing else "FAQ_VECTOR_SERVICE_FAILURE"}
+            logging.getLogger(__name__).warning("Consulta FAQ indisponivel", extra=fields)
+            raise ChatError(503, "Consulta as normas indisponivel.", reason=reason, stage=stage) from None
         except Exception as error:
             from app.diagnostics import diagnostic
-            logging.getLogger(__name__).warning("Consulta FAQ indisponivel",extra=diagnostic(error))
-            raise ChatError(503, "Consulta as normas indisponivel.") from None
+            logging.getLogger(__name__).warning("Consulta FAQ indisponivel",extra={**diagnostic(error), "event": "faq_search_failed", "operation": stage})
+            raise ChatError(503, "Consulta as normas indisponivel.", reason="faq_dependency_failure", stage=stage) from None
 
     async def close(self):
         if self.client is not None:

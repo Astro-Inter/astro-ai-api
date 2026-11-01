@@ -1,3 +1,5 @@
+> Atualização de 01/11/2026 (PR #37): FAQ e memória passam a usar OpenRouter/openai/text-embedding-3-small com **1024 dimensões**. Resultados de calibração/migração em 1536 descritos abaixo são históricos e não validam o novo corte. Consulte [FAQ e memória 1024](../faq-openai-1024.md). Nenhuma reindexação ou troca de configuração remota foi executada nesta atualização.
+
 # OpenRouter: configuração, validação e migração
 
 A API usa OpenRouter como única saída de inferência. A chave local foi configurada

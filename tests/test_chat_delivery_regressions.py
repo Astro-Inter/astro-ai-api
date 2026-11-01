@@ -236,3 +236,47 @@ def test_file_block_rejects_unsupported_metadata(changes):
     from app.infrastructure.database.sessions import utc_now
     with pytest.raises(ValidationError):
         BlocoArquivo(**{'id':uuid4(),'nome':'relatorio.pdf','expira_em':utc_now(),**changes})
+
+
+def test_monthly_personal_request_without_metric_clarifies_even_after_team_list(chat_client):
+    client, model, application = chat_client
+    manager(application)
+    sid = str(uuid4())
+    repo = application.state.chat_service.repository
+    async def prepare():
+        await repo.ensure(sid, 'viewer')
+        repo.docs[sid].update(ultima_rota='rh', consulta_rh={'tipos': ['COLABORADOR'], 'limite': 100},
+            mensagens=[{'role': 'human', 'content': 'Liste minha equipe.'},
+                       {'role': 'assistant', 'content': '100 de 141 disponíveis.'}])
+    asyncio.run(prepare())
+    # Must not rely on a model inventing a metric or claiming unavailable data.
+    model.replies['roteador'] = 'Não tenho os dados da sua evolução mensal.'
+    response = client.post('/chat/messages', json={
+        'message': 'Mostre minha evolução mensal em um gráfico de linhas.', 'session_id': sid})
+    assert response.status_code == 200
+    body = response.json()
+    answer = texto_resposta(body)
+    assert 'Qual indicador pessoal' in answer and 'conclusões de treinamentos' in answer
+    assert 'Não tenho os dados' not in answer
+    assert all(block['tipo'] == 'texto' for block in body['blocos'])
+    assert not any(name.startswith('consultar_') for name in body['agentes_chamados'])
+    assert 'juiz' in body['agentes_chamados'] and 'guardrail_saida' in body['agentes_chamados']
+    history = client.get(f'/sessions/{sid}/messages').json()['mensagens'][-1]
+    assert history['content'] == answer
+
+
+def test_faq_outage_prevents_pdf_upload_and_success_card(chat_client, monkeypatch):
+    from app.modules.chat import graph as chat_graph
+    from unittest.mock import AsyncMock
+    client, model, application = chat_client
+    model.route = 'faq'
+    application.state.chat_service.faq_vectors.failure = True
+    upload = AsyncMock()
+    monkeypatch.setattr(chat_graph, 'gerar_pdf', type('Pdf', (), {'ainvoke': upload})())
+    response = client.post('/chat/messages?markdown=true', json={
+        'message': 'Gere um PDF explicando o que é o Astro'})
+    assert response.status_code == 503
+    upload.assert_not_awaited()
+    assert 'arquivo' not in response.json()
+    assert not any(name in {'faq', 'juiz'} for name, _, _ in model.calls)
+    assert all(not doc['mensagens'] for doc in application.state.chat_service.repository.docs.values())

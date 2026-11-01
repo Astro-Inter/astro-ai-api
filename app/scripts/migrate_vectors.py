@@ -10,7 +10,7 @@ from qdrant_client import AsyncQdrantClient, models
 
 from app.core import config
 from app.core.pii import redact_for_embedding
-from app.infrastructure.llm.embeddings import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, gerar_embeddings_batch
+from app.infrastructure.llm.embeddings import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, gerar_embeddings_batch, gerar_embeddings_faq
 
 PRICE_PER_TOKEN_USD = 0.00000002  # Catálogo OpenRouter, 26/10/2026; reconfirmar antes de aplicar.
 
@@ -64,7 +64,7 @@ async def create_targets(client, targets):
     for target in targets.values():
         if "_openai_te3s_" not in target or await client.collection_exists(target):
             raise ValueError("Escolha destinos novos com _openai_te3s_; nenhuma colecao existente pode ser reutilizada.")
-    for target in targets.values():
+    for kind, target in targets.items():
         await client.create_collection(target, vectors_config=models.VectorParams(
             size=EMBEDDING_DIMENSIONS, distance=models.Distance.COSINE))
         await client.create_payload_index(target, "modelo_embedding", models.PayloadSchemaType.KEYWORD, wait=True)
@@ -126,7 +126,7 @@ async def migrate(args):
         targets = {"faq": args.faq_target, "memory": args.memory_target}
         await create_targets(client, targets)
         for kind, rows in records.items():
-            await populate(client, targets[kind], rows)
+            await populate(client, targets[kind], rows, gerar_embeddings_faq if kind == "faq" else gerar_embeddings_batch)
         print(json.dumps({"validated_targets": targets, "points": total,
                           "activation": "manual; calibre a similaridade antes de alterar as variaveis"}))
         return report

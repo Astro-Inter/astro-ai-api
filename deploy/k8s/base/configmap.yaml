@@ -16,6 +16,6 @@ data:
   LANGSMITH_PROJECT: astro-ai-api
   OPENROUTER_JEV_ENABLED: "true"
   OPENROUTER_EVIDENCE_CHECK_ENABLED: "false"
-  QDRANT_FAQ_COLLECTION: faq_chunks_openai_te3s_v1
+  QDRANT_FAQ_COLLECTION: faq_chunks
   QDRANT_MEMORY_COLLECTION: memoria_resumos_openai_te3s_v1
   FAQ_SCORE_THRESHOLD: "0.35"

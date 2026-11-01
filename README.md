@@ -120,7 +120,7 @@ antes de gerar vetores ou trocar as coleções em uso.
 ```
 
 Use `OPENROUTER_API_KEY`, `QDRANT_URL` e `QDRANT_API_KEY` no backend. O modelo é
-`openai/text-embedding-3-small`, com 1536 dimensões e Cosine. Não reutilize as
+`openai/text-embedding-3-small`, com **1024 dimensões para FAQ** e Cosine. A memória também usa 1024. Não misture modelos nem reutilize as
 coleções legadas. PDFs digitalizados precisam de OCR prévio; revise tabelas e
 layouts complexos. A API não dispara ingestão ao iniciar.
 
@@ -717,7 +717,7 @@ apenas a etapa e o código do erro, sem URL assinada ou credenciais.
 
 Configure `MONGODB_URI`, `MONGODB_DATABASE`, `QDRANT_URL`, `QDRANT_API_KEY` e
 `OPENROUTER_API_KEY`. O MongoDB continua usando `sessoes` com os mesmos contratos.
-`QDRANT_MEMORY_COLLECTION` aponta para uma coleção nova de 1536 dimensões/Cosine,
+`QDRANT_MEMORY_COLLECTION` aponta para uma coleção nova de 1024 dimensões/Cosine,
 com índice tenant `id_user` e identificador `modelo_embedding`. A consulta continua
 filtrando por dono e a sessão atual é excluída. O índice antigo permanece intacto;
 [execute a migração e valide antes do corte](docs/operacao/openrouter.md).
@@ -1011,3 +1011,7 @@ Os novos cartões de indicadores, a matriz pessoa/NR, os metadados de contexto e
 PDFs gerados podem ser apresentados em cartões pelo [bloco arquivo v1](docs/arquivos-chat.md). Consulte também a [homologação ampliada do chatbot](docs/homologacao-ampliada-pr34.md), com causas confirmadas e dependências de publicação.
 
 O [cache seletivo Redis](docs/cache-redis.md) compartilha apenas fontes públicas do MCP e reutiliza fotos autorizadas da API Java; não armazena respostas finais ou permissões.
+
+A [homologação de PDF e contexto de gráficos](docs/homologacao-pdf-contexto-novembro.md) diferencia falha do FAQ, gráfico da listagem e pedidos pessoais sem indicador definido.
+
+O ajuste de FAQ para 1024 dimensões e o estado da coleção legada estão em [FAQ OpenAI 1024](docs/faq-openai-1024.md).
