@@ -2826,7 +2826,12 @@ def test_analytic_dates_persist_as_wire_strings_with_bson(chat_client,monkeypatc
 
 
 @pytest.mark.parametrize("barrier",[None,"input","judge"])
-def test_explicit_chart_followup_queries_full_scope_with_saved_filters(chat_client,monkeypatch,barrier):
+@pytest.mark.parametrize("message", [
+    "Gere um grafico de barras por cargo com base nesses dados considerando todo o escopo autorizado.",
+    "Faça um gráfico de barras por cargo com base nessa listagem.",
+    "Mostre um gráfico de barras por cargo com base nesta listagem.",
+])
+def test_explicit_chart_followup_queries_full_scope_with_saved_filters(chat_client,monkeypatch,barrier,message):
     from app.modules.operational.tools import REGISTRY
     client,model,application=chat_client
     application.dependency_overrides[auth.get_current_user]=lambda: CurrentUser(uid="user-a",role="GESTOR_WORKSPACE")
@@ -2854,7 +2859,7 @@ def test_explicit_chart_followup_queries_full_scope_with_saved_filters(chat_clie
         model.replies["guardrail_entrada"]=json.dumps({"decisao":"bloquear","motivo":"acesso_nao_autorizado","mensagem":"Consulta bloqueada."})
     if barrier=="judge":
         model.replies["juiz"]=json.dumps({"status":"rejeitado","motivo":"Dados não confirmados.","problemas":["Sem comprovação."]})
-    response=client.post("/chat/messages?markdown=false",json={"session_id":sid,"message":"Gere um grafico de barras por cargo com base nesses dados considerando todo o escopo autorizado."})
+    response=client.post("/chat/messages?markdown=false",json={"session_id":sid,"message":message})
     assert response.status_code==200
     body=response.json()
     if barrier=="input":

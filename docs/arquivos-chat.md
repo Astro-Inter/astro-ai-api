@@ -95,3 +95,5 @@ simulado. Não houve upload de arquivo real nem deploy nesta extensão.
 antes de habilitar esta revisão da API. A correção dos erros da PR #33 não exige
 mudança nos contratos antigos, mas esta extensão de PDF exige atualização dos
 clientes. Coordenar os releases; não fazer merge/deploy sem autorização.
+
+O diagnóstico de falha anterior à geração e as correções de continuidade estão em [homologação de PDF e contexto](homologacao-pdf-contexto-novembro.md).

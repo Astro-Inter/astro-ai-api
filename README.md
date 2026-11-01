@@ -1011,3 +1011,5 @@ Os novos cartões de indicadores, a matriz pessoa/NR, os metadados de contexto e
 PDFs gerados podem ser apresentados em cartões pelo [bloco arquivo v1](docs/arquivos-chat.md). Consulte também a [homologação ampliada do chatbot](docs/homologacao-ampliada-pr34.md), com causas confirmadas e dependências de publicação.
 
 O [cache seletivo Redis](docs/cache-redis.md) compartilha apenas fontes públicas do MCP e reutiliza fotos autorizadas da API Java; não armazena respostas finais ou permissões.
+
+A [homologação de PDF e contexto de gráficos](docs/homologacao-pdf-contexto-novembro.md) diferencia falha do FAQ, gráfico da listagem e pedidos pessoais sem indicador definido.

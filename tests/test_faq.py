@@ -152,3 +152,38 @@ def test_faq_preserves_evidence_ranked_sixth_and_rejects_irrelevant_results(monk
         assert (await store.client.count(faq.COLLECTION_FAQ)).count == 7
         await store.close()
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('operation,status,reason', [
+    ('metadata', 404, 'faq_collection_missing'),
+    ('metadata', 403, 'faq_vector_service_failure'),
+    ('query', 404, 'faq_vector_service_failure'),
+    ('query', 400, 'faq_vector_service_failure'),
+])
+def test_faq_dependency_failure_is_classified_without_exposing_driver_body(monkeypatch, caplog, operation, status, reason):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from qdrant_client.http.exceptions import UnexpectedResponse
+    async def scenario():
+        store = FaqVectors()
+        error = UnexpectedResponse(status_code=status, reason_phrase='failure',
+            content=b'secret-token private-prompt https://signed.example?signature=private', headers={})
+        metadata = SimpleNamespace(config=SimpleNamespace(params=SimpleNamespace(
+            vectors=models.VectorParams(size=1536, distance=models.Distance.COSINE))))
+        store.client = SimpleNamespace(
+            get_collection=AsyncMock(side_effect=error if operation == 'metadata' else None, return_value=metadata),
+            query_points=AsyncMock(side_effect=error), close=AsyncMock())
+        embedding = AsyncMock(return_value=[QUERY_VECTOR])
+        monkeypatch.setattr(config, 'QDRANT_URL', 'https://qdrant.example')
+        monkeypatch.setattr(faq, 'gerar_embeddings_batch', embedding)
+        with pytest.raises(ChatError) as failure:
+            await store.search('secret-token private-prompt')
+        assert failure.value.status_code == 503 and failure.value.reason == reason
+        assert failure.value.stage == ('faq_metadata' if operation == 'metadata' else 'faq_query')
+        assert embedding.await_count == (0 if operation == 'metadata' else 1)
+        assert 'secret-token' not in caplog.text and 'signed.example' not in caplog.text
+        record = next(r for r in caplog.records if getattr(r, 'event', '') == 'faq_search_failed')
+        assert record.operation == failure.value.stage and record.status == status
+        assert record.error_code == ('FAQ_COLLECTION_MISSING' if reason == 'faq_collection_missing' else 'FAQ_VECTOR_SERVICE_FAILURE')
+        await store.close()
+    asyncio.run(scenario())

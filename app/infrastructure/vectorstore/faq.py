@@ -2,6 +2,7 @@ from pathlib import PureWindowsPath
 import logging
 
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.core import config
 from app.infrastructure.llm.embeddings import (
@@ -64,9 +65,12 @@ class FaqVectors:
         return self.client
 
     async def search(self, query: str) -> list[dict]:
+        stage = "faq_metadata"
         try:
             client = await self.connect()
+            stage = "faq_embeddings"
             vector = (await gerar_embeddings_batch([query]))[0]
+            stage = "faq_query"
             result = await client.query_points(
                 COLLECTION_FAQ,
                 query=vector,
@@ -78,6 +82,7 @@ class FaqVectors:
                 with_payload=True,
                 with_vectors=False,
             )
+            stage = "faq_payload"
             snippets = []
             for point in result.points:
                 payload = point.payload or {}
@@ -98,10 +103,21 @@ class FaqVectors:
             return snippets
         except ChatError:
             raise
+        except UnexpectedResponse as error:
+            # Driver messages may contain endpoint credentials or payloads.
+            # Only classify controlled status/stage, never copy response bodies.
+            missing = stage == "faq_metadata" and error.status_code == 404
+            reason = "faq_collection_missing" if missing else "faq_vector_service_failure"
+            from app.diagnostics import diagnostic
+            fields = {**diagnostic(error), "event": "faq_search_failed", "operation": stage,
+                      "status": error.status_code,
+                      "error_code": "FAQ_COLLECTION_MISSING" if missing else "FAQ_VECTOR_SERVICE_FAILURE"}
+            logging.getLogger(__name__).warning("Consulta FAQ indisponivel", extra=fields)
+            raise ChatError(503, "Consulta as normas indisponivel.", reason=reason, stage=stage) from None
         except Exception as error:
             from app.diagnostics import diagnostic
-            logging.getLogger(__name__).warning("Consulta FAQ indisponivel",extra=diagnostic(error))
-            raise ChatError(503, "Consulta as normas indisponivel.") from None
+            logging.getLogger(__name__).warning("Consulta FAQ indisponivel",extra={**diagnostic(error), "event": "faq_search_failed", "operation": stage})
+            raise ChatError(503, "Consulta as normas indisponivel.", reason="faq_dependency_failure", stage=stage) from None
 
     async def close(self):
         if self.client is not None:
