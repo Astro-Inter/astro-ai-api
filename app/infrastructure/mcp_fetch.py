@@ -20,6 +20,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import get_default_environment, stdio_client
 
 from app.core import config
+from app.infrastructure.public_source_cache import PublicSourceCache, valid_result
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -31,11 +32,13 @@ TRUNCATION_PATTERN = re.compile(
 
 def _allowed_domains() -> tuple[str, ...]:
     configured = config.FETCH_MCP_ALLOWED_DOMAINS or "gov.br"
-    return tuple({
-        domain.strip().lower().rstrip(".")
-        for domain in configured.split(",")
-        if domain.strip()
-    })
+    return tuple(
+        {
+            domain.strip().lower().rstrip(".")
+            for domain in configured.split(",")
+            if domain.strip()
+        }
+    )
 
 
 def _validate_public_url(url: str) -> str:
@@ -56,9 +59,13 @@ def _validate_public_url(url: str) -> str:
         or parsed.password is not None
         or parsed.port not in {None, 443}
     ):
-        raise ValueError("Somente URLs HTTPS públicas e sem credenciais são permitidas.")
-    if not any(hostname == domain or hostname.endswith("." + domain)
-               for domain in _allowed_domains()):
+        raise ValueError(
+            "Somente URLs HTTPS públicas e sem credenciais são permitidas."
+        )
+    if not any(
+        hostname == domain or hostname.endswith("." + domain)
+        for domain in _allowed_domains()
+    ):
         raise ValueError("Domínio não autorizado para consulta externa.")
     return url
 
@@ -68,8 +75,9 @@ class FetchMCPClient:
 
     def __init__(self, timeout: float = 25):
         self.timeout = timeout
-        self._cache: dict[tuple, tuple[float, dict]] = {}
+        self._cache: dict[tuple, tuple[float, dict, float]] = {}
         self._cache_lock = Lock()
+        self.shared_cache = PublicSourceCache()
 
     async def fetch(
         self,
@@ -82,15 +90,34 @@ class FetchMCPClient:
         try:
             safe_url = _validate_public_url(url)
         except (TypeError, ValueError):
-            return {"status": "nao_autorizado", "mensagem": "Fonte externa não autorizada."}
+            return {
+                "status": "nao_autorizado",
+                "mensagem": "Fonte externa não autorizada.",
+            }
         if not 1 <= max_length <= 50000 or not 0 <= start_index <= 500000:
-            return {"status": "erro", "mensagem": "Limites da consulta externa inválidos."}
+            return {
+                "status": "erro",
+                "mensagem": "Limites da consulta externa inválidos.",
+            }
 
         cache_key = (safe_url, max_length, start_index, raw)
+        ttl = config.FETCH_MCP_CACHE_TTL_SECONDS
         with self._cache_lock:
             cached = self._cache.get(cache_key)
-            if cached and monotonic() - cached[0] <= config.FETCH_MCP_CACHE_TTL_SECONDS:
+            if (
+                ttl > 0
+                and cached
+                and monotonic() < cached[0]
+                and monotonic() - cached[2] < ttl
+            ):
                 return deepcopy(cached[1])
+        shared = await self.shared_cache.get(
+            safe_url, max_length, start_index, raw, ttl
+        )
+        if shared:
+            result, remaining = shared
+            self._remember(cache_key, result, remaining, ttl - remaining)
+            return deepcopy(result)
 
         child_environment = get_default_environment()
         child_environment["PYTHONUTF8"] = "1"
@@ -114,12 +141,15 @@ class FetchMCPClient:
                                 "status": "indisponivel",
                                 "mensagem": "MCP Fetch indisponível.",
                             }
-                        response = await session.call_tool("fetch", arguments={
-                            "url": safe_url,
-                            "max_length": max_length,
-                            "start_index": start_index,
-                            "raw": raw,
-                        })
+                        response = await session.call_tool(
+                            "fetch",
+                            arguments={
+                                "url": safe_url,
+                                "max_length": max_length,
+                                "start_index": start_index,
+                                "raw": raw,
+                            },
+                        )
         except Exception:
             return {
                 "status": "indisponivel",
@@ -145,11 +175,11 @@ class FetchMCPClient:
                 text = json.dumps(structured, ensure_ascii=False)
         prefix = f"Contents of {safe_url}:\n"
         if text.startswith(prefix):
-            text = text[len(prefix):]
+            text = text[len(prefix) :]
         truncation = TRUNCATION_PATTERN.search(text)
         next_index = int(truncation.group(1)) if truncation else None
         if truncation:
-            text = text[:truncation.start()].rstrip()
+            text = text[: truncation.start()].rstrip()
         if not text or text.startswith("<error>"):
             return {
                 "status": "indisponivel",
@@ -163,9 +193,20 @@ class FetchMCPClient:
             "proximo_indice": next_index,
             "protocolo": "MCP",
         }
-        with self._cache_lock:
-            self._cache[cache_key] = (monotonic(), deepcopy(result))
+        if ttl > 0 and valid_result(result, safe_url, max_length):
+            self._remember(cache_key, result, ttl)
+            await self.shared_cache.put(
+                safe_url, max_length, start_index, raw, ttl, result
+            )
         return result
+
+    def _remember(self, key, result, remaining, age=0):
+        with self._cache_lock:
+            now = monotonic()
+            self._cache = {k: v for k, v in self._cache.items() if v[0] > now}
+            if key not in self._cache and len(self._cache) >= 128:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[key] = (now + remaining, deepcopy(result), now - age)
 
 
 _default_client = FetchMCPClient()

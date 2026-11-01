@@ -10,6 +10,8 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - key: REDIS_URL
+        sync: false
       - key: A2A_BIND_HOST
         value: 0.0.0.0
       - key: A2A_SHARED_TOKEN
@@ -22,6 +24,8 @@ services:
         value: gov.br
       - key: FETCH_MCP_CACHE_TTL_SECONDS
         value: "900"
+      - key: FETCH_MCP_REDIS_CACHE_ENABLED
+        value: "true"
 
   - type: web
     name: astro-ai-api
@@ -45,6 +49,8 @@ services:
         value: gov.br
       - key: FETCH_MCP_CACHE_TTL_SECONDS
         value: "900"
+      - key: FETCH_MCP_REDIS_CACHE_ENABLED
+        value: "true"
       - key: A2A_PUBLIC_RESEARCH_TIMEOUT_SECONDS
         value: "30"
       - key: LANGSMITH_TRACING
