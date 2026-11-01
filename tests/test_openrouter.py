@@ -184,3 +184,18 @@ def test_embedded_error_is_sanitized_and_no_unknown_endpoint_can_receive_key(tra
     with pytest.raises(ValueError):
         asyncio.run(openrouter.request("https://elsewhere.example", {"model": "x"}, stage="test"))
     assert len(calls) == 1 and "fake-secret" not in caplog.text
+
+
+def test_provider_usage_reaches_chat_observation(transport):
+    from app.observability.chat import ChatObservation, _current_observation
+    _, outcomes = transport
+    outcomes.append(completion())
+    observation = ChatObservation()
+    token = _current_observation.set(observation)
+    try:
+        asyncio.run(models.LanguageModels().complete("faq", [HumanMessage(content="JSON")], json_mode=True))
+        metadata = observation.metadata()
+        assert metadata["observed_cost_usd"] == 0.00001
+        assert metadata["provider_calls"] == metadata["provider_cost_calls"] == 1
+    finally:
+        _current_observation.reset(token)

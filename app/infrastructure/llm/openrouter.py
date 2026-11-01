@@ -7,6 +7,7 @@ import time
 import httpx
 
 from app.core import config
+from app.observability.chat import record_provider_call, record_provider_cost
 from app.modules.chat.errors import ChatError
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ async def request(path: str, payload: dict, *, stage: str, attempts: int = 2) ->
     if path not in {"/v1/chat/completions", "/v1/embeddings", "/alpha/decisions"}:
         raise ValueError("Endpoint de inferencia invalido")
     for attempt in range(attempts):
+        record_provider_call()
         started = time.monotonic()
         status, delay = None, 1
         try:
@@ -44,6 +46,7 @@ async def request(path: str, payload: dict, *, stage: str, attempts: int = 2) ->
                     raise ValueError()
                 if "error" not in data:
                     usage = data.get("usage") or {}
+                    record_provider_cost(usage)
                     safe_usage = {k: v for k, v in usage.items()
                                   if k in {"prompt_tokens", "completion_tokens", "total_tokens",
                                            "input_tokens", "output_tokens", "cost"}

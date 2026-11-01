@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import time
 from collections import defaultdict
 from contextlib import contextmanager
@@ -59,6 +60,9 @@ class AgentMeasurement:
 @dataclass
 class ChatObservation:
     started_at: float = field(default_factory=time.perf_counter)
+    provider_calls: int = 0
+    provider_cost_calls: int = 0
+    provider_cost_usd: float = 0.0
     resolved: int = 0
     resolution_status: str = "em_processamento"
     route: str = ""
@@ -141,6 +145,10 @@ class ChatObservation:
                 separators=(",", ":"),
             ),
         }
+        metadata["provider_calls"] = self.provider_calls
+        metadata["provider_cost_calls"] = self.provider_cost_calls
+        if self.provider_calls and self.provider_calls == self.provider_cost_calls:
+            metadata["observed_cost_usd"] = self.provider_cost_usd
         if self.error_type:
             metadata["error_type"] = self.error_type
         if self.error_status_code is not None:
@@ -164,6 +172,20 @@ class ChatObservation:
 _current_observation: ContextVar[ChatObservation | None] = ContextVar(
     "astro_chat_observation", default=None,
 )
+
+
+def record_provider_call() -> None:
+    observation = _current_observation.get()
+    if observation:
+        observation.provider_calls += 1
+
+
+def record_provider_cost(usage: Any) -> None:
+    observation = _current_observation.get()
+    cost = usage.get("cost") if isinstance(usage, dict) else None
+    if observation and type(cost) in {int, float} and math.isfinite(cost) and cost >= 0:
+        observation.provider_cost_calls += 1
+        observation.provider_cost_usd += cost
 
 
 def start_agent_measurement(name: str) -> AgentMeasurement | None:
