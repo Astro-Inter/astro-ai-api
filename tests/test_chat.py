@@ -436,8 +436,8 @@ def test_sst_agent_consults_multiple_nrs(chat_client, monkeypatch):
     review = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
     evidence = review["resultado"]["evidencia_tool"]["resultado"]
     assert evidence["numeros"] == [1, 6]
-    assert "nrs" not in evidence
-    assert "Objetivo 1" not in json.dumps(evidence)
+    assert evidence["nrs"][0]["objetivo"] == "Objetivo 1"
+    assert evidence["nrs"][1]["objetivo"] == "Objetivo 6"
 
 
 def test_sst_agent_lists_all_current_nrs_with_compact_payload(chat_client, monkeypatch):
@@ -1101,6 +1101,8 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     ("Qual meu cargo cadastrado?", "cargo"),
     ("Qual minha unidade?", "unidade"),
     ("Qual é meu perfil?", "tipo"),
+    ("Qual é meu nível de acesso?", "tipo"),
+    ("Qual é meu perfil de acesso?", "tipo"),
     ("Qual é minha modalidade?", "modalidade"),
 ])
 def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, field):
@@ -1156,7 +1158,7 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, fiel
         assert set(data) == {field}
         assert all(b["tipo"] == "texto" for b in response.json()["blocos"])
         expected = {"nome": "Lucas", "email": "lucas@example.com", "cargo": "Analista", "unidade": "Matriz", "tipo": "COLABORADOR", "modalidade": "HIBRIDO"}[field]
-        assert expected in texto_resposta(response.json())
+        assert ("Colaborador" if field == "tipo" else expected) in texto_resposta(response.json())
         if field in {"nome", "email"}:
             assert data[field].startswith("[ASTRO_PII_")
             assert expected not in str(judge_call[1])
@@ -1329,7 +1331,7 @@ def test_direct_and_faq_flows(chat_client):
     assert direct["agentes_chamados"] == [
         "guardrail_entrada", "roteador",
     ]
-    assert texto_resposta(direct) == "Olá! Sou o Agente do Astro. Como posso ajudar hoje?"
+    assert texto_resposta(direct) == "Olá! Sou o Astrinho, o assistente virtual do Astro. Como posso ajudar hoje?"
     assert model.calls == []
     model.calls.clear()
     model.route = "faq"
@@ -2089,7 +2091,7 @@ def test_identity_answers_do_not_depend_on_guardrail_or_router_model(chat_client
     response = client.post("/chat/messages", json={"message": message})
 
     assert response.status_code == 200
-    assert "Sou o Agente do Astro" in texto_resposta(response.json())
+    assert "Sou o Astrinho, o assistente virtual do Astro" in texto_resposta(response.json())
     assert model.calls == []
 
 

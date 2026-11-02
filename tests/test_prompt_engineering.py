@@ -91,10 +91,11 @@ def test_declared_role_obligations_are_out_of_scope_without_blocking_nr_explanat
     assert "não são abuso" in GUARDRAIL_ENTRADA_PROMPT_COMPLETO
 
 
-def test_public_identity_is_astro_agent_not_internal_router():
+def test_public_identity_is_astrinho_not_internal_router():
     answer = dict(EXAMPLES["roteador"])["Qual é sua função?"]
-    assert answer.startswith("Sou o Agente do Astro")
+    assert answer.startswith("Sou o Astrinho, o assistente virtual do Astro")
     assert "Roteador" not in answer
     for capability in ("RH", "segurança do trabalho", "agenda", "normas internas"):
         assert capability in answer
-    assert 'como "Agente do Astro"' in PROMPT_INICIAL
+    assert 'Você é o Astrinho, assistente virtual do Astro' in PROMPT_INICIAL
+    assert 'como Astrinho, assistente virtual do Astro' in ROTEADOR_PROMPT_COMPLETO

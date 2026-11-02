@@ -4,6 +4,11 @@ O chatbot deve ser compreensível para gestores e colaboradores que não conhece
 termos de SST ou detalhes dos sistemas. A resposta começa pelo resultado e pelo
 próximo passo possível. Siglas ou termos técnicos necessários devem ser explicados.
 
+No texto próprio, o Astrinho usa “colaborador” e “colaboradores” em vez de
+“funcionário” e “funcionários”. A regra está no prompt comum e a apresentação
+pronta também segue esse vocabulário. Nomes e citações literais são preservados;
+mensagens do usuário com o termo antigo continuam sendo compreendidas.
+
 ## NRs pessoais e de terceiros
 
 A consulta continua usando as tools existentes e as mesmas regras de autorização.

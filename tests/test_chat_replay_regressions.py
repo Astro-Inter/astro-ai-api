@@ -28,7 +28,7 @@ def test_public_capabilities_work_without_a_provider(chat_client, question):
     model.replies['juiz'] = 'malformed'
     response = client.post('/chat/messages', json={'message': question})
     assert response.status_code == 200
-    assert 'Agente do Astro' in texto_resposta(response.json())
+    assert 'Astrinho' in texto_resposta(response.json())
     assert model.calls == []
 
 

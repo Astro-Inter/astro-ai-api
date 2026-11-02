@@ -4,7 +4,7 @@ import unicodedata
 
 
 CAPABILITIES = (
-    "Sou o Agente do Astro. Posso consultar seus dados cadastrais, funcionários "
+    "Sou o Astrinho, o assistente virtual do Astro. Posso consultar seus dados cadastrais, colaboradores "
     "no seu escopo de acesso, NRs, conformidade, eventos e treinamentos atribuídos, "
     "notificações, dias de acesso e conversas. Também posso buscar informações "
     "nos documentos do Astro e gerar um PDF com o conteúdo consultado. "
@@ -18,7 +18,7 @@ def public_reply(message: str) -> str | None:
                          if not unicodedata.combining(c))
     normalized = re.sub(r'\s+', ' ', normalized).strip().rstrip('.!? ').strip()
     if re.fullmatch(r'(?:oi|ola|bom dia|boa tarde|boa noite)(?:,? tudo bem)?', normalized):
-        return 'Olá! Sou o Agente do Astro. Como posso ajudar hoje?'
+        return 'Olá! Sou o Astrinho, o assistente virtual do Astro. Como posso ajudar hoje?'
     if normalized in {
         'quem e voce', 'quem e vc', 'e quem e voce', 'quem e voce dentro do astro',
         'qual e a sua funcao', 'qual e sua funcao', 'oi, qual e a sua funcao',
