@@ -117,3 +117,33 @@ por Jev/Luna ou reescrita adicional para montar os exemplos. O catálogo acresce
 texto ao contexto das chamadas existentes dos agentes; há aumento proporcional
 de tokens de entrada, sem uma chamada adicional de IA para buscar capacidades.
 Nenhum merge ou deploy foi realizado.
+
+## Apresentação dos recursos visuais e arquivos
+
+Perguntas gerais como “O que o chatbot pode fazer?”, “O que você pode fazer?”
+e “Quais são suas funcionalidades?” explicam também:
+
+- gráficos de barras, linhas, setores e rosca, quando os dados/consulta forem compatíveis;
+- tabelas e fichas de perfil, com foto quando disponível e autorizada;
+- geração de PDF para baixar, a partir de conteúdo consultado e aprovado.
+
+O texto inclui exemplos de pedidos e indica como perguntar pelas opções do
+próprio perfil. A orientação por perfil usa as mesmas descrições de recursos;
+Administrador recebe a ressalva de que consultas funcionais e gráficos de equipe
+exigem um perfil autorizado. Os exemplos de gestores incluem gráfico por cargo
+e listagem de colaboradores em tabela; exemplos pessoais preservam a série de
+treinamentos concluídos.
+
+Explicar capacidades não executa consulta, não gera arquivo ou gráfico nem afirma
+que existem dados. Somente blocos de texto são enviados nessa apresentação,
+iguais no POST e histórico. Os demais contratos e as autorizações de cada tool
+permanecem intactos. Os clientes não precisam de componente adicional.
+
+A apresentação pública pronta e o exemplo de identidade usam essa orientação;
+os agentes também recebem o catálogo por perfil no contexto existente. Não foi
+acrescentada chamada de IA ou reescrita para montar a apresentação. O catálogo
+maior aumenta proporcionalmente os tokens de contexto nas chamadas que já o usam.
+
+Validação desta etapa: **74 testes aprovados** de capacidades, exemplos, identidade,
+proteção dos atalhos públicos e histórico, com modelos/consultas simulados. Dois
+avisos de dependências locais. Nenhuma chamada real de IA, merge ou deploy.

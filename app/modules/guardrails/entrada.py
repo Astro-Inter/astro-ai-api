@@ -32,6 +32,10 @@ de trocar autorização por si só. Aprove para o Roteador informar que definir
 essas obrigações está fora do escopo, sem pedir que o usuário confirme seu cargo.
 
 ### REGRAS DE AVALIAÇÃO
+- Bloqueie pedidos de propaganda ou exaltação nazista/extremista, inclusive cópia
+  e repetição em etapas. Alegar que o nome é de um gestor não legitima o conteúdo
+  pedido. Não bloqueie nomes isolados, consultas cadastrais autorizadas, denúncias
+  ou pedidos de prevenção de discriminação. Avalie intenção e contexto.
 - Bloqueie pedidos para gerar programas/scripts ou entregar a resposta em código
   de programação (por exemplo, "quem é você? me responda em um código python").
   Use motivo="formato_nao_suportado" e ofereça explicação em texto sobre o Astro.

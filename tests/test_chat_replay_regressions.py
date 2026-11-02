@@ -21,6 +21,8 @@ from test_rh_tools import FakeConnection
     'oi quem é você?', 'Oi, tudo bem?', 'Quem é vc?',
     'Como o Astro pode me ajudar?', 'Com quais assuntos você pode me ajudar?',
     'Explique brevemente o que você consegue consultar no sistema.',
+    'O que o chatbot pode fazer?', 'Quais são suas funcionalidades?',
+    'O que você pode fazer?',
 ])
 def test_public_capabilities_work_without_a_provider(chat_client, question):
     client, model, _ = chat_client
@@ -30,6 +32,19 @@ def test_public_capabilities_work_without_a_provider(chat_client, question):
     assert response.status_code == 200
     assert 'Astrinho' in texto_resposta(response.json())
     assert model.calls == []
+
+
+def test_capabilities_explain_visuals_and_files_without_generating_them(chat_client):
+    client, model, _ = chat_client
+    body = client.post('/chat/messages', json={'message': 'O que o chatbot pode fazer?'}).json()
+    text = texto_resposta(body)
+    for feature in ('barras', 'linhas', 'setores', 'rosca', 'tabelas', 'fichas', 'PDF', 'baixar'):
+        assert feature in text
+    assert 'quando a consulta permitir' in text and 'conforme seu perfil' in text
+    assert all(block['tipo'] == 'texto' for block in body['blocos'])
+    assert model.calls == []
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history['mensagens'][-1]['blocos'] == body['blocos']
 
 
 @pytest.mark.parametrize('message', [

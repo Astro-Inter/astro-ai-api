@@ -1,13 +1,18 @@
 """Public product facts, not generated claims about unavailable operations."""
 import re
 import unicodedata
+from app.modules.chat.capabilities import VISUAL_CAPABILITIES, PDF_CAPABILITIES
 
 
 CAPABILITIES = (
     "Sou o Astrinho, o assistente virtual do Astro. Posso consultar seus dados cadastrais, colaboradores "
     "no seu escopo de acesso, NRs, conformidade, eventos e treinamentos atribuídos, "
-    "notificações, dias de acesso e conversas. Também posso buscar informações "
-    "nos documentos do Astro e gerar um PDF com o conteúdo consultado. "
+    "notificações, dias de acesso e conversas, conforme seu perfil. Também posso buscar informações "
+    "nos documentos do Astro.\n\n"
+    + VISUAL_CAPABILITIES + "\n\n" + PDF_CAPABILITIES + "\n\n"
+    "Você pode pedir: “Mostre meus treinamentos concluídos em um gráfico de linhas” ou, "
+    "se for gestor, “Mostre a distribuição da minha equipe por cargo em barras”. "
+    "Para conhecer as opções do seu perfil, pergunte: “O que posso fazer com meu nível de acesso?”.\n\n"
     "O envio para outras pessoas deve ser feito pela área de mensagens do aplicativo. "
     "Não realizo inscrições em treinamentos nem crio eventos internos do Astro."
 )
@@ -24,6 +29,9 @@ def public_reply(message: str) -> str | None:
         'qual e a sua funcao', 'qual e sua funcao', 'oi, qual e a sua funcao',
         'oi quem e voce', 'oi tudo bem, quem e voce',
         'quem e voce, e o que voce faz', 'o que voce faz',
+        'o que voce pode fazer', 'o que o chatbot pode fazer', 'o que esse chatbot faz',
+        'quais sao suas funcionalidades', 'quais recursos voce tem', 'como voce pode me ajudar',
+        'com o que o astro pode me ajudar',
         'voce e o roteador do astro ou o agente do astro',
         'como o astro pode me ajudar', 'com quais assuntos voce pode me ajudar',
         'e com oq vc pode me ajudar',

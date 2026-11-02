@@ -127,6 +127,8 @@ async def _invoke_agent(
         "pdf_solicitado": bool(state.get("pdf_solicitado")),
     }
     if name in {"roteador", "rh", "sst", "agenda", "faq", "orquestrador", "juiz", "guardrail_saida"}:
+        from app.modules.chat.scope import SCOPE_POLICY
+        prompt += "\n\n" + SCOPE_POLICY
         from app.modules.chat.capabilities import profile_capabilities
         trusted_context["capacidades_perfil"] = profile_capabilities(state["usuario_atual"].role)
         prompt += (

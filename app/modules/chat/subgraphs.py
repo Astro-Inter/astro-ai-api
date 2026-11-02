@@ -536,21 +536,20 @@ def _formatar_nrs_obrigatorias(result: dict) -> str:
     nrs = result["nrs"]
     header = (
         f"Para o cargo {result['cargo']}, na unidade {result['unidade']}, "
-        f"encontrei {len(nrs)} NR(s) vigente(s) vinculada(s):"
+        f"encontrei {len(nrs)} NR(s) vinculada(s) no Astro:"
     )
     if not nrs:
         return "\n".join([
             header,
-            "Nenhuma NR vigente está vinculada ao seu cargo.",
+            "Não encontrei NRs vinculadas ao seu cargo nessa consulta.",
         ])
     lines = []
     for nr in nrs:
-        recycling = nr.get("tempo_reciclagem_meses")
-        suffix = f". A reciclagem é a cada {recycling} meses." if recycling is not None else ""
-        lines.append(f"- NR-{nr['numero']} — {nr['titulo']}{suffix}")
+        lines.append(f"- NR-{nr['numero']} — {nr['titulo']}")
     return "\n".join([
         header,
         *lines,
+        "Essa lista mostra os vínculos do cadastro; não confirma conclusão ou validade das suas atividades.",
     ])
 
 

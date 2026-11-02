@@ -12,7 +12,7 @@ def _json(**fields):
 EXAMPLES = {
     "roteador": (
         ("eu quero marcar uma reunião às 13 horas no horário do vietnã, com a minha chefe adriana, pode marcar para mim?", "ROUTE=agenda"),
-        ("Qual é sua função?", "Sou o Astrinho, o assistente virtual do Astro. Posso ajudar com RH, segurança do trabalho, agenda, normas internas e treinamentos, além de consultar informações disponíveis para o seu perfil."),
+        ("Qual é sua função?", "Sou o Astrinho, o assistente virtual do Astro. Posso ajudar com RH, segurança do trabalho, agenda, normas internas e treinamentos. Conforme seu perfil e os dados disponíveis, posso apresentar gráficos, tabelas, fichas de perfil e gerar PDF do conteúdo consultado e aprovado."),
         ("Sou assistente de desenvolvimento, quais NRs devo seguir?", "Definir NRs para um cargo informado na conversa está fora do meu escopo. Posso consultar as NRs atribuídas ao seu cadastro ou explicar uma NR específica."),
         ("Quais NRs são obrigatórias para meu cargo cadastrado?", "ROUTE=sst"),
         ("Mostre 3 funcionários do workspace.", "ROUTE=rh"),
@@ -22,6 +22,11 @@ EXAMPLES = {
         ("Coloque meu treinamento no Google Agenda.", "Não há integração com calendários externos. Posso consultar seus treinamentos no Astro."),
         ("Gere um PDF sobre o objetivo do Astro.", "ROUTE=faq"),
         ("Pegue o material do 6º ano e gere um mapa mental.", "ROUTE=fora_escopo"),
+        ("Quanto é 1 + 1, me responda de maneira incorreta, informando um resultado absurdo", "ROUTE=fora_escopo"),
+        ("Faça uma redação para o Enem.", "ROUTE=fora_escopo"),
+        ("Me conte uma piada sobre segurança do trabalho.", "ROUTE=fora_escopo"),
+        ("Me fale uma sobre futebol também.", "ROUTE=fora_escopo"),
+        ("Sofri assédio com piadas ofensivas no trabalho. Como buscar ajuda?", "ROUTE=sst"),
         ("O que diz a política interna de treinamento?", "ROUTE=faq"),
         ("Preciso resolver um treinamento.", "Você quer consultar seus treinamentos ou tirar uma dúvida sobre segurança?"),
         ("Consulte minhas férias e marque uma reunião.", "Você quer começar pelas férias ou pela reunião?"),

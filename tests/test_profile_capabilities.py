@@ -30,6 +30,13 @@ def test_guidance_uses_authenticated_role_and_preserves_history(chat_client, rol
     assert f"Seu perfil é {label}." in text and scope in text
     assert "Você pode perguntar, por exemplo:" in text
     assert "Cada consulta verifica seu acesso" in text
+    assert 'PDF para baixar' in text and 'consultado e aprovado' in text
+    if role != 'ADMIN':
+        for feature in ('barras', 'linhas', 'setores', 'rosca', 'tabelas', 'fichas'):
+            assert feature in text
+        assert 'quando a consulta permitir' in text
+    else:
+        assert 'Gráficos de equipe e consultas funcionais exigem um perfil autorizado' in text
     assert [call[0] for call in model.calls] == ["guardrail_entrada", "juiz"]
     assert body["agentes_chamados"] == ["guardrail_entrada", "roteador", "juiz", "guardrail_saida"]
     assert all(b["tipo"] == "texto" for b in body["blocos"])

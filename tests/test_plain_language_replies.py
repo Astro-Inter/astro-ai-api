@@ -65,7 +65,8 @@ def test_other_pipe_based_lists_keep_meaning_and_selection_references():
     assert ' | ' not in refs and 'referência do evento: 12 (evento_id)' in refs
     mandatory=_formatar_nrs_obrigatorias({'status':'ok','cargo':'Técnico','unidade':'Matriz',
         'nrs':[{'numero':10,'titulo':'Eletricidade','tempo_reciclagem_meses':24}]})
-    assert ' | ' not in mandatory and 'cada 24 meses' in mandatory
+    assert ' | ' not in mandatory and 'NR-10' in mandatory
+    assert 'cada 24 meses' not in mandatory and 'não confirma conclusão ou validade' in mandatory
     catalog=_formatar_nrs({'status':'ok','modo':'listar','nrs':[{'numero':10,'nome':'Eletricidade','situacao':'VIGENTE'}]})
     assert ' | ' not in catalog and 'Situação da norma: vigente' in catalog
 
