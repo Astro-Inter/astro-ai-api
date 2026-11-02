@@ -436,8 +436,8 @@ def test_sst_agent_consults_multiple_nrs(chat_client, monkeypatch):
     review = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
     evidence = review["resultado"]["evidencia_tool"]["resultado"]
     assert evidence["numeros"] == [1, 6]
-    assert "nrs" not in evidence
-    assert "Objetivo 1" not in json.dumps(evidence)
+    assert evidence["nrs"][0]["objetivo"] == "Objetivo 1"
+    assert evidence["nrs"][1]["objetivo"] == "Objetivo 6"
 
 
 def test_sst_agent_lists_all_current_nrs_with_compact_payload(chat_client, monkeypatch):

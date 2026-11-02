@@ -437,12 +437,22 @@ def _formatar_nrs(result: dict) -> str:
 
 
 def _evidencia_compacta_nrs(result: dict) -> dict:
-    """Evita repetir no prompt do Juiz os textos já presentes na candidata."""
+    """Entrega fatos verificáveis: a candidata não substitui a evidência da tool."""
+    fields = (
+        ("numero", "nome", "situacao") if result.get("modo") == "listar" else
+        ("numero", "nome", "situacao", "resumo_oficial", "objetivo", "descricao",
+         "aplicabilidade", "revogada", "tempo_reciclagem_meses", "usabilidade",
+         "fonte_oficial")
+    )
     return {
         "status": result.get("status"),
         "quantidade": result.get("quantidade", 0),
         "modo": result.get("modo"),
         "numeros": [nr.get("numero") for nr in result.get("nrs", [])],
+        "nrs": [
+            {field: nr[field] for field in fields if field in nr}
+            for nr in result.get("nrs", [])
+        ],
         "campos_retornados": sorted({
             field
             for nr in result.get("nrs", [])
