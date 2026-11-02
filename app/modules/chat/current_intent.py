@@ -7,6 +7,19 @@ from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision
 from app.modules.agenda.tools import AgendaToolDecision, ConsultarEventosArgs
 
 
+def personal_pending_kind(message):
+    """Only complete personal requests; never infer a team or another identity."""
+    text = ''.join(c for c in unicodedata.normalize('NFKD', message.casefold()) if not unicodedata.combining(c))
+    text = ' '.join(text.split()).strip().rstrip('.!? ')
+    text = re.sub(r',? por favor$', '', text).strip()
+    request = r"(?:(?:eu )?tenho (?:algumas? )?pendencias?|quais (?:sao )?(?:as )?minhas pendencias|(?:mostre|liste) (?:as )?minhas pendencias)"
+    if re.fullmatch(request, text):
+        return 'esclarecer'
+    if re.fullmatch(request + r" (?:de|em|com|nas|das) (?:(?:minhas|normas) )?(?:nrs?|conformidade|normas regulamentadoras)", text):
+        return 'sst'
+    return None
+
+
 def general_nr_question(message):
     """Recognize a definition request, never a numbered NR or personal obligation."""
     text = ''.join(c for c in unicodedata.normalize('NFKD', message.casefold()) if not unicodedata.combining(c))

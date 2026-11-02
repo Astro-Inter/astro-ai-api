@@ -57,3 +57,23 @@ Não houve nova carga Qdrant, alteração Redis, merge ou deploy nesta revisão.
 - [OpenRouter — Jev](https://openrouter.ai/docs/guides/community/jev) e [contrato alpha](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request).
 - [Typesafe — confiança](https://docs.typesafe.ai/confidence).
 - [LangSmith — consulta de traces](https://docs.langchain.com/langsmith/trace-query-syntax).
+
+
+## Pergunta pessoal curta sobre pendências
+
+O exemplo adicional “tenho pendências?” recebeu uma negativa genérica, citando
+outro agente. A captura não identifica por si só a revisão ou o responsável pelo
+roteamento. No código, o reconhecimento pessoal de situação de NRs exige menção
+à norma e não reconhecia essa formulação curta; portanto o fluxo textual podia
+produzir a negativa apesar da existência de uma consulta pessoal.
+
+Agora, a formulação genérica recebe esclarecimento entre NRs/conformidade,
+treinamentos e formulários, sem assumir que todas as pendências são de SST.
+Pedidos completos e explícitos de pendências de NRs/conformidade executam
+`consultar_situacao_nrs`, usando exclusivamente o UID autenticado. Não há resumo
+global fictício de pendências nem nova tool ou chamada adicional de IA.
+Consultas a outra pessoa/equipe, filtros adicionais ou texto inseguro não são
+absorvidos pelo reconhecimento restrito; seguem os fluxos e validações existentes.
+Juiz e guardrails permanecem necessários. Falta de cadastro e indisponibilidade
+não significam ausência de pendências. Perguntas novas e respostas mantêm igualdade
+entre POST e histórico; os registros antigos não são alterados.

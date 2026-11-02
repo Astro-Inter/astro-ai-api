@@ -887,7 +887,10 @@ def build_rh_graph(model: AgentModel):
 
 def build_sst_graph(model: AgentModel):
     async def decide(state: ChatState):
-        from app.modules.chat.current_intent import general_nr_question
+        from app.modules.chat.current_intent import general_nr_question, personal_pending_kind
+        if personal_pending_kind(state["mensagem"]) == "sst":
+            return {"sst_route": "tool", "sst_decision": SstToolDecision(acao="consultar_situacao_nrs"),
+                    "agentes_chamados": state["agentes_chamados"] + ["sst"]}
         if general_nr_question(state["mensagem"]):
             return {"sst_route": "tool",
                     "sst_decision": SstToolDecision(acao="consultar_orientacoes_sst",

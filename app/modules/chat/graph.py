@@ -595,7 +595,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind
         previous=state["contexto"].get("consulta_operacional") or {}
         pdf_query=distribution_pdf(state["mensagem"],previous)
         if isinstance(pdf_query,str):
@@ -616,6 +616,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                                  _sem_acentos(state["mensagem"]).strip())):
             return {"rota": "rh", "rh_decision": RhToolDecision(acao="buscar_meus_dados"),
                     "agentes_chamados": state["agentes_chamados"]+["roteador"]}
+        pending_kind = personal_pending_kind(state["mensagem"])
+        if pending_kind == "esclarecer":
+            return {"rota": "direta", "candidato": "Você quer consultar suas pendências de NRs/conformidade, treinamentos ou formulários?",
+                    "resultado": {"status": "esclarecer"},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if pending_kind == "sst":
+            return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if general_nr_question(state["mensagem"]):
             return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         current=explicit_read(state["mensagem"])
