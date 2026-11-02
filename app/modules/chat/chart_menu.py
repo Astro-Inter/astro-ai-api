@@ -26,6 +26,8 @@ def asks_chart_menu(message: str) -> bool:
         "quais graficos vc pode fazer", "quais graficos voce pode fazer", "quais graficos voce consegue fazer",
         "quais graficos posso pedir", "quais graficos estao disponiveis", "mostre as opcoes de graficos",
         "que graficos voce faz", "quais tipos de graficos voce faz",
+        "me faca um grafico", "faca um grafico", "faz um grafico", "queria visualizar um grafico",
+        "quero ver um dash", "quais graficos vc conswfue fazer",
     }
 
 
@@ -60,6 +62,11 @@ def select_chart(message: str, menu: dict | None, role: str) -> OperationalDecis
             or len(set(options)) != len(options)):
         return "Não consegui recuperar as opções anteriores. Pergunte novamente quais gráficos estão disponíveis."
     number = re.fullmatch(r"(?:(?:opcao|numero|quero a opcao) )?(\d{1,2})", text)
+    ordinal = {"o primeiro": 1, "o segundo": 2, "o terceiro": 3, "a primeira": 1, "a segunda": 2}.get(text)
+    if ordinal:
+        number = re.fullmatch(r"(\d{1,2})", str(ordinal))
+    if text in {"qualquer um", "qualquer um q vc conseguir", "o que voce quiser", "faz um ai", "faca um desses", "faz algum desses"}:
+        number = re.fullmatch(r"(\d{1,2})", "1")
     names = {"pendencias de nr da equipe": "pendencias_nr", "pendencias de nr": "pendencias_nr",
              "pendencias": "pendencias_nr", "faca isso, quero um grafico das pendencias": "pendencias_nr",
              "vencimento": "vencimentos", "venximento": "vencimentos",

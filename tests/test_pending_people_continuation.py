@@ -17,7 +17,7 @@ def previous():
 
 
 @pytest.mark.parametrize("question", ["Quem tem pendência na NR-6?", "Mostre quem tem pendência na NR 6",
-    "Quais colaboradores da minha equipe têm pendência na NR-6?"])
+    "Quais colaboradores da minha equipe têm pendência na NR-6?", "quem é essa da nr6?"])
 def test_drilldown_keeps_filters_and_selects_nr(question):
     result = pending_people_read(question, previous())
     assert isinstance(result, OperationalDecision) and result.acao == "consultar_pendencias_equipe"

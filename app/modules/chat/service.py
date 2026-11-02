@@ -310,6 +310,7 @@ class ChatService:
                     "agenda_decision": None, "agenda_route": "",
                     "grafico_pessoal": None, "menu_graficos": None, "consulta_prazo": False,
                     "leitura_pendente": None,
+                    "contagem_workspace": False,
                     "operational_decision": None, "roteador_decision": None, "acao_pendente": doc.get("acao_pendente"),
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",

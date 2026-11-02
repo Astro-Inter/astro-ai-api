@@ -321,6 +321,11 @@ def _data_legivel(value, *, horario=False):
 
 def _formatar_usuarios(result: dict) -> str:
     if result.get("consulta") == "contagem" and result.get("status") in {"ok", "sem_dados"}:
+        if result.get("escopo_consultado") in {"workspace", "unidade"}:
+            place = "no seu workspace" if result["escopo_consultado"] == "workspace" else "na sua unidade"
+            prefix = "Seu perfil permite consultar apenas sua unidade, não o workspace inteiro. " if result.get("workspace_restrito") else ""
+            people = "outros colaboradores" if result.get("somente_colaboradores") else "outras pessoas"
+            return f"{prefix}Encontrei {result['total']} {people} {place}, com os filtros informados. Essa contagem não inclui você e considera os perfis visíveis para seu acesso."
         return f"Encontrei {result['total']} usuário(s) no seu escopo autorizado, com os filtros informados. Essa contagem não inclui você."
     if result.get("status") == "sem_dados":
         return "Não encontrei usuários com os filtros informados."
@@ -862,6 +867,9 @@ def build_rh_graph(model: AgentModel):
             tool_input,
             config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}},
         )
+        if tool_name == "buscar_outros_usuarios" and result.get("consulta") == "contagem":
+            result = {**result, "workspace_restrito": bool(state.get("contagem_workspace") and state["usuario_atual"].role == "GESTOR"),
+                      "somente_colaboradores": bool(decision.filtros and decision.filtros.tipos == ["COLABORADOR"])}
         field = _campo_dado_proprio(state["mensagem"])
         if tool_name == "buscar_meus_dados" and field and result.get("status") == "ok":
             # Não envia CPF ou outros dados não solicitados aos agentes revisores.
@@ -923,7 +931,7 @@ def build_rh_graph(model: AgentModel):
             "resposta_deterministica": True,
             "consulta_rh": (
                 decision.filtros.model_dump()
-                if tool_name == "buscar_outros_usuarios" and result.get("status") in {"ok", "sem_dados"}
+                if tool_name == "buscar_outros_usuarios" and result.get("status") in {"ok", "sem_dados"} and result.get("consulta") != "contagem"
                 else state.get("consulta_rh") if tool_name != "buscar_outros_usuarios" else None
             ),
             "candidato": (

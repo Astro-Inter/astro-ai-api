@@ -617,6 +617,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
 
     async def router(state: ChatState):
         from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup
+        from app.modules.chat.current_intent import conversational_read
         role = state["usuario_atual"].role
         if asks_chart_menu(state["mensagem"]):
             answer, menu = make_chart_menu(role)
@@ -668,7 +669,17 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                     "resultado": {"status": "concluido", "evidencia_contexto": {
                         "origem": "catalogo_da_aplicacao_para_o_perfil_autenticado", **capabilities}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf, change_chart_type, pending_people_read, pending_people_offer, pending_people_scope
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf, change_chart_type, pending_people_read, pending_people_offer, pending_people_scope, people_count_read
+        count = people_count_read(state["mensagem"], state.get("historico", []))
+        if count is not None:
+            if role not in {"GESTOR", "GESTOR_WORKSPACE"}:
+                answer = "Seu perfil não permite consultar a contagem de outras pessoas da unidade ou do workspace. Posso ajudar com seus próprios dados e as funções do Astro."
+                return {"rota": "direta", "candidato": answer, "resposta_deterministica": True,
+                        "resultado": {"status": "nao_autorizado", "evidencia_contexto": {"origem": "perfis_autorizados_para_contagem", "perfil": role}},
+                        "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+            decision, scope = count
+            return {"rota": "rh", "rh_decision": decision, "contagem_workspace": scope == "workspace",
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         previous=state["contexto"].get("consulta_operacional") or {}
         people = pending_people_read(state["mensagem"], previous, state["contexto"].get("leitura_pendente"), state.get("historico", []))
         if isinstance(people, OperationalDecision):
@@ -717,7 +728,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if general_nr_question(state["mensagem"]):
             return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        current=explicit_read(state["mensagem"])
+        current=conversational_read(state["mensagem"], state.get("historico", [])) or explicit_read(state["mensagem"])
         from app.modules.agenda.tools import AgendaToolDecision
         if isinstance(current,AgendaToolDecision):
             return {"rota":"agenda","agenda_decision":current,

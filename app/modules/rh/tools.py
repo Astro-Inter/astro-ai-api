@@ -56,6 +56,13 @@ class BuscarOutrosUsuariosArgs(BaseModel):
     )
     pagina: int = Field(default=1, ge=1, le=1, description="Legado: somente 1; paginação visual é local.")
     consulta: Literal["listar", "contagem"] = "listar"
+    escopo: Literal["autorizado", "unidade"] = "autorizado"
+
+    @model_validator(mode="after")
+    def escopo_de_contagem(self):
+        if self.escopo == "unidade" and self.consulta != "contagem":
+            raise ValueError("O recorte de unidade atual é exclusivo da contagem.")
+        return self
 
     @field_validator("status", "tipos")
     @classmethod
@@ -94,7 +101,7 @@ class RhToolDecision(BaseModel):
         if isinstance(filters, dict):
             empty_filters = {
                 "status": [], "tipos": [], "nome": None, "cargo": None, "limite": 20,
-                "pagina": 1, "consulta": "listar",
+                "pagina": 1, "consulta": "listar", "escopo": "autorizado",
             }
             if {**empty_filters, **filters} == empty_filters:
                 data = dict(data)
@@ -147,6 +154,7 @@ def buscar_outros_usuarios(
     limite: int = 20,
     pagina: int = 1,
     consulta: Literal["listar", "contagem"] = "listar",
+    escopo: Literal["autorizado", "unidade"] = "autorizado",
     config: RunnableConfig = None,
 ) -> dict:
     """Consulta dados profissionais de outros usuários visíveis ao usuário atual.
@@ -156,6 +164,8 @@ def buscar_outros_usuarios(
     nunca peça nem invente um Firebase UID.
     """
     user = _usuario_do_contexto(config)
+    if escopo == "unidade" and consulta != "contagem":
+        return {"status": "esclarecer", "mensagem": "O recorte de unidade atual está disponível nesta ferramenta somente para contagem."}
     if user is None:
         return {"status": "erro", "mensagem": "Usuario nao identificado no contexto."}
     if user.role == "COLABORADOR":
@@ -194,6 +204,9 @@ def buscar_outros_usuarios(
             AND usuario.tipo = ANY(%s)
         """
         parameters.extend([user.uid, WORKSPACE_MANAGER_VISIBLE_TYPES])
+        if escopo == "unidade":
+            query += " AND usuario.unidade_id = (SELECT unidade_id FROM usuario WHERE firebase_uid = %s LIMIT 1)"
+            parameters.append(user.uid)
     elif user.role == "GESTOR":
         query += """
             AND usuario.unidade_id = (
@@ -275,6 +288,8 @@ def buscar_outros_usuarios(
         "motivo_limite": "tamanho_resposta" if size_limited else "maximo_resultados" if limite > MAX_USER_RESULTS and total > MAX_USER_RESULTS else None,
         "quantidade": len(usuarios),
         "usuarios": usuarios,
+        **({"escopo_consultado": "workspace" if user.role == "GESTOR_WORKSPACE" and escopo == "autorizado" else "unidade" if user.role in {"GESTOR", "GESTOR_WORKSPACE"} else "autorizado",
+            "inclui_solicitante": False} if consulta == "contagem" else {}),
     }
 
 @tool("buscar_meus_dados")

@@ -46,6 +46,10 @@ def standalone_math_request(message: str) -> bool:
     # Uma data curta pode responder à pergunta anterior de Agenda; não é divisão.
     if re.fullmatch(r'\d{1,2}/\d{1,2}(?:/\d{2,4})?', text):
         return False
+    # Appending "qual NR" does not turn an unrelated sum into an authorized metric.
+    if re.fullmatch(r'(?:se )?(?:eu )?somar \d+\s*\+\s*\d+[,]? '
+                    r'(?:da (?:o resultado de )?|resulta em )(?:qual|que) nr', text):
+        return True
     # Não absorve cálculos de registros, datas ou indicadores de negócio.
     if re.search(r'\b(astro|nrs?|sst|rh|treinamentos?|conformidade|pendencias?|equipe|colaboradores?|cargo|unidade|eventos?|vencimentos?|indicadores?)\b', text):
         return False
@@ -54,7 +58,7 @@ def standalone_math_request(message: str) -> bool:
     suffix = (r'(?:[,?]? (?:me )?(?:responda|responde)(?: de (?:maneira|forma))? '
               r'(?:incorreta|errada|errado|com um resultado incorreto)'
               r'(?:,? (?:informando|com) um resultado absurdo)?)?')
-    return bool(re.fullmatch(r'(?:(?:quanto (?:e|da)|calcule|resolva)\s+)?' + expression + suffix, text))
+    return bool(re.fullmatch(r'(?:(?:quanto (?:e|da|custa)|calcule|resolva)\s+)?' + expression + suffix, text))
 
 
 def scope_followup(message: str, history: list) -> bool:

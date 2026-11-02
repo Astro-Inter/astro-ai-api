@@ -4,7 +4,62 @@ import unicodedata
 
 from app.modules.operational.tools import OperationalDecision
 from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision
-from app.modules.agenda.tools import AgendaToolDecision, ConsultarEventosArgs
+from app.modules.agenda.tools import AgendaToolDecision, ConsultarEventosArgs, ConsultarTreinamentosArgs
+
+
+def conversational_read(message, history=()):
+    """Resolve read subjects and the immediately preceding clarification locally."""
+    def normalized(value):
+        return ' '.join(''.join(c for c in unicodedata.normalize('NFKD', value.casefold())
+                               if not unicodedata.combining(c)).split()).strip().rstrip('.!? ')
+    text = normalized(message)
+    last = normalized(history[-1].get('content', '')) if history and history[-1].get('role') == 'assistant' else ''
+    personal_training = re.fullmatch(
+        r"(?:(?:liste|mostre|quero ver|quero consultar|consulte) )?(?:os )?(?:proximos )?"
+        r"(?:meus treinamentos|treinamentos atribuidos (?:a mim|a voce)|treinamentos que preciso (?:fazer|realizar))", text)
+    if personal_training or (text in {'treinamentos', 'os treinamentos', 'os proximos treinamentos'}
+                             and 'treinamentos' in last and 'eventos' in last and '?' in history[-1].get('content', '')):
+        return AgendaToolDecision(acao='consultar_treinamentos', filtros=ConsultarTreinamentosArgs())
+    if text in {'eventos', 'os eventos', 'os proximos eventos', 'os proximos eventos da agenda'} and 'treinamentos' in last and 'eventos' in last:
+        return AgendaToolDecision(acao='consultar_eventos', filtros=ConsultarEventosArgs())
+    if re.fullmatch(r"(?:me (?:fala|fale|mostre)|mostre|liste|consulte) (?:as )?pendencias de nr da minha equipe", text):
+        return OperationalDecision(acao='consultar_pendencias_equipe', filtros={'limite': 50})
+    if text in {'de colaboradores por cargo', 'colaboradores por cargo', 'colaborar por cargo'} and 'grafico' in last:
+        return OperationalDecision(acao='consultar_indicadores_equipe', filtros={'tipos': ['COLABORADOR'], 'limite': 50})
+    return None
+
+
+def people_count_read(message, history=()):
+    """Counts current authorized records; never interprets a named company as scope."""
+    def normalize(value):
+        return ' '.join(''.join(c for c in unicodedata.normalize('NFKD', value.casefold())
+                               if not unicodedata.combining(c)).split()).strip().rstrip('.!? ')
+
+    def parse(text):
+        match = re.fullmatch(
+            r"(?P<people>quantas pessoas|quantos usuarios|quantos colaboradores|quantos funcionarios) "
+            r"(?:(?:tem|ha|existem|estao cadastrados) )?"
+            r"(?:no|na|do|da|neste|nesta|nesse|nessa) (?:(?:meu|minha|nosso|nossa|seu|sua) )?"
+            r"(?P<scope>workspace|unidade)", text)
+        return match
+
+    text = normalize(message)
+    match = parse(text)
+    scope = match['scope'] if match else None
+    collaborators = bool(match and match['people'] in {'quantos colaboradores', 'quantos funcionarios'})
+    if not match and text in {"isso mesmo, faca isso", "isso emsmo, faca isso", "isso", "ok", "sim", "pode consultar", "faca isso"}:
+        if len(history) >= 2 and history[-1].get('role') == 'assistant' and history[-2].get('role') == 'user':
+            offer = normalize(history[-1].get('content', ''))
+            previous = parse(normalize(history[-2].get('content', '')))
+            if previous and offer == (
+                "nao consigo confirmar o total de pessoas no workspace. posso ajudar a consultar "
+                "quantos colaboradores ha na sua unidade, se esse for o dado que voce precisa"):
+                scope, collaborators = 'unidade', True
+    if scope is None:
+        return None
+    filters = BuscarOutrosUsuariosArgs(consulta='contagem', escopo='unidade' if scope == 'unidade' else 'autorizado',
+                                      tipos=['COLABORADOR'] if collaborators else [])
+    return RhToolDecision(acao='buscar_outros_usuarios', filtros=filters), scope
 
 
 def _pending_people_decision(previous, nr=None, *, require_nr=True):
@@ -52,6 +107,8 @@ def pending_people_read(message, previous, pending=None, history=()):
         r"(?:(?:mostre|liste) )?(?:quem|quais (?:pessoas|colaboradores)) "
         r"(?:da (?:minha|nossa|sua) equipe )?(?:tem|tem pendente|esta com|estao com|possui|possuem) "
         r"(?:essa |esta |a |uma )?pendencias?(?: (?:na|da|de|em) nr[ -]?(?P<nr>\d{1,3}))?", text)
+    if not match:
+        match = re.fullmatch(r"quem e (?:essa|esta|a pessoa|esse|este) (?:da|na) nr[ -]?(?P<nr>\d{1,3})", text)
     if not match:
         return None
     nr = int(match['nr']) if match['nr'] else None
