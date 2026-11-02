@@ -617,8 +617,16 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
 
     async def router(state: ChatState):
         from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup
-        from app.modules.chat.current_intent import conversational_read
+        from app.modules.chat.current_intent import conversational_read, team_pending_read
         role = state["usuario_atual"].role
+        pending_team = team_pending_read(state["mensagem"], state.get("historico", []))
+        if isinstance(pending_team, OperationalDecision):
+            return {"rota": "consulta_operacional", "operational_decision": pending_team.model_dump(mode="json"),
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if isinstance(pending_team, str):
+            return {"rota": "direta", "candidato": pending_team, "resposta_deterministica": True,
+                    "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "tipo_de_pendencia_da_equipe", "texto": pending_team}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if asks_chart_menu(state["mensagem"]):
             answer, menu = make_chart_menu(role)
             return {"rota": "direta", "candidato": answer, "menu_graficos": menu,

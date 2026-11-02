@@ -7,6 +7,37 @@ from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision
 from app.modules.agenda.tools import AgendaToolDecision, ConsultarEventosArgs, ConsultarTreinamentosArgs
 
 
+TEAM_PENDING_QUESTION = "Você quer verificar pendências de NR da sua equipe, de treinamentos ou de formulários?"
+
+
+def team_pending_read(message, history=()):
+    """Disambiguate the pending type once, then execute a current authorized read."""
+    def normalize(value):
+        return ' '.join(''.join(c for c in unicodedata.normalize('NFKD', value.casefold())
+                               if not unicodedata.combining(c)).split()).strip().rstrip('.!? ')
+
+    text = normalize(message)
+    generic = re.fullmatch(r"(?:(?:tem|ha|existe) (?:algum |alguns )?(?:colaborador(?:es)? meu(?:s)?|"
+                           r"(?:dos )?meus colaboradores|pessoa(?:s)? da minha equipe)|"
+                           r"tenho (?:algum |alguns )?colaborador(?:es)?) com pendencias?", text)
+    if generic:
+        return TEAM_PENDING_QUESTION
+    last = history[-1] if history and history[-1].get('role') == 'assistant' else {}
+    offer = normalize(last.get('content', ''))
+    nr_only = offer in {
+        'posso consultar as pendencias de nr da equipe autorizada no seu workspace. voce quer verificar pendencias de nr',
+        'voce quer verificar pendencias de nr da sua equipe',
+    }
+    choices = offer == normalize(TEAM_PENDING_QUESTION)
+    if nr_only and text in {'pode verificar', 'pode consultar', 'sim', 's', 'isso', 'ok', 'verifique', 'faca isso'}:
+        return OperationalDecision(acao='consultar_pendencias_equipe', filtros={'limite': 50})
+    if (nr_only or choices) and text in {'nr', 'nrs', 'de nr', 'pendencias de nr', 'conformidade', 'conformidades'}:
+        return OperationalDecision(acao='consultar_pendencias_equipe', filtros={'limite': 50})
+    if choices and text in {'pode verificar', 'pode consultar', 'sim', 's', 'isso', 'ok'}:
+        return TEAM_PENDING_QUESTION
+    return None
+
+
 def conversational_read(message, history=()):
     """Resolve read subjects and the immediately preceding clarification locally."""
     def normalized(value):

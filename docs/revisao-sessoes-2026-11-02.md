@@ -23,6 +23,7 @@ ausência de recusas, pois turnos bloqueados podem não ser persistidos.
 | “qualquer um” após menu | Seleciona a primeira consulta visível daquele menu. Sem menu ativo não supõe uma operação; apenas leituras documentadas são elegíveis. |
 | Escolha “os próximos treinamentos atribuídos a você” | Encaminha à consulta pessoal autenticada. Não interpreta o pronome como identidade de terceiros. |
 | “Me fala as pendências de NR da minha equipe” | Encaminha à ferramenta existente em vez de produzir resposta sem consulta. |
+| “Tem algum colaborador meu com pendência?” → escolha de NR | Pergunta uma vez o tipo de pendência; “NRs” executa a consulta. “Pode verificar” após a pergunta antiga especificamente sobre NR também executa, sem exigir outra confirmação. |
 | “Faz em um gráfico de setores” após barras | Alteração de formato reconsulta o conjunto autorizado, preservando filtros. |
 | Exercícios, receitas, humor, avaliações genéricas de empresas e repetição em massa | Controles de escopo da PR e revisões anteriores cobrem os exemplos principais; não constituem garantia universal contra paráfrases/adversários. |
 | “Quanto custa 1 + ...” / “Se somar 1+1 dá qual NR” | Reconhecidos como soma genérica; acrescentar NR não cria indicador de SST nem justifica associar o resultado a uma norma. |
@@ -83,3 +84,11 @@ Gestor do Workspace; o caminho administrativo existente não foi ampliado.
 
 Executar com os perfis autorizados e comparar POST/histórico. Testes automatizados
 usam respostas simuladas; não substituem reteste publicado com dados reais.
+
+A continuação da pergunta antiga “Posso consultar as pendências de NR da equipe
+autorizada no seu workspace. Você quer verificar pendências de NR?” é aceita
+somente se ela for a última resposta aprovada do assistente nesta sessão. “Pode
+verificar” isolado ou após proposta arbitrária não executa consultas. A ferramenta
+revalida o perfil atual e resolve unidade/workspace pela autenticação. Quando a
+pergunta oferecer vários tipos, “sim” não escolhe NR automaticamente: ainda é
+necessário selecionar o tipo. Não há mudança nos blocos ou permissões.
