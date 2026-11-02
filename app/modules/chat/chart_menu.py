@@ -9,7 +9,7 @@ from app.modules.operational.tools import OperationalDecision
 OPTIONS = {
     "pendencias_nr": ("Pendências de NR da equipe — barras, setores ou rosca", "consultar_grafico_pendencias_nr"),
     "vencimentos": ("Vencimentos da equipe por faixa de prazo — barras, setores ou rosca", "consultar_grafico_vencimentos"),
-    "cobertura": ("Indicadores de cobertura da equipe — barras ou setores", "consultar_indicadores_cobertura"),
+    "cobertura": ("Indicadores de cobertura da equipe — barras, setores ou rosca", "consultar_indicadores_cobertura"),
     "cargos": ("Distribuição da equipe por cargo — barras, setores ou rosca", "consultar_indicadores_equipe"),
     "conclusoes_pessoais": ("Minhas conclusões de treinamentos por mês — linhas", None),
     "treinamentos_pessoais": ("Meus treinamentos por situação — barras, setores ou rosca", None),
@@ -28,6 +28,7 @@ def asks_chart_menu(message: str) -> bool:
         "que graficos voce faz", "quais tipos de graficos voce faz",
         "me faca um grafico", "faca um grafico", "faz um grafico", "queria visualizar um grafico",
         "quero ver um dash", "quais graficos vc conswfue fazer",
+        "que tipo de graficos", "quais tipos de graficos", "que tipos de graficos",
     }
 
 
@@ -38,18 +39,30 @@ def allowed_options(role: str) -> list[str]:
     return list(OPTIONS) if role in {"GESTOR", "GESTOR_WORKSPACE"} else personal
 
 
-def make_chart_menu(role: str) -> tuple[str, dict | None]:
+def chart_style_request(message: str) -> str | None:
+    match = re.fullmatch(r"(?:quero|faca|faz|mostre) (?:um )?(?:grafico )?(?:de )?(rosco|rosca|donut|barras|setores|linhas)", normalize(message))
+    if not match:
+        return None
+    return {'rosco': 'grafico_rosca', 'rosca': 'grafico_rosca', 'donut': 'grafico_rosca',
+            'barras': 'grafico_barras', 'setores': 'grafico_setores', 'linhas': 'grafico_linhas'}[match[1]]
+
+
+def make_chart_menu(role: str, kind: str | None = None) -> tuple[str, dict | None]:
     options = allowed_options(role)
     if not options:
         return ("Seu perfil de Administrador não possui consultas funcionais para esses gráficos. "
                 "Posso explicar as funções do Astro e consultar seu cadastro.", None)
     label = profile_capabilities(role)["perfil"]
     text = f"No seu perfil de {label}, você pode pedir:\n\n"
+    if kind:
+        name = {'grafico_rosca': 'rosca', 'grafico_barras': 'barras', 'grafico_setores': 'setores', 'grafico_linhas': 'linhas'}[kind]
+        options = [key for key in options if (key == 'conclusoes_pessoais') == (kind == 'grafico_linhas')]
+        text = f"Certo, vou usar {name}. Qual informação você quer visualizar?\n\n"
     text += '\n'.join(f"{i}. {OPTIONS[key][0]}." for i, key in enumerate(options, 1))
     text += ("\n\nResponda com o número ou o nome da opção para eu consultar e montar o gráfico. "
              "Nas comparações sem formato escolhido, uso barras. Cada consulta verifica seu acesso "
              "e os dados disponíveis. O gráfico de vencimentos usa faixas fixas, incluindo vencidas e sem validade.")
-    return text, {"versao": 1, "opcoes": options}
+    return text, {"versao": 1, "opcoes": options, **({'tipo_grafico': kind} if kind else {})}
 
 
 def select_chart(message: str, menu: dict | None, role: str) -> OperationalDecision | str | None:
@@ -57,6 +70,9 @@ def select_chart(message: str, menu: dict | None, role: str) -> OperationalDecis
     if not isinstance(menu, dict) or menu.get("versao") != 1:
         return None
     options = menu.get("opcoes")
+    kind = menu.get('tipo_grafico')
+    if kind not in {None, 'grafico_rosca', 'grafico_barras', 'grafico_setores', 'grafico_linhas'}:
+        return "Não consegui recuperar o formato escolhido. Pergunte novamente quais gráficos estão disponíveis."
     if (not isinstance(options, list) or not options or len(options) > len(OPTIONS)
             or any(not isinstance(key, str) or key not in OPTIONS for key in options)
             or len(set(options)) != len(options)):
@@ -81,8 +97,8 @@ def select_chart(message: str, menu: dict | None, role: str) -> OperationalDecis
     if selected not in options or selected not in allowed_options(role):
         return "Essa opção não está disponível para seu perfil atual. Pergunte novamente quais gráficos você pode consultar."
     if selected in {"conclusoes_pessoais", "treinamentos_pessoais"}:
-        return "grafico_linhas" if selected == "conclusoes_pessoais" else "grafico_barras"
-    return OperationalDecision(acao=OPTIONS[selected][1], filtros={"tipo_grafico": "grafico_barras", "limite": 50})
+        return "grafico_linhas" if selected == "conclusoes_pessoais" else kind or "grafico_barras"
+    return OperationalDecision(acao=OPTIONS[selected][1], filtros={"tipo_grafico": kind or "grafico_barras", "limite": 50})
 
 
 def expiry_followup(message: str, pending: bool, role: str) -> tuple[OperationalDecision | str, bool] | None:

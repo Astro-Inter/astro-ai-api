@@ -2,6 +2,22 @@
 
 ## Escolher um gráfico na conversa
 
+O formato também pode vir antes do assunto: “que tipo de gráficos?” → “quero um
+de rosca” (incluindo “rosco”) → “cobertura”. A aplicação guarda `tipo_grafico`
+no `menu_graficos` aprovado da sessão e executa `consultar_indicadores_cobertura`
+com `grafico_rosca` ao receber o assunto, sem uma nova confirmação. A lista
+oferecida exclui séries mensais quando o formato escolhido não representa tempo.
+O usuário não precisa decidir entre agentes SST/Agenda nem conhecer tools.
+
+Rosca de cobertura usa a mesma agregação completa e autorizada já usada por barras
+e setores: **pares pessoa/NR sem encaminhamento, agrupados por NR**. Não representa
+percentual global de conformidade, cobertura de presença ou pessoas únicas.
+Limites de categorias, valores zero/vazios e aprovação do Juiz permanecem os mesmos.
+O suporte analítico novo é restrito a essa consulta; outras consultas mantêm seus
+formatos documentados. O bloco público continua `grafico_rosca` v1, sem componente
+novo exigido em clientes que já o renderizam. `consultar_cobertura_treinamentos`
+é outra consulta, tabular: o chat não deve oferecê-la como esse gráfico.
+
 “Quais gráficos vc pode fazer?” apresenta opções numeradas compatíveis com o perfil
 autenticado, explicando tanto o assunto quanto o formato. Para gestores: pendências
 por NR, vencimentos por faixa, cobertura, distribuição por cargo e as duas consultas

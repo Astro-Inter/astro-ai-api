@@ -339,6 +339,7 @@ def change_chart_type(message, previous, last_route):
     if not isinstance(action, str):
         return unclear
     supported = (set(kinds.values()) if action in team_actions else
+                 {'grafico_barras', 'grafico_setores', 'grafico_rosca'} if action == 'consultar_indicadores_cobertura' else
                  {'grafico_barras', 'grafico_setores'} if action in categorical_actions else
                  {'grafico_barras', 'grafico_linhas'} if action == 'consultar_evolucao_conclusoes_equipe' else set())
     if not supported:

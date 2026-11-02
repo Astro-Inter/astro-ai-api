@@ -26,7 +26,7 @@ class InsightArgs(BaseModel):
     incluir_agendados: bool = False
     pagina: int = Field(default=1, ge=1, le=1, description="Legado: somente 1; navegação visual local.")
     limite: int = Field(default=100, ge=1, le=1000000, description="Quantidade solicitada; coleta limitada a 200 registros e orçamento de resposta.")
-    tipo_grafico: Literal["grafico_barras", "grafico_setores", "grafico_linhas"] = "grafico_barras"
+    tipo_grafico: Literal["grafico_barras", "grafico_setores", "grafico_rosca", "grafico_linhas"] = "grafico_barras"
 
     @model_validator(mode="after")
     def validar_periodo(self):
@@ -329,6 +329,8 @@ async def execute(action,args,config):
     own_allowed=action in {"consultar_conflitos_agenda","consultar_origem_conformidade"}
     if user is None or user.role not in ({"GESTOR","GESTOR_WORKSPACE","COLABORADOR"} if own_allowed else {"GESTOR","GESTOR_WORKSPACE"}):
         return denied()
+    if args.tipo_grafico == "grafico_rosca" and action != "consultar_indicadores_cobertura":
+        return clarify("Esta consulta não oferece rosca. Para ela, use os formatos documentados de barras, setores ou linhas, conforme o indicador.")
     if action=="simular_impacto_exigencia_nr":
         if user.role!="GESTOR_WORKSPACE":
             return denied()

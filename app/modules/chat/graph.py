@@ -616,7 +616,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup
+        from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup, chart_style_request
         from app.modules.chat.current_intent import conversational_read, team_pending_read
         role = state["usuario_atual"].role
         pending_team = team_pending_read(state["mensagem"], state.get("historico", []))
@@ -627,14 +627,15 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             return {"rota": "direta", "candidato": pending_team, "resposta_deterministica": True,
                     "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "tipo_de_pendencia_da_equipe", "texto": pending_team}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        if asks_chart_menu(state["mensagem"]):
-            answer, menu = make_chart_menu(role)
+        kind = chart_style_request(state['mensagem'])
+        if asks_chart_menu(state["mensagem"]) or (kind and state['contexto'].get('ultima_rota') != 'consulta_operacional'):
+            answer, menu = make_chart_menu(role, kind)
             return {"rota": "direta", "candidato": answer, "menu_graficos": menu,
                     "resposta_deterministica": True,
                     "resultado": {"status": "concluido", "evidencia_contexto": {"origem": "catalogo_de_graficos_da_aplicacao", "perfil": role, "opcoes": menu, "texto": answer}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         selection = select_chart(state["mensagem"], state["contexto"].get("menu_graficos"), role)
-        if selection in ("grafico_barras", "grafico_linhas"):
+        if selection in ("grafico_barras", "grafico_linhas", "grafico_rosca", "grafico_setores"):
             return {"rota": "agenda", "grafico_pessoal": selection,
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if isinstance(selection, OperationalDecision):
