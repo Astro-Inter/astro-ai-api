@@ -148,3 +148,48 @@ def summary_pdf(message, previous, last_route):
             referencia_listagem_rh=decision.referencia_listagem_rh)
     except ValueError:
         return unclear
+
+
+def change_chart_type(message, previous, last_route):
+    """Requery the current chart with the same filters; never count historical rows."""
+    text = ''.join(c for c in unicodedata.normalize('NFKD', message.casefold()) if not unicodedata.combining(c))
+    text = ' '.join(text.split()).strip().rstrip('.!? ')
+    match = re.fullmatch(
+        r"(?:agora |ai )?(?:(?:faz|faca|gere|mostre|crie|coloque)(?: isso)? (?:em )?|"
+        r"(?:mude|troque|altere)(?: (?:esse|este|o) grafico)? para )"
+        r"(?:um )?(?:grafico (?:de )?)?(?P<kind>setores|pizza|rosca|donut|barras|linhas)"
+        r"(?:,? por favor)?", text,
+    )
+    if not match:
+        return None
+    unclear = "Qual consulta você quer mostrar nesse formato? Consulte os dados desejados nesta conversa e peça a mudança do gráfico."
+    if last_route != 'consulta_operacional' or not isinstance(previous, dict):
+        return unclear
+    kinds = {'setores': 'grafico_setores', 'pizza': 'grafico_setores', 'rosca': 'grafico_rosca',
+             'donut': 'grafico_rosca', 'barras': 'grafico_barras', 'linhas': 'grafico_linhas'}
+    requested = kinds[match['kind']]
+    team_actions = {'consultar_indicadores_equipe', 'consultar_grafico_pendencias_nr', 'consultar_grafico_vencimentos'}
+    categorical_actions = {'consultar_indicadores_cobertura', 'comparar_conformidade_unidades',
+                           'simular_impacto_exigencia_nr', 'consultar_resultados_treinamento'}
+    action = previous.get('acao')
+    if not isinstance(action, str):
+        return unclear
+    supported = (set(kinds.values()) if action in team_actions else
+                 {'grafico_barras', 'grafico_setores'} if action in categorical_actions else
+                 {'grafico_barras', 'grafico_linhas'} if action == 'consultar_evolucao_conclusoes_equipe' else set())
+    if not supported:
+        return unclear
+    try:
+        decision = OperationalDecision.model_validate(previous)
+        if requested not in supported:
+            return ("Esse formato não é compatível com a consulta anterior. "
+                    + ("Para evolução mensal, use linhas ou barras." if action == 'consultar_evolucao_conclusoes_equipe'
+                       else "Para essa comparação, use barras ou setores."))
+        filters = decision.filtros.model_dump()
+        filters.update(tipo_grafico=requested, pagina=1)
+        if action in team_actions:
+            filters['limite'] = 50
+        return OperationalDecision(acao=decision.acao, filtros=filters,
+                                   referencia_listagem_rh=decision.referencia_listagem_rh)
+    except ValueError:
+        return "Não consegui recuperar os filtros do gráfico anterior. Consulte os dados novamente antes de mudar o formato."

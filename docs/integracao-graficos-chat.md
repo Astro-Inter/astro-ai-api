@@ -402,3 +402,58 @@ já salvos não são reescritos; clientes podem ainda encontrar textos antigos.
 Na projeção privada enviada aos agentes, o rodapé legado exato “Página 1 de 1”
 é omitido e páginas de transporte local deixam de poluir os blocos anteriores.
 Referências de páginas de documentos e metadados de recortes reais permanecem.
+
+## Mudar o formato do último gráfico operacional
+
+Após “Mostre a distribuição da minha equipe em barras por cargo”, o pedido
+“Faz em um gráfico de setores” retoma a consulta operacional aprovada da mesma
+sessão. Também são reconhecidas formulações completas como “Mostre em barras”,
+“Troque esse gráfico para rosca” e “Mude para donut”.
+
+Na homologação de 02/11/2026, o trace das 11:09 em São Paulo confirmou o desvio:
+o pedido curto seguiu para SST após uma consulta de indicadores às 11:08, sem
+reconsulta operacional, resultando em uma limitação textual indevida. O fluxo
+passa agora por seleção explícita da consulta anterior antes da classificação
+genérica, mantendo guardrail de entrada, Juiz e guardrail de saída.
+
+A API revalida a decisão anterior e repete a tool com a identidade autenticada
+atual, preservando agrupamento, filtros e referência à listagem RH. Os números
+vêm dessa nova consulta autorizada, nunca da contagem de linhas ou do texto no
+histórico. Se os dados mudaram desde a primeira consulta, os novos valores refletem
+o banco atual. Não há edição de mensagens ou gráficos antigos.
+
+Para distribuição da equipe, pendências por NR e vencimentos, a coleta de
+categorias volta à primeira página interna com limite máximo existente de 50;
+isso não limita a população agregada no SQL. Limites de pontos, avisos de resultado
+parcial e validações dos blocos continuam vigentes. A API não pede ao cliente que
+reconte ou transforme os números da tabela.
+
+Compatibilidade da continuação:
+
+- Distribuição da equipe, pendências por NR e vencimentos: tipos já aceitos pelo
+  contrato dessas tools, incluindo setores e rosca.
+- Cobertura, comparação de unidades, simulação e resultados de treinamento:
+  barras ou setores, conforme os contratos existentes.
+- Evolução mensal da equipe: linhas ou barras; setores exige esclarecimento.
+
+Uma consulta pessoal de Agenda, uma tabela sem agregado selecionado ou contexto
+ausente/inválido não é convertido automaticamente em análise de equipe. A API
+pede a seleção da consulta. Pedidos com assunto, filtros ou instruções adicionais
+continuam na interpretação normal, sem herdar silenciosamente o escopo anterior.
+
+Em sucesso, o novo POST retorna o bloco solicitado, por exemplo
+`tipo: "grafico_setores", versao: 1`, mantendo categorias, valores, título, fonte
+e unidade da nova consulta. O histórico retorna os mesmos blocos na mesma ordem.
+Nenhum contrato ou componente novo é necessário no web/mobile que já renderiza
+esse tipo. Resultado vazio, falha ou recusa não gera um gráfico de sucesso.
+
+Essa continuação elimina a classificação de modelo para uma mudança inequívoca;
+ela usa as revisões existentes e uma reconsulta necessária dos dados. Não há nova
+chamada de IA para escolher ou redesenhar o gráfico. Nenhum merge ou deploy é
+realizado pela correção.
+
+Validação simulada: 454 regressões aprovadas no grupo de chat, tools, PDF,
+paginação e linguagem; 21 testes focados finais aprovados, incluindo a proteção
+adicional para ação legada malformada. Os grupos se sobrepõem e não devem ser
+somados. Não houve chamada real de IA nesta etapa; os traces de produção foram
+somente consultados, sem alterações de dados.

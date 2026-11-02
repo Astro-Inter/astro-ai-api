@@ -617,8 +617,15 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                     "resultado": {"status": "concluido", "evidencia_contexto": {
                         "origem": "catalogo_da_aplicacao_para_o_perfil_autenticado", **capabilities}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf, change_chart_type
         previous=state["contexto"].get("consulta_operacional") or {}
+        chart_change = change_chart_type(state["mensagem"], previous, state["contexto"].get("ultima_rota"))
+        if isinstance(chart_change, str):
+            return {"rota": "direta", "candidato": chart_change,
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if isinstance(chart_change, OperationalDecision):
+            return {"rota": "consulta_operacional", "operational_decision": chart_change.model_dump(mode="json"),
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         pdf_query=distribution_pdf(state["mensagem"],previous)
         if pdf_query is None:
             pdf_query = summary_pdf(state["mensagem"], previous, state["contexto"].get("ultima_rota"))
