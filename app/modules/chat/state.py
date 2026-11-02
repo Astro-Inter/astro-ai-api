@@ -33,6 +33,7 @@ class ChatState(TypedDict, total=False):
     consulta_prazo: bool
     leitura_pendente: dict | None
     contagem_workspace: bool
+    resumo_conformidade: bool
     operational_decision: dict | None
     roteador_decision: object
     acao_pendente: dict | None

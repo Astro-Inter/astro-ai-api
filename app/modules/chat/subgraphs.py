@@ -56,7 +56,7 @@ def _pedido_dos_proprios_dados(message: str) -> bool:
         if not unicodedata.combining(character)
     )
     return _campo_dado_proprio(message) is not None or bool(re.search(
-        r"\b(meus dados|meus dados pessoais|meus dados profissionais|"
+        r"\b(minha ficha|meus dados|meus dados pessoais|meus dados profissionais|"
         r"minhas informacoes|meu cadastro|meu perfil profissional)\b",
         normalized,
     ))
@@ -118,7 +118,7 @@ def _filtros_deterministicos_nrs(message: str) -> ConsultarNrsArgs | None:
         character for character in unicodedata.normalize("NFKD", message.casefold())
         if not unicodedata.combining(character)
     )
-    if not re.search(r"\bnrs?\b|\bnormas? regulamentadoras?\b", normalized):
+    if not re.search(r"\bnrs?\b|\bnr(?=\d{1,2}\b)|\bnormas? regulamentadoras?\b", normalized):
         return None
     if re.search(r"\b(empresa|workspace|unidade|unidades)\b", normalized):
         return None  # O catálogo geral não comprova vínculos organizacionais.
@@ -375,10 +375,19 @@ def _formatar_meus_dados(result: dict) -> str:
         "cargo": "Cargo", "unidade": "Unidade", "modalidade": "Modalidade",
     }
     lines = [f"- {labels[field]}: {value}" for field, value in data.items() if field in labels and value is not None]
+    if result.get("pendencias"):
+        from app.modules.chat.profile_pending import pending_caption
+        lines.append(pending_caption(result["pendencias"]))
     return "\n".join(["Estes são os seus dados:", *lines])
 
 
-def _formatar_nrs(result: dict) -> str:
+def _pedido_definicao_nr(message: str) -> bool:
+    text = ''.join(c for c in unicodedata.normalize('NFKD', message.casefold()) if not unicodedata.combining(c))
+    text = ' '.join(text.split()).strip().rstrip('.!? ')
+    return bool(re.fullmatch(r'(?:o que e(?: a)?|sobre o que e(?: a)?|e sobre o que(?: a)?|explique(?: a)?) nr[ -]?\d{1,2}(?: por favor)?', text))
+
+
+def _formatar_nrs(result: dict, *, simples: bool = False) -> str:
     if result.get("status") == "sem_dados":
         return "Não encontrei NRs com os filtros informados."
     if result.get("status") != "ok":
@@ -392,6 +401,30 @@ def _formatar_nrs(result: dict) -> str:
         if source_url
         else "Fonte utilizada: base interna de NRs do Astro; a fonte oficial estava indisponível."
     )
+    if simples and result.get('modo') != 'listar' and len(result.get('nrs', [])) == 1:
+        nr = result['nrs'][0]
+        lines = [f"NR-{nr.get('numero')} — {nr.get('nome', 'Nome não informado')}."]
+        situation = nr.get('situacao')
+        if not situation and type(nr.get('revogada')) is bool:
+            situation = 'REVOGADA' if nr['revogada'] else 'VIGENTE'
+        if situation:
+            lines.append(f"Situação na fonte consultada: {str(situation).lower()}.")
+        # Revoked rules must not be restated as current obligations. Keep the
+        # catalog subject/status and source; detailed requests retain full data.
+        if situation != 'REVOGADA':
+            explanation = nr.get('objetivo') or nr.get('resumo_oficial') or nr.get('descricao')
+            if isinstance(explanation, str) and explanation.strip():
+                paragraph = explanation.strip().split('\n\n')[0]
+                if len(paragraph) > 500:
+                    sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+                    paragraph = sentences[0] if len(sentences[0]) <= 500 else ''
+                if paragraph:
+                    lines.append(paragraph)
+        if nr.get('fonte_oficial'):
+            lines.append(f"Fonte oficial: [Ministério do Trabalho e Emprego]({nr['fonte_oficial']}).")
+        else:
+            lines.append(source_footer)
+        return '\n\n'.join(lines)
     if result.get("modo") == "listar":
         total = pagination.get("total", result.get("quantidade", 0))
         lines = []
@@ -576,6 +609,9 @@ def _formatar_situacao_nrs(result: dict) -> str:
             return result.get("mensagem", "Não foi possível consultar a conformidade.")
         formatted = _formatar_situacao_nrs({k: v for k, v in result.items() if k != "consulta_terceiro"})
         formatted = formatted.replace("Nenhuma NR vigente está vinculada ao seu cargo.", "Nenhuma NR vigente está vinculada ao cargo cadastrado desta pessoa.")
+        if result.get("pendencias"):
+            from app.modules.chat.profile_pending import pending_caption
+            formatted += "\n\n" + pending_caption(result["pendencias"])
         return f"NRs de {result['usuario']}:\n\n{formatted}"
     if result.get("status") == "nao_aplicavel":
         return result["mensagem"]
@@ -883,6 +919,14 @@ def build_rh_graph(model: AgentModel):
             allowed = {"nome", "email", "tipo", "cargo", "unidade", "modalidade"}
             result = {**result, "dados": {key: value for key, value in result.get("dados", {}).items()
                                          if key in allowed}}
+            from app.modules.chat.profile_pending import summarize_nr_pending
+            try:
+                pending_result = ({"status": "nao_aplicavel"} if state["usuario_atual"].role == "ADMIN" else
+                    await asyncio.wait_for(SST_TOOLS["consultar_situacao_nrs"].ainvoke({},
+                        config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}}), timeout=5))
+            except Exception:
+                pending_result = {"status": "indisponivel"}
+            result = {**result, "pendencias": summarize_nr_pending(pending_result)}
         tool_status = result.get("status")
         statuses = {
             "ok": "concluido",
@@ -939,7 +983,9 @@ def build_rh_graph(model: AgentModel):
                 if tool_name == "buscar_meus_dados"
                 else _formatar_usuarios(result)
             ),
-            "agentes_chamados": state["agentes_chamados"] + [tool_name],
+            "agentes_chamados": state["agentes_chamados"] + [tool_name] + (
+                ["consultar_situacao_nrs"] if tool_name == "buscar_meus_dados" and not field
+                and result.get("status") == "ok" and state["usuario_atual"].role != "ADMIN" else []),
         }
 
     graph = StateGraph(ChatState)
@@ -1024,6 +1070,9 @@ def build_sst_graph(model: AgentModel):
                 "usuario_atual": state["usuario_atual"].model_dump(),
             }},
         )
+        if tool_name == "consultar_conformidade_usuario" and result.get("status") == "ok":
+            from app.modules.chat.profile_pending import summarize_nr_pending
+            result = {**result, "pendencias": summarize_nr_pending(result)}
         tool_status = result.get("status")
         statuses = {
             "ok": "concluido",
@@ -1108,7 +1157,7 @@ def build_sst_graph(model: AgentModel):
                 if tool_name in {"consultar_situacao_nrs", "consultar_conformidade_usuario"}
                 else _formatar_nrs_obrigatorias(result)
                 if tool_name == "consultar_nrs_obrigatorias"
-                else _formatar_nrs(result)
+                else _formatar_nrs(result, simples=_pedido_definicao_nr(state['mensagem']))
             ),
             "agentes_chamados": state["agentes_chamados"] + [tool_name],
         }

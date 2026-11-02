@@ -107,7 +107,7 @@ def test_guidance_still_respects_input_guard_and_judge(chat_client, barrier):
         model.replies["juiz"] = json.dumps({"status": "rejeitado", "motivo": "Teste", "problemas": ["Inconsistência simulada."]})
     body = client.post("/chat/messages", json={"message": "O que posso fazer com meu perfil?"}).json()
     assert "Você pode perguntar, por exemplo:" not in texto_resposta(body)
-    assert ("Solicitação bloqueada." if barrier == "input" else "Nenhum componente foi liberado") in texto_resposta(body)
+    assert ("Solicitação bloqueada." if barrier == "input" else "Não consegui confirmar uma resposta confiável") in texto_resposta(body)
 
 
 def test_free_form_router_also_receives_current_role_guidance(chat_client):

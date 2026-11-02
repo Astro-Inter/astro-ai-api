@@ -46,8 +46,8 @@ def test_chosen_team_nr_read_executes_once_with_current_identity(chat_client, mo
             if outcome in {'empty', 'unavailable'}:
                 return {'status': 'sem_dados' if outcome == 'empty' else 'indisponivel', 'mensagem': 'Nenhuma pendência encontrada.' if outcome == 'empty' else 'Consulta temporariamente indisponível.'}
             return {'status': 'ok', 'titulo': 'Pendências de NR da equipe', 'fonte': 'Consulta sintética',
-                    'colunas': [{'chave': 'nome', 'titulo': 'Pessoa'}, {'chave': 'nr', 'titulo': 'NR'}],
-                    'linhas': [{'nome': 'Pessoa fictícia', 'nr': 6}], 'total': 1, 'pagina': 1, 'total_paginas': 1}
+                    'colunas': [{'chave': 'nome', 'titulo': 'Pessoa'}, {'chave': 'nr', 'titulo': 'NR'}, {'chave': 'situacao', 'titulo': 'Situação'}],
+                    'linhas': [{'nome': 'Pessoa fictícia', 'nr': 6, 'situacao': 'REALIZACAO_NECESSARIA'}], 'total': 1, 'pagina': 1, 'total_paginas': 1}
 
     monkeypatch.setitem(tools.REGISTRY, 'consultar_pendencias_equipe', Tool())
     if outcome == 'downgrade':
@@ -62,6 +62,10 @@ def test_chosen_team_nr_read_executes_once_with_current_identity(chat_client, mo
     assert not any(c[0] == 'roteador' for c in model.calls)
     assert any(b['tipo'] == 'tabela' for b in body['blocos']) == (outcome == 'ok')
     assert 'juiz' in body['agentes_chamados']
+    if outcome == 'ok':
+        judge = next(c for c in reversed(model.calls) if c[0] == 'juiz')
+        assert 'precisa realizar a atividade exigida' in str(judge[1])
+        assert 'Pessoa:' in str(judge[1])
     if outcome != 'judge':
         history = client.get(f"/sessions/{first['session_id']}/messages").json()
         assert history['mensagens'][-1]['blocos'] == body['blocos']

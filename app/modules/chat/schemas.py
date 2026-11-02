@@ -270,6 +270,22 @@ class ConformidadeFicha(BaseModel):
         return self
 
 
+class PendenciasFicha(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["ok", "indisponivel", "nao_aplicavel"]
+    rotulo: Literal["Pendências de NRs"] = "Pendências de NRs"
+    quantidade: int | None = Field(default=None, ge=0, strict=True)
+    data_referencia: str | None = Field(default=None, max_length=30)
+    criterio: Literal["NRs aplicáveis com atividade pendente ou necessidade de realização/renovação; uma contagem por NR."] = "NRs aplicáveis com atividade pendente ou necessidade de realização/renovação; uma contagem por NR."
+    fonte: Literal["Cadastro Astro — situação das NRs aplicáveis"] = "Cadastro Astro — situação das NRs aplicáveis"
+
+    @model_validator(mode="after")
+    def validar_disponibilidade(self):
+        if (self.status == "ok") != (self.quantidade is not None):
+            raise ValueError("Quantidade exige contagem disponível; indisponibilidade não é zero.")
+        return self
+
+
 class BlocoFichaUsuario(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tipo: Literal["ficha_usuario"] = "ficha_usuario"
@@ -285,6 +301,7 @@ class BlocoFichaUsuario(BaseModel):
     situacao: str | None = Field(default=None, max_length=80)
     foto: CelulaImagem
     conformidade: ConformidadeFicha | None = None
+    pendencias: PendenciasFicha | None = None
 
     @field_validator("nome", "email", "cargo", "unidade", "perfil", "modalidade", mode="before")
     @classmethod

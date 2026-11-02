@@ -141,7 +141,7 @@ def test_reviewer_cannot_invent_enrollment_after_empty_training_query(chat_clien
     })
     response = client.post('/chat/messages', json={'message': 'Tenho algum treinamento a realizar?'})
     assert response.status_code == 200
-    assert 'Não consegui validar' in texto_resposta(response.json())
+    assert 'Não consegui confirmar uma resposta confiável' in texto_resposta(response.json())
     assert 'guardrail_saida' not in [call[0] for call in model.calls]
 
 

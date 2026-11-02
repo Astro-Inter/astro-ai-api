@@ -11,6 +11,10 @@ COMPANY_CONTEXT_REPLY = (
     "Posso ajudar com uma situação concreta de trabalho ou uma consulta no Astro. "
     "Você quer relatar algum problema de segurança ou RH?"
 )
+PERSONAL_NICKNAME_REPLY = (
+    "Vou manter uma forma de tratamento respeitosa, sem apelidos íntimos. "
+    "Posso ajudar com suas dúvidas e consultas sobre o Astro."
+)
 SCOPE_POLICY = (
     "ESCOPO DO PRODUTO: matemática genérica, redação escolar, entretenimento e tarefas "
     "sem relação com RH/SST/Agenda/FAQ ou dados do Astro usam ROUTE=fora_escopo no "
@@ -117,6 +121,9 @@ def external_topic_reply(message: str) -> str | None:
     work_issue = re.search(r'\b(?:assedio|discriminacao|acidente|queimadura|risco|riscos|seguranca|epi|epis|nr|nrs|sst|salario|salarios|direitos|insalubridade|denuncia|denunciar|contaminacao|conformidade|indicadores?)\b|\breceita medica\b|\bexame ocupacional\b', text)
     if work_issue:
         return None
+    if re.fullmatch(r'(?:me chame|me chama|pode me chamar|quero que (?:voce|vc) me chame) de '
+                    r'(?:gostoso|gostosa|sexy|tesudo|tesuda)', text):
+        return PERSONAL_NICKNAME_REPLY
     cooking = re.match(
         r'(?:(?:me )?(?:ajuda|ajude) com|(?:me )?(?:de|da|passe|mande|ensine|faca|crie|mostre)|quero|como (?:fazer|preparar)) '
         r'(?:(?:uma|um|a|o) )?(?:receita(?:s)?(?: de| para)?|bolo|torta|pudim|lasanha|pao|brigadeiro)\b', text)

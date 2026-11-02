@@ -46,7 +46,12 @@ async def chat_message(
         if isinstance(error, InvalidAgentResponse):
             logger.warning("Resposta invalida no estagio do chat: %s", error.stage)
         headers = {"Retry-After": str(error.retry_after)} if error.retry_after else None
-        raise HTTPException(error.status_code, detail=error.detail, headers=headers) from None
+        detail = error.detail
+        if error.reason == "rate_limited":
+            detail = ("O serviço de IA atingiu um limite temporário de solicitações. "
+                      "Aguarde alguns instantes antes de tentar novamente. "
+                      "Não consegui concluir sua mensagem nesta tentativa.")
+        raise HTTPException(error.status_code, detail=detail, headers=headers) from None
 
     finally:
         request_token.reset(token_handle)

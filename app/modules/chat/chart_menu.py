@@ -9,7 +9,7 @@ from app.modules.operational.tools import OperationalDecision
 OPTIONS = {
     "pendencias_nr": ("Pendências de NR da equipe — barras, setores ou rosca", "consultar_grafico_pendencias_nr"),
     "vencimentos": ("Vencimentos da equipe por faixa de prazo — barras, setores ou rosca", "consultar_grafico_vencimentos"),
-    "cobertura": ("Indicadores de cobertura da equipe — barras ou setores", "consultar_indicadores_cobertura"),
+    "cobertura": ("Indicadores de cobertura da equipe — barras, setores ou rosca", "consultar_indicadores_cobertura"),
     "cargos": ("Distribuição da equipe por cargo — barras, setores ou rosca", "consultar_indicadores_equipe"),
     "conclusoes_pessoais": ("Minhas conclusões de treinamentos por mês — linhas", None),
     "treinamentos_pessoais": ("Meus treinamentos por situação — barras, setores ou rosca", None),
@@ -28,6 +28,7 @@ def asks_chart_menu(message: str) -> bool:
         "que graficos voce faz", "quais tipos de graficos voce faz",
         "me faca um grafico", "faca um grafico", "faz um grafico", "queria visualizar um grafico",
         "quero ver um dash", "quais graficos vc conswfue fazer",
+        "que tipo de graficos", "quais tipos de graficos", "que tipos de graficos",
     }
 
 
@@ -38,18 +39,30 @@ def allowed_options(role: str) -> list[str]:
     return list(OPTIONS) if role in {"GESTOR", "GESTOR_WORKSPACE"} else personal
 
 
-def make_chart_menu(role: str) -> tuple[str, dict | None]:
+def chart_style_request(message: str) -> str | None:
+    match = re.fullmatch(r"(?:quero|queria|queri|faca|faz|mostre) (?:um )?(?:grafico )?(?:de )?(rosco|rosca|donut|barras|setores|linhas)", normalize(message))
+    if not match:
+        return None
+    return {'rosco': 'grafico_rosca', 'rosca': 'grafico_rosca', 'donut': 'grafico_rosca',
+            'barras': 'grafico_barras', 'setores': 'grafico_setores', 'linhas': 'grafico_linhas'}[match[1]]
+
+
+def make_chart_menu(role: str, kind: str | None = None) -> tuple[str, dict | None]:
     options = allowed_options(role)
     if not options:
         return ("Seu perfil de Administrador não possui consultas funcionais para esses gráficos. "
                 "Posso explicar as funções do Astro e consultar seu cadastro.", None)
     label = profile_capabilities(role)["perfil"]
     text = f"No seu perfil de {label}, você pode pedir:\n\n"
+    if kind:
+        name = {'grafico_rosca': 'rosca', 'grafico_barras': 'barras', 'grafico_setores': 'setores', 'grafico_linhas': 'linhas'}[kind]
+        options = [key for key in options if (key == 'conclusoes_pessoais') == (kind == 'grafico_linhas')]
+        text = f"Certo, vou usar {name}. Qual informação você quer visualizar?\n\n"
     text += '\n'.join(f"{i}. {OPTIONS[key][0]}." for i, key in enumerate(options, 1))
     text += ("\n\nResponda com o número ou o nome da opção para eu consultar e montar o gráfico. "
              "Nas comparações sem formato escolhido, uso barras. Cada consulta verifica seu acesso "
              "e os dados disponíveis. O gráfico de vencimentos usa faixas fixas, incluindo vencidas e sem validade.")
-    return text, {"versao": 1, "opcoes": options}
+    return text, {"versao": 1, "opcoes": options, **({'tipo_grafico': kind} if kind else {})}
 
 
 def select_chart(message: str, menu: dict | None, role: str) -> OperationalDecision | str | None:
@@ -57,6 +70,9 @@ def select_chart(message: str, menu: dict | None, role: str) -> OperationalDecis
     if not isinstance(menu, dict) or menu.get("versao") != 1:
         return None
     options = menu.get("opcoes")
+    kind = menu.get('tipo_grafico')
+    if kind not in {None, 'grafico_rosca', 'grafico_barras', 'grafico_setores', 'grafico_linhas'}:
+        return "Não consegui recuperar o formato escolhido. Pergunte novamente quais gráficos estão disponíveis."
     if (not isinstance(options, list) or not options or len(options) > len(OPTIONS)
             or any(not isinstance(key, str) or key not in OPTIONS for key in options)
             or len(set(options)) != len(options)):
@@ -81,8 +97,38 @@ def select_chart(message: str, menu: dict | None, role: str) -> OperationalDecis
     if selected not in options or selected not in allowed_options(role):
         return "Essa opção não está disponível para seu perfil atual. Pergunte novamente quais gráficos você pode consultar."
     if selected in {"conclusoes_pessoais", "treinamentos_pessoais"}:
-        return "grafico_linhas" if selected == "conclusoes_pessoais" else "grafico_barras"
-    return OperationalDecision(acao=OPTIONS[selected][1], filtros={"tipo_grafico": "grafico_barras", "limite": 50})
+        return "grafico_linhas" if selected == "conclusoes_pessoais" else kind or "grafico_barras"
+    return OperationalDecision(acao=OPTIONS[selected][1], filtros={"tipo_grafico": kind or "grafico_barras", "limite": 50})
+
+
+def legacy_expiry_chart(message: str, history: list[dict], role: str, pending: bool = False) -> OperationalDecision | None:
+    """Recover only bounded, approved clarification turns from older deployments."""
+    if role not in {'GESTOR', 'GESTOR_WORKSPACE'} or not history or history[-1].get('role') != 'assistant':
+        return None
+    text, last = normalize(message), normalize(history[-1].get('content', ''))
+    kinds = {'rosca': 'grafico_rosca', 'setores': 'grafico_setores', 'barras': 'grafico_barras'}
+    kind = None
+    for label, value in kinds.items():
+        promise = f'vou consultar os vencimentos atuais da sua equipe para o grafico de {label}'
+        offer = (f'posso consultar um grafico de {label} com dados autorizados da sua equipe, se a consulta permitir. '
+                 'o que voce quer visualizar: pendencias de nr, vencimentos ou outro indicador? '
+                 f'qual informacao voce quer ver no grafico de {label}')
+        if (last == promise and text in {'ok', 'sim', 's', 'isso', 'pode consultar', 'faca isso'}
+                or last == offer and text in {'vencimento', 'vencimentos'}):
+            kind = value
+    period = 'para qual periodo voce quer consultar os vencimentos da equipe? por exemplo, proximos 30 dias'
+    if pending is True and last == period and text in {'atualmente', 'agora', 'hoje'}:
+        kind = 'grafico_barras'
+        # Exact adjacent legacy sequence: shape -> clarification -> subject -> period.
+        if (len(history) >= 4 and history[-2].get('role') == 'user'
+                and normalize(history[-2].get('content', '')) in {'vencimentos', 'vencimento'}
+                and history[-3].get('role') == 'assistant' and history[-4].get('role') == 'user'):
+            kind = chart_style_request(history[-4].get('content', '')) or kind
+        if kind == 'grafico_linhas':
+            return None
+    if kind:
+        return OperationalDecision(acao='consultar_grafico_vencimentos', filtros={'tipo_grafico': kind, 'limite': 50})
+    return None
 
 
 def expiry_followup(message: str, pending: bool, role: str) -> tuple[OperationalDecision | str, bool] | None:

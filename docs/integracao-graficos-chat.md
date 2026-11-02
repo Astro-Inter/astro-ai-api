@@ -2,6 +2,22 @@
 
 ## Escolher um gráfico na conversa
 
+O formato também pode vir antes do assunto: “que tipo de gráficos?” → “quero um
+de rosca” (incluindo “rosco”) → “cobertura”. A aplicação guarda `tipo_grafico`
+no `menu_graficos` aprovado da sessão e executa `consultar_indicadores_cobertura`
+com `grafico_rosca` ao receber o assunto, sem uma nova confirmação. A lista
+oferecida exclui séries mensais quando o formato escolhido não representa tempo.
+O usuário não precisa decidir entre agentes SST/Agenda nem conhecer tools.
+
+Rosca de cobertura usa a mesma agregação completa e autorizada já usada por barras
+e setores: **pares pessoa/NR sem encaminhamento, agrupados por NR**. Não representa
+percentual global de conformidade, cobertura de presença ou pessoas únicas.
+Limites de categorias, valores zero/vazios e aprovação do Juiz permanecem os mesmos.
+O suporte analítico novo é restrito a essa consulta; outras consultas mantêm seus
+formatos documentados. O bloco público continua `grafico_rosca` v1, sem componente
+novo exigido em clientes que já o renderizam. `consultar_cobertura_treinamentos`
+é outra consulta, tabular: o chat não deve oferecê-la como esse gráfico.
+
 “Quais gráficos vc pode fazer?” apresenta opções numeradas compatíveis com o perfil
 autenticado, explicando tanto o assunto quanto o formato. Para gestores: pendências
 por NR, vencimentos por faixa, cobertura, distribuição por cargo e as duas consultas
@@ -328,6 +344,64 @@ ou foto histórica concede acesso novo: a autorização continua no backend.
 O Juiz recebe metadados da consulta v2 e revisa o resumo; os registros não são enviados ao modelo nessa etapa. A aplicação valida o contrato e monta as linhas autorizadas diretamente, reduzindo custo e latência.
 
 
+## Indicador de pendências na ficha (extensão opcional de v1)
+
+`ficha_usuario` aceita o campo opcional `pendencias`. Ele resume exclusivamente
+as NRs aplicáveis à pessoa consultada. Não representa o total de formulários,
+mensagens ou atividades do aplicativo. Exemplo fictício:
+
+```json
+{
+  "pendencias": {
+    "status": "ok",
+    "rotulo": "Pendências de NRs",
+    "quantidade": 3,
+    "data_referencia": "2026-11-02",
+    "criterio": "NRs aplicáveis com atividade pendente ou necessidade de realização/renovação; uma contagem por NR.",
+    "fonte": "Cadastro Astro — situação das NRs aplicáveis"
+  }
+}
+```
+
+O backend reutiliza `consultar_situacao_nrs`: conta números distintos de NRs com
+situação `PENDENTE`, `RENOVACAO_NECESSARIA` ou `REALIZACAO_NECESSARIA`, conforme
+os critérios atuais do cadastro. Exclui `VIGENTE`; duas atividades da mesma NR
+não viram duas pendências. Data ausente não é substituída pela data do dispositivo.
+Ausência de validade segue a situação fornecida pela consulta existente, sem
+presumir vigência. Esse número não certifica conformidade legal ou aptidão.
+
+Na ficha própria completa, a aplicação faz uma leitura adicional da situação das
+NRs pelo UID autenticado, com espera máxima de cinco segundos para o indicador.
+Falha/timeout não derruba o cadastro: `status: "indisponivel"`, `quantidade: null`.
+Cadastro funcional não encontrado também não vira zero. Para ADMIN,
+`status: "nao_aplicavel"` e `quantidade: null`, sem consulta funcional adicional.
+Somente uma consulta bem-sucedida pode retornar zero. Não acrescenta chamadas de IA
+nem cache compartilhado: o custo adicional é a leitura de cadastro na ficha própria.
+
+Na ficha de terceiro, a contagem usa o resultado já autorizado de
+`consultar_conformidade_usuario`, sem consulta adicional. Mantém seleção inequívoca,
+escopo de unidade/workspace e revalidação de acesso dessa ferramenta. O resumo é
+incluído na evidência e no plano de apresentação antes da aprovação do Juiz;
+nenhuma ficha é liberada quando a resposta é recusada.
+
+**Web/mobile:** adicionar um indicador à ficha usando `rotulo` e `quantidade`.
+Com `status: "ok"`, mostrar inclusive zero. Com `indisponivel`, mostrar
+“Não disponível”; com `nao_aplicavel`, omitir ou mostrar “Não se aplica”. Não somar
+esse valor às contagens de outros blocos nem tratá-lo como quantidade de atividades.
+Fonte, critério e referência podem ficar em detalhes acessíveis do indicador.
+Histórico antigo sem `pendencias` (ou com `null`) continua válido: ocultar o
+indicador, sem transformar ausência em zero. O histórico preserva o snapshot da
+consulta original; reler uma conversa não recalcula pendências nem faz leitura
+adicional de NRs. POST e histórico mantêm a ordem dos blocos. Foto temporária e
+regras de autorização continuam as mesmas.
+
+Perguntas específicas como “Qual é meu cargo?” não consultam pendências nem
+retornam a ficha completa. Status cadastral e data de cadastro continuam omitidos;
+a ficha própria não ganha percentual de conformidade automaticamente.
+
+Validação: 121 testes locais de ficha, situação das NRs, identidade, perfis,
+histórico e consultas de campos específicos passaram com respostas simuladas.
+
 ## Cartão do usuário autenticado (`buscar_meus_dados`)
 
 Pedidos completos como “Meus dados” retornam, nesta ordem, um bloco de texto de
@@ -352,8 +426,9 @@ quando não houver nome para extrair iniciais. Os demais campos ausentes são nu
 ]
 ```
 
-Não são expostos status cadastral, data de cadastro ou CPF nesse cartão. Não há
-consulta automática de conformidade; o campo permanece nulo. Campos nulos não
+Não são expostos status cadastral, data de cadastro ou CPF nesse cartão. A ficha
+completa consulta também a situação das NRs para o indicador `pendencias`, conforme
+a seção abaixo; o percentual `conformidade` permanece nulo na ficha própria. Campos nulos não
 produzem rótulos vazios ou percentual zero na UI. Pedidos específicos (“Qual é meu
 cargo?”, nome, e-mail, unidade, perfil e modalidade) continuam somente em texto,
 limitados ao campo solicitado; campo ausente recebe a indicação de indisponibilidade.
@@ -364,7 +439,7 @@ cadastro ativo com papel correspondente; ADMIN sem fonte de foto suportada receb
 URL nula. Reutiliza `user:avatar:<id>` no Redis após autorização e as mesmas URLs
 assinadas/validação de host/objeto/validade. Foto ausente, cache/R2 indisponível ou
 falha de autorização deixa URL nula: frontend mostra iniciais, se houver nome.
-Não há chamadas extras de IA para foto ou conformidade.
+Não há chamadas extras de IA para foto ou contagem de pendências.
 
 O histórico conserva a ordem, a origem e os campos opcionais, sem persistir URL.
 Ao carregar a conversa, o backend resolve novamente a foto autorizada. Fichas

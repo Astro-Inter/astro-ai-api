@@ -616,7 +616,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup
+        from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup, chart_style_request, legacy_expiry_chart
         from app.modules.chat.current_intent import conversational_read, team_pending_read
         role = state["usuario_atual"].role
         pending_team = team_pending_read(state["mensagem"], state.get("historico", []))
@@ -627,14 +627,17 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             return {"rota": "direta", "candidato": pending_team, "resposta_deterministica": True,
                     "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "tipo_de_pendencia_da_equipe", "texto": pending_team}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        if asks_chart_menu(state["mensagem"]):
-            answer, menu = make_chart_menu(role)
+        kind = chart_style_request(state['mensagem'])
+        if asks_chart_menu(state["mensagem"]) or (kind and state['contexto'].get('ultima_rota') != 'consulta_operacional'):
+            answer, menu = make_chart_menu(role, kind)
             return {"rota": "direta", "candidato": answer, "menu_graficos": menu,
                     "resposta_deterministica": True,
                     "resultado": {"status": "concluido", "evidencia_contexto": {"origem": "catalogo_de_graficos_da_aplicacao", "perfil": role, "opcoes": menu, "texto": answer}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        selection = select_chart(state["mensagem"], state["contexto"].get("menu_graficos"), role)
-        if selection in ("grafico_barras", "grafico_linhas"):
+        selection = (legacy_expiry_chart(state["mensagem"], state.get("historico", []), role,
+                                        state["contexto"].get("consulta_prazo", False))
+                     or select_chart(state["mensagem"], state["contexto"].get("menu_graficos"), role))
+        if selection in ("grafico_barras", "grafico_linhas", "grafico_rosca", "grafico_setores"):
             return {"rota": "agenda", "grafico_pessoal": selection,
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if isinstance(selection, OperationalDecision):
@@ -658,7 +661,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             return {"rota": "direta", "candidato": external_reply,
                     "resposta_deterministica": True, "pdf_solicitado": False,
                     "resultado": {"status": "esclarecer" if external_reply != OUT_OF_SCOPE_REPLY else "fora_escopo",
-                                  "evidencia_contexto": {"origem": "limite_do_produto", "regra": "Sem receitas, avaliações de empresas ou suposição de relato trabalhista."}},
+                                  "evidencia_contexto": {"origem": "limite_do_produto", "orientacao_publica": external_reply}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if (standalone_math_request(state["mensagem"])
                 or scope_followup(state["mensagem"], state.get("historico", []))
@@ -678,6 +681,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                         "origem": "catalogo_da_aplicacao_para_o_perfil_autenticado", **capabilities}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf, change_chart_type, pending_people_read, pending_people_offer, pending_people_scope, people_count_read
+        from app.modules.chat.conformity_summary import asks_company_conformity
+        if asks_company_conformity(state["mensagem"]):
+            decision = OperationalDecision(acao="consultar_indicadores_cobertura", filtros={})
+            return {"rota": "consulta_operacional", "operational_decision": decision.model_dump(mode="json"),
+                    "resumo_conformidade": True,
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         count = people_count_read(state["mensagem"], state.get("historico", []))
         if count is not None:
             if role not in {"GESTOR", "GESTOR_WORKSPACE"}:
@@ -1069,6 +1078,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                            f"Entre os pares não vigentes: {metrics['em_analise']['valor']} em análise, "
                            f"{metrics['agendados']['valor']} agendados sem análise e "
                            f"{metrics['sem_encaminhamento']['valor']} sem encaminhamento. "+candidate)
+                if state.get("resumo_conformidade"):
+                    from app.modules.chat.conformity_summary import format_company_conformity
+                    candidate = format_company_conformity(result, state["usuario_atual"].role)
             if name=="consultar_resultados_treinamento":
                 metrics={item["chave"]:item for item in result["cartoes"]["indicadores"]}
                 percentage=metrics['percentual_concluidas']
@@ -1095,8 +1107,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         elif result.get("status") == "ok":
             # Keep a readable fallback for history, unsupported clients and review.
             lines = [result["titulo"]]
+            labels = {col["chave"]: col["titulo"] for col in result.get("colunas", [])}
+            situations = {"REALIZACAO_NECESSARIA": "precisa realizar a atividade exigida",
+                          "RENOVACAO_NECESSARIA": "precisa renovar o registro de conformidade",
+                          "PENDENTE": "há uma participação pendente"}
             for row in result["linhas"]:
-                lines.append(" · ".join(f"{key}: {value}" for key,value in row.items() if value is not None))
+                lines.append(" · ".join(f"{labels.get(key, key)}: {situations.get(value, value) if key == 'situacao' and isinstance(value, str) else value}"
+                                        for key,value in row.items() if value is not None))
             if result.get("aviso"):
                 lines.append(result["aviso"])
             lines.append(f"Retornados {len(result['linhas'])} de {result['total']} registro(s) disponíveis.")
@@ -1386,7 +1403,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 emit('chat_review_not_approved',level='WARNING',sink=logger,
                      review_status=verdict.get('status') if verdict.get('status') in {'revisar','rejeitado'} else 'unknown',
                      tool=tool if tool in allowed_tools else 'other',issue_count=len(verdict.get('problemas',[])))
-                return {"resposta": "Não consegui validar os dados desta resposta. Nenhum componente foi liberado; tente novamente.",
+                public_reason = "Não consegui confirmar uma resposta confiável para este pedido. Por isso, não vou apresentar informações que possam estar incorretas. Você pode reformular a pergunta ou tentar novamente."
+                if tool == 'consultar_nrs' and state.get('resultado_tool', {}).get('status') == 'ok':
+                    public_reason = ("Consultei as informações da norma, mas a explicação ainda precisa de revisão. "
+                                     "Não consegui confirmar uma resposta confiável para enviar. "
+                                     "Por isso, não vou apresentar uma orientação que possa causar confusão.")
+                return {"resposta": public_reason,
                         "guardar_turno": False,
                         "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}
             record_decision("output_guard", "approved_deterministic")

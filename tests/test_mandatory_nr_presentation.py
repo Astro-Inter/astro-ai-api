@@ -48,7 +48,7 @@ def test_which_nrs_must_i_fulfill_queries_authenticated_assignments(chat_client,
         history = client.get(f"/sessions/{body['session_id']}/messages").json()
         assert history["mensagens"][-1]["blocos"] == body["blocos"]
     else:
-        assert "Nenhum componente foi liberado" in texto_resposta(body)
+        assert "Não consegui confirmar uma resposta confiável" in texto_resposta(body)
 
 
 def test_no_assignments_does_not_become_no_legal_obligations():
