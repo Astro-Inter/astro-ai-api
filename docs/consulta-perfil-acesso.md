@@ -51,3 +51,69 @@ dos dados enviados ao Juiz, consulta pelo UID autenticado, dados ausentes, recus
 histórico, saudações e contratos dos prompts. Modelos e ferramentas são simulados;
 os dois avisos são de dependências locais. Não houve chamada adicional de IA real,
 merge ou deploy nesta etapa.
+
+## O que perguntar com cada perfil
+
+“Que tipo de perguntas o meu perfil pode fazer?” e “O que posso fazer com meu
+nível de acesso?” passam a consultar o catálogo local de orientação
+`app/modules/chat/capabilities.py`, selecionado pelo papel autenticado da requisição.
+
+| Perfil | Alcance explicado | Exemplos de perguntas |
+| --- | --- | --- |
+| Colaborador | Próprios dados e atividades | “Tenho pendências de NR?”; “Quais treinamentos eu preciso realizar?”; “Mostre meus treinamentos concluídos em um gráfico de linhas.” |
+| Gestor | Unidade autorizada | “Quem da minha equipe tem pendências de NR?”; “Quais conformidades vencem nos próximos 30 dias?”; “Mostre a distribuição da minha equipe por cargo.” |
+| Gestor do Workspace | Unidades autorizadas do mesmo workspace | Exemplos de equipe e “Compare a conformidade entre as unidades.” |
+| Administrador | Cadastro administrativo e informações gerais | “Meus dados.”; “Como funciona o Astro?”; “O que é uma NR?” |
+
+Os exemplos são uma seleção de perguntas úteis, não uma lista exaustiva de
+permissões. Gestores também podem consultar os próprios dados e treinamentos.
+A comparação por unidade continua limitada pelas regras reais da consulta; não
+se alterou a ferramenta para restringir ou ampliar papéis. Administrador não é
+apresentado como um Gestor do Workspace e não recebe exemplos de consultas
+funcionais de NRs/treinamentos pessoais.
+
+As regras foram conferidas em `rh/tools.py`, `sst/tools.py`, `agenda/tools.py`
+e `operational/tools.py`/`insights.py`. Equipe exige papel de gestor; o SQL
+revalida usuário, workspace e unidade. A simulação de exigência de NR é reservada
+a Gestor do Workspace; exemplos de orientação não mudam essas verificações.
+
+O catálogo explica também a consulta de informações gerais e a geração de PDF
+de conteúdo consultado/aprovado. Não promete registros existentes, inscrições,
+criação de eventos ou alteração de perfil. Os dados continuam dependendo de
+cadastro, vínculos e disponibilidade das fontes.
+
+### Fluxo e continuidade
+
+A pergunta completa é reconhecida após o guardrail de entrada. A aplicação monta
+uma candidata em linguagem simples e sua evidência de contexto; o Juiz avalia
+o perfil, o alcance e os exemplos antes do guardrail de saída. Uma recusa permanece
+recusa. Nenhuma consulta operacional é executada apenas para oferecer sugestões.
+Pedidos com instruções extras, terceiros, mudanças de perfil ou exportação não
+são absorvidos por esse reconhecedor.
+
+Os agentes que roteiam, respondem e revisam recebem `capacidades_perfil` no
+contexto confiável, para também orientar formulações livres. A seleção vem sempre
+de `CurrentUser.role`, não do histórico ou de um papel declarado na mensagem.
+Trocar de papel entre requisições recalcula as orientações; não há cache de
+permissões nem novos dados pessoais persistidos.
+
+Somente blocos `texto` são produzidos nesse fluxo, iguais no POST e no histórico.
+Não existe componente novo para web/mobile nem reescrita do histórico anterior.
+
+### Verificação e custo
+
+**547 testes aprovados**, incluindo 20 regressões de orientação por perfil, além
+dos testes de roteamento, contexto, Juiz/guardrails, permissões, PDF, privacidade
+e histórico. Os modelos e as consultas externas são simulados; os dois avisos
+são de dependências locais. As rodadas anteriores se sobrepõem e não devem ser
+somadas a esse total.
+
+Uma única revisão real do Juiz, com perfil e conteúdo inteiramente sintéticos,
+aprovou a orientação de Gestor do Workspace: 3.354 tokens e US$ 0,000433425.
+Nenhuma conta real ou dado privado foi consultado nessa verificação.
+
+O fluxo reconhecido usa guardrail de entrada e Juiz existentes, sem classificação
+por Jev/Luna ou reescrita adicional para montar os exemplos. O catálogo acrescenta
+texto ao contexto das chamadas existentes dos agentes; há aumento proporcional
+de tokens de entrada, sem uma chamada adicional de IA para buscar capacidades.
+Nenhum merge ou deploy foi realizado.

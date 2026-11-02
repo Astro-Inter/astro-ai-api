@@ -15,6 +15,7 @@ from app.modules.chat.agents import invoke_agent
 from app.observability.chat import record_decision
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.public_replies import public_reply
+from app.modules.chat.capabilities import asks_profile_capabilities, profile_capabilities, format_profile_capabilities
 from app.modules.chat.pdf_delivery import asks_for_pdf_link, previous_pdf_reply, remove_delivery_promises
 from app.modules.chat.router_reply import ROUTER_CLARIFICATION
 from app.modules.chat.privacy import (
@@ -609,6 +610,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
+        if asks_profile_capabilities(state["mensagem"]):
+            capabilities = profile_capabilities(state["usuario_atual"].role)
+            return {"rota": "direta", "candidato": format_profile_capabilities(capabilities),
+                    "resposta_deterministica": True,
+                    "resultado": {"status": "concluido", "evidencia_contexto": {
+                        "origem": "catalogo_da_aplicacao_para_o_perfil_autenticado", **capabilities}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf
         previous=state["contexto"].get("consulta_operacional") or {}
         pdf_query=distribution_pdf(state["mensagem"],previous)
