@@ -4,7 +4,7 @@ import unicodedata
 
 
 CAPABILITIES = (
-    "Sou o Astrinho, o assistente virtual do Astro. Posso consultar seus dados cadastrais, funcionários "
+    "Sou o Astrinho, o assistente virtual do Astro. Posso consultar seus dados cadastrais, colaboradores "
     "no seu escopo de acesso, NRs, conformidade, eventos e treinamentos atribuídos, "
     "notificações, dias de acesso e conversas. Também posso buscar informações "
     "nos documentos do Astro e gerar um PDF com o conteúdo consultado. "
