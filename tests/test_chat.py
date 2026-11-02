@@ -2607,7 +2607,7 @@ def test_contextual_chart_inherits_rh_filters(chat_client, monkeypatch):
     repo = application.state.chat_service.repository
     async def prepare():
         await repo.ensure(sid,"user-a")
-        repo.docs[sid].update(ultima_rota="rh",consulta_rh={"tipos":["COLABORADOR"],"status":["ATIVO"],"cargo":"Técnica","pagina":2,"limite":20,"consulta":"listar"})
+        repo.docs[sid].update(ultima_rota="rh",consulta_rh={"tipos":["COLABORADOR"],"status":["ATIVO"],"cargo":"Técnica","pagina":1,"limite":20,"consulta":"listar"})
     asyncio.run(prepare())
     model.replies["roteador"] = json.dumps({"acao":"consultar_indicadores_equipe","filtros":{"agrupar_por":"cargo"}})
     response = client.post("/chat/messages",json={"session_id":sid,"message":"Gere um gráfico desses por favor"})
