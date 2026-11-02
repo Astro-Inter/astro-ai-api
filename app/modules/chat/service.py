@@ -249,6 +249,7 @@ class ChatService:
                         "consulta_operacional": doc.get("consulta_operacional"),
                         "menu_graficos": doc.get("menu_graficos"),
                         "consulta_prazo": doc.get("consulta_prazo", False),
+                        "leitura_pendente": doc.get("leitura_pendente"),
                         "consulta_rh": rh_query,
                         "formato_resposta": "markdown" if markdown else "texto_simples",
                         "ferramentas_disponiveis": [
@@ -308,6 +309,7 @@ class ChatService:
                     "rh_route": "", "sst_decision": None, "sst_route": "",
                     "agenda_decision": None, "agenda_route": "",
                     "grafico_pessoal": None, "menu_graficos": None, "consulta_prazo": False,
+                    "leitura_pendente": None,
                     "operational_decision": None, "roteador_decision": None, "acao_pendente": doc.get("acao_pendente"),
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
@@ -464,6 +466,7 @@ class ChatService:
                             "acao_pendente": result.get("acao_pendente"),
                             "menu_graficos": result.get("menu_graficos"),
                             "consulta_prazo": result.get("consulta_prazo", False),
+                            "leitura_pendente": result.get("leitura_pendente"),
                             "consulta_rh": result.get("consulta_rh"),
                             "consulta_operacional": (result.get("operational_decision") if result.get("rota") == "consulta_operacional"
                                                        else doc.get("consulta_operacional")),

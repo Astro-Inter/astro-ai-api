@@ -668,8 +668,18 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                     "resultado": {"status": "concluido", "evidencia_contexto": {
                         "origem": "catalogo_da_aplicacao_para_o_perfil_autenticado", **capabilities}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf, change_chart_type
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf, change_chart_type, pending_people_read, pending_people_offer, pending_people_scope
         previous=state["contexto"].get("consulta_operacional") or {}
+        people = pending_people_read(state["mensagem"], previous, state["contexto"].get("leitura_pendente"), state.get("historico", []))
+        if isinstance(people, OperationalDecision):
+            return {"rota": "consulta_operacional", "operational_decision": people.model_dump(mode="json"),
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if isinstance(people, str):
+            return {"rota": "direta", "candidato": people, "resposta_deterministica": True,
+                    "leitura_pendente": (pending_people_scope(previous) if people.startswith("Qual NR")
+                                         else state["contexto"].get("leitura_pendente") if people.startswith("Informe uma NR") else None),
+                    "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "selecao_de_nr_para_leitura", "texto": people}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         chart_change = change_chart_type(state["mensagem"], previous, state["contexto"].get("ultima_rota"))
         if isinstance(chart_change, str):
             return {"rota": "direta", "candidato": chart_change,
@@ -1006,6 +1016,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 ),
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
+        proposal = pending_people_offer(command, state["contexto"].get("consulta_operacional")) if not route else None
+        if proposal is not None:
+            return {"rota": "direta", "candidato": command, "resposta_deterministica": True,
+                    "leitura_pendente": proposal.model_dump(mode="json"),
+                    "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "proposta_de_leitura_nao_executada", "consulta": proposal.model_dump(mode="json")}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         return {
             "rota": route.group(1).lower() if route else "direta",
             "candidato": "" if route else command,

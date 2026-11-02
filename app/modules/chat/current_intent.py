@@ -7,6 +7,82 @@ from app.modules.rh.tools import BuscarOutrosUsuariosArgs, RhToolDecision
 from app.modules.agenda.tools import AgendaToolDecision, ConsultarEventosArgs
 
 
+def _pending_people_decision(previous, nr=None, *, require_nr=True):
+    """Reuses validated filters; neither history prose nor a model grants access."""
+    if not isinstance(previous, dict):
+        return None
+    try:
+        decision = OperationalDecision.model_validate(previous)
+        if decision.acao not in {"consultar_grafico_pendencias_nr", "consultar_pendencias_equipe"}:
+            return None
+        filters = decision.filtros.model_dump()
+        selected_nr = nr if nr is not None else filters.get("nr")
+        if selected_nr is None and require_nr:
+            return "Qual NR você quer detalhar? Por exemplo: Quem tem pendência na NR-6?"
+        filters.update(nr=selected_nr, pagina=1, limite=50)
+        return OperationalDecision(acao="consultar_pendencias_equipe", filtros=filters,
+                                   referencia_listagem_rh=decision.referencia_listagem_rh)
+    except (ValueError, TypeError):
+        return None
+
+
+def pending_people_read(message, previous, pending=None, history=()):
+    """Drill down a pending-NR chart, or accept a bounded read-only proposal."""
+    text = ''.join(c for c in unicodedata.normalize('NFKD', message.casefold()) if not unicodedata.combining(c))
+    text = ' '.join(text.split()).strip().rstrip('.!? ')
+    text = re.sub(r',? por favor$', '', text).strip()
+    # Compatibility with an already approved, immediately preceding question.
+    # Only this exact read proposal is recognized, and all filters are revalidated.
+    if pending is None and text in {"ok", "isso", "sim", "s", "pode", "pode consultar", "faca isso"}:
+        if history and history[-1].get("role") == "assistant":
+            legacy = pending_people_offer(history[-1].get("content", ""), previous)
+            pending = legacy.model_dump(mode="json") if legacy else None
+    if isinstance(pending, dict) and pending.get("acao") == "consultar_pendencias_equipe":
+        selection = re.fullmatch(r"(?:nr[ -]?)?(\d{1,3})", text)
+        if selection:
+            nr = int(selection[1])
+            if not 1 <= nr <= 100:
+                return "Informe uma NR válida para consultar as pendências."
+            return _pending_people_decision(pending, nr)
+        if text in {"ok", "isso", "sim", "s", "pode", "pode consultar", "faca isso"}:
+            return _pending_people_decision(pending)
+        if text in {"nao", "cancelar", "cancele"}:
+            return "Tudo bem, não vou realizar essa consulta."
+    match = re.fullmatch(
+        r"(?:(?:mostre|liste) )?(?:quem|quais (?:pessoas|colaboradores)) "
+        r"(?:da (?:minha|nossa|sua) equipe )?(?:tem|tem pendente|esta com|estao com|possui|possuem) "
+        r"(?:essa |esta |a |uma )?pendencias?(?: (?:na|da|de|em) nr[ -]?(?P<nr>\d{1,3}))?", text)
+    if not match:
+        return None
+    nr = int(match['nr']) if match['nr'] else None
+    if nr is not None and not 1 <= nr <= 100:
+        return "Informe uma NR válida para consultar as pendências."
+    continued = _pending_people_decision(previous, nr)
+    if continued is not None:
+        return continued
+    # A complete team request does not require a previous chart. No identity or
+    # company can be supplied by this shortcut; the tool resolves current scope.
+    if nr is not None and re.search(r"\b(?:minha|nossa) equipe\b", text):
+        return OperationalDecision(acao="consultar_pendencias_equipe", filtros={"nr": nr, "limite": 50})
+    return None
+
+
+def pending_people_scope(previous):
+    decision = _pending_people_decision(previous, require_nr=False)
+    return decision.model_dump(mode="json") if isinstance(decision, OperationalDecision) else None
+
+
+def pending_people_offer(answer, previous):
+    """Record only this explicit proposal, never arbitrary assistant instructions."""
+    text = ''.join(c for c in unicodedata.normalize('NFKD', answer.casefold()) if not unicodedata.combining(c))
+    text = ' '.join(text.split()).strip().rstrip('.!? ')
+    match = re.fullmatch(r"voce quer que eu consulte quem da sua equipe tem pendencia na nr[ -]?(\d{1,3})", text)
+    if not match or not 1 <= int(match[1]) <= 100:
+        return None
+    decision = _pending_people_decision(previous, int(match[1]))
+    return decision if isinstance(decision, OperationalDecision) else None
+
+
 def personal_pending_kind(message):
     """Only complete personal requests; never infer a team or another identity."""
     text = ''.join(c for c in unicodedata.normalize('NFKD', message.casefold()) if not unicodedata.combining(c))

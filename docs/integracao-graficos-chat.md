@@ -48,6 +48,40 @@ acima torna essas continuações explícitas sem alterar os guardrails ou aprova
 resultados automaticamente. Falhas reais das ferramentas continuam tratadas pelo
 fluxo existente e precisam de diagnóstico específico caso ocorram após a consulta.
 
+### Do gráfico de pendências para as pessoas
+
+Depois de consultar pendências por NR, “Quem tem pendência na NR-6?” executa
+`consultar_pendencias_equipe` com `nr: 6`. Reaproveita os filtros validados da
+consulta anterior (unidade, cargo, perfil e situação), redefine a página interna
+para 1 e usa o limite seguro de 50 da ferramenta. Não extrai nomes nem estima
+pessoas a partir das barras. O banco continua verificando o usuário e o escopo
+atual. A listagem mantém seus metadados de total/completude; não muda os limites
+nem a paginação de outros contratos. Sem NR selecionada, pede somente qual NR
+detalhar e guarda os filtros para completar a leitura com “NR6”, “NR-6” ou “6”.
+Uma consulta explícita não exige um segundo “sim”.
+
+Quando o roteador ainda propuser exatamente “Você quer que eu consulte quem da
+sua equipe tem pendência na NR-6?”, a aplicação registra `leitura_pendente` como
+uma decisão validada de `consultar_pendencias_equipe`, junto ao turno aprovado.
+“Ok”, “isso”, “sim”, “s” ou “pode consultar” executa essa leitura. A proposta não
+é resultado de consulta e não concede acesso. Outro assunto aprovado, cancelamento
+ou execução limpa esse marcador; uma proposta rejeitada pelo Juiz não é salva.
+O marcador é independente de `acao_pendente`, usado nas confirmações de escrita.
+
+Compatibilidade: em sessões antigas, aceita somente essa pergunta exata como a
+última mensagem aprovada do assistente, com uma consulta anterior válida de
+pendências. Perguntas antigas fora dessa posição, conteúdo do usuário e instruções
+anexadas não são interpretados como proposta. Não existe um “ok” que confirme
+qualquer ação arbitrária. Todas as leituras passam novamente pelas permissões,
+pelo Juiz e pelos guardrails. Em falha, conjunto vazio ou reprovação, não retorna
+tabela de sucesso nem promete buscar depois. Os contratos e a ordem dos blocos
+no POST/histórico permanecem os existentes; web/mobile não exigem componente novo.
+
+Na janela 17:14–17:16 UTC de 02/11, os traces registraram a chamada ao gráfico de
+pendências às 17:14:26 UTC e, depois, continuações nas rotas `sst`/`direta`, sem
+chamada a `consultar_pendencias_equipe`. Isso confirma uma falha de encaminhamento
+na passagem do agregado à listagem; não confirma indisponibilidade do banco.
+
 Os gráficos de treinamentos são pessoais e usam participações em eventos ativos.
 Gráficos de equipe são produzidos por `consultar_indicadores_equipe`; consulte
 [Tools operacionais e autorização](tools-operacionais.md).
