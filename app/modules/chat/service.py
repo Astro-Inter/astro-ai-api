@@ -432,6 +432,8 @@ class ChatService:
                         and chart_data.get("paginacao") == "local"):
                     blocks=build_analytic_blocks(
                         result.get("resultado",{}).get("evidencia_tool",{}).get("nome"),chart_data)
+                    if result.get("resumo_conformidade"):
+                        blocks.insert(0, BlocoTexto(conteudo=public_answer))
                 logger.info("chat_blocks_ready tool=%s judge=%s types=%s",
                             result.get("resultado", {}).get("evidencia_tool", {}).get("nome", "none"),
                             result.get("avaliacao_juiz", {}).get("status", "none"),

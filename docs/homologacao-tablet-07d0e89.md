@@ -129,3 +129,41 @@ Testes simulados cobrem limite nas duas etapas, ausência de dados privados,
 preservação da sessão, sucesso após nova tentativa e esclarecimento de texto
 incompreensível. Não foi adicionada heurística de letras aleatórias que possa
 bloquear nomes, siglas ou códigos legítimos.
+
+## Continuação: situação geral após gráfico de pendências
+
+Na janela das 18h03 de 02/11/2026, o trace registra `consultar_nrs_organizacao`
+e revisão pelo Juiz: os vínculos de NRs não respondem à situação geral de
+conformidade. O problema confirmado é a escolha da consulta; a recusa não deve
+ser contornada. Os textos dos traces são ocultados por privacidade, portanto
+a correlação com a captura usa horário e sequência, sem afirmar identidade de request.
+
+“Tá tudo nos conformes na empresa?” e “empresa inteira e quero saber se tá tudo
+nos conformes” agora executam `consultar_indicadores_cobertura`. Consultam novamente
+o cadastro autorizado completo, sem contar barras históricas nem herdar a seleção
+de uma NR do gráfico anterior. A consulta continua excluindo o solicitante e usando
+cadastros ativos, vínculos cargo/NR e unidade/NR e as restrições SQL já existentes.
+Isso é uma visão da equipe autorizada, não de todos os cadastros da empresa.
+
+Para Gestor, o texto explica o limite à própria unidade. Para Gestor do Workspace,
+explica que a equipe consultada pertence ao workspace autorizado. Não amplia
+permissões nem promete uma auditoria da empresa inteira. Colaborador continua
+sem acesso a esses indicadores de equipe.
+
+A introdução explica exigências com registro vigente, em análise, agendadas e sem
+encaminhamento, com próximo passo. Sem exigências ou mesmo com todos os registros
+vigentes, não certifica conformidade legal ou aptidão. O gráfico continua medindo
+pares pessoa/NR sem encaminhamento, não colaboradores únicos. Fonte, referência,
+critérios e limites permanecem nos blocos analíticos existentes.
+
+O texto passa pelo mesmo Juiz antes da liberação e é preservado como bloco `texto`
+antes dos indicadores neste fluxo. POST e histórico guardam a mesma ordem e conteúdo.
+Sem dados confiáveis, falha de consulta ou recusa, não cria indicadores de sucesso.
+Não há tipo novo de bloco nem chamada extra de IA. Web/mobile devem renderizar os
+blocos na ordem recebida; a paginação visual segue local.
+
+198 testes passaram no grupo de regressões de situação geral, gráficos, ferramentas
+analíticas, esclarecimentos e contratos dos prompts, com respostas simuladas.
+Repetir no tablet após publicar a revisão: gráfico de pendências → “tá tudo nos
+conformes na empresa?” → “empresa inteira e quero saber se tá tudo nos conformes”.
+Esta correção não foi publicada em produção durante o desenvolvimento.

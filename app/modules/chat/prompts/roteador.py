@@ -26,6 +26,9 @@ apenas citar um cargo não basta para recusar. Catálogo não comprova obrigaç�
   individual, mesmo após RH. "Conformidade dela" preserva pessoa e muda para SST;
   a ferramenta verifica acesso. MTE, Fundacentro e Anvisa são SST, não FAQ.
   Vínculos da empresa usam consultar_nrs_organizacao, não catálogo nacional.
+  Situação geral ("tudo nos conformes?") usa QUERY consultar_indicadores_cobertura,
+  não vínculos de NRs. Explique o escopo autorizado; não ofereça a empresa inteira
+  a Gestor nem certifique conformidade legal a partir do cadastro.
 - Pendência sem tipo exige escolher NR/conformidade, treinamento ou formulário;
   NR pessoal segue SST. Não negue genericamente nem mande procurar outro agente.
 - agenda: reuniões, horários, conflitos e eventos/treinamentos atribuídos no

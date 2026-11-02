@@ -679,6 +679,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                         "origem": "catalogo_da_aplicacao_para_o_perfil_autenticado", **capabilities}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf, change_chart_type, pending_people_read, pending_people_offer, pending_people_scope, people_count_read
+        from app.modules.chat.conformity_summary import asks_company_conformity
+        if asks_company_conformity(state["mensagem"]):
+            decision = OperationalDecision(acao="consultar_indicadores_cobertura", filtros={})
+            return {"rota": "consulta_operacional", "operational_decision": decision.model_dump(mode="json"),
+                    "resumo_conformidade": True,
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         count = people_count_read(state["mensagem"], state.get("historico", []))
         if count is not None:
             if role not in {"GESTOR", "GESTOR_WORKSPACE"}:
@@ -1070,6 +1076,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                            f"Entre os pares não vigentes: {metrics['em_analise']['valor']} em análise, "
                            f"{metrics['agendados']['valor']} agendados sem análise e "
                            f"{metrics['sem_encaminhamento']['valor']} sem encaminhamento. "+candidate)
+                if state.get("resumo_conformidade"):
+                    from app.modules.chat.conformity_summary import format_company_conformity
+                    candidate = format_company_conformity(result, state["usuario_atual"].role)
             if name=="consultar_resultados_treinamento":
                 metrics={item["chave"]:item for item in result["cartoes"]["indicadores"]}
                 percentage=metrics['percentual_concluidas']
