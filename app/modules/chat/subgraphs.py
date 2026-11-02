@@ -706,7 +706,7 @@ def _formatar_treinamentos(result: dict, reference_date=None) -> str:
         if validity:
             details.append(f"Validade: {validity}.")
         if type(reference) is int:
-            details.append(f"Para selecionar este evento, use a referência do evento: {reference} (evento_id).")
+            details.append(f"Para selecionar este evento, use a referência do evento: {reference}.")
         lines.append(" ".join(details))
         if training.get("descricao"):
             lines.append(f"  {training['descricao'][:160]}")
@@ -762,7 +762,7 @@ def _formatar_eventos(result: dict, reference_date=None) -> str:
         return (
             "Não encontrei próximos eventos atribuídos a você no Astro."
             if upcoming else "Não encontrei eventos atribuídos a você no Astro."
-        ) + " Sem eventos neste conjunto, não há evento_id para selecionar um resumo."
+        )
     if result.get("status") != "ok":
         return "Não foi possível consultar seus eventos no Astro. " + result.get("mensagem", "")
     trainings = {**result, "treinamentos": result.get("eventos", [])}
@@ -782,10 +782,10 @@ def _referencias_eventos(result):
         if type(reference) is int and reference>0 and isinstance(event.get('titulo'),str):
             events.setdefault(reference,event['titulo'])
     if not events:
-        return 'A consulta não retornou referências evento_id utilizáveis para selecionar um resumo.'
+        return 'Não encontrei um evento com referência disponível para selecionar um resumo.'
     lines=['Eventos atribuídos a você para selecionar um resumo:']
-    lines.extend(f'{title}. Para selecionar, use a referência do evento: {reference} (evento_id).' for reference,title in events.items())
-    lines.append('Escolha pelo evento_id, por exemplo: Faça um resumo do evento '+str(next(iter(events)))+'. O acesso será verificado novamente.')
+    lines.extend(f'{title}. Para selecionar, use a referência do evento: {reference}.' for reference,title in events.items())
+    lines.append('Escolha pela referência do evento, por exemplo: Faça um resumo do evento '+str(next(iter(events)))+'. O acesso será verificado novamente.')
     if result.get('pagina',1)<result.get('total_paginas',1):
         lines.append(f"Para mais eventos, consulte a página {result['pagina']+1} da sua agenda.")
     return '\n'.join(lines)

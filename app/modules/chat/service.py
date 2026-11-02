@@ -299,7 +299,7 @@ class ChatService:
                                    "serve como contexto interno e fallback. "
                                    "Historico nao comprova direitos nem execucao. "
                                    "Nao expor UID, tokens, workspace_id ou chaves internas. "
-                                   "Referencias evento_id de eventos autorizados podem ser exibidas para selecao; "
+                                   "Referencias numericas de eventos autorizados podem ser exibidas para selecao com o nome publico referencia do evento, sem mencionar evento_id; "
                                    "nao concedem acesso nem substituem verificacoes de permissao. "
                                    "Em respostas do FAQ, citar documento e pagina quando "
                                    "fornecidos pelos trechos autorizados.",

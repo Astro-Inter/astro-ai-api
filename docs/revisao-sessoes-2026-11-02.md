@@ -75,6 +75,13 @@ Gestor do Workspace; o caminho administrativo existente não foi ampliado.
 
 ## Perguntas para repetir após publicação
 
+A apresentação da agenda não mostra o nome técnico `evento_id`. Uma agenda vazia
+responde somente que não encontrou eventos atribuídos (próximos ou todos, conforme
+a consulta). Quando há eventos, o texto usa “referência do evento: 12”. A chave
+interna `evento_id`, a seleção autorizada por referência e os campos dos blocos
+permanecem intactos. Mensagens antigas no histórico não são reescritas; novas
+respostas e o respectivo histórico usam a linguagem simplificada.
+
 1. “Quantas pessoas tem no workspace?”; verificar escopo exibido e exclusão do solicitante.
 2. “Quantos colaboradores há na minha unidade?”; conferir filtro de perfil.
 3. “Me faça um gráfico” → “de colaboradores por cargo”.
