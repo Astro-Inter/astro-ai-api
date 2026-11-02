@@ -406,11 +406,14 @@ class ChatService:
                                                   unidade=chart_data.get("unidade_grafico", "pessoas"), fonte=chart_data["fonte"]))
                     summary = f"Retornados {len(chart_data['linhas'])} de {chart_data['total']} registro(s) disponíveis."
                     if compact_expiry:
-                        summary = (f"Retornadas {len(chart_data['linhas'])} de {chart_data['total']} faixas. Fonte: {chart_data['fonte']}. "
-                                   f"Unidade: {chart_data.get('unidade_grafico', 'registros')}.")
+                        summary = ("Os números representam registros de conformidade, não pessoas diferentes. "
+                                   f"Fonte: {chart_data['fonte']}.")
                         dates = {row["data_referencia"] for row in chart_data["linhas"] if row.get("data_referencia")}
                         if len(dates) == 1:
-                            summary += f" Referência: {next(iter(dates))}."
+                            from app.modules.chat.subgraphs import _data_legivel
+                            reference = _data_legivel(next(iter(dates)))
+                            if reference:
+                                summary += f" Dados de {reference}."
                         elif dates:
                             summary += " Referências disponíveis na tabela."
                     if len(chart_data["linhas"]) < chart_data["total"]:

@@ -19,7 +19,7 @@ from app.modules.chat.state import ChatState
 from app.modules.chat.session_context import seed_context_people
 from app.modules.chat.router_reply import ROUTER_CLARIFICATION, normalize_router_reply
 from app.modules.chat.prompts.examples import example_messages
-from app.modules.chat.prompts.inicial import PDF_DELIVERY_PROMPT
+from app.modules.chat.prompts.inicial import PDF_DELIVERY_PROMPT, PDF_REVIEW_PROMPT
 from app.observability.chat import (
     finish_agent_measurement,
     start_agent_measurement,
@@ -136,7 +136,14 @@ async def _invoke_agent(
         "peça esclarecimento. Juiz e guardrails continuam exigindo evidências atuais."
     )
     if state.get("pdf_solicitado"):
-        prompt += "\n\n" + PDF_DELIVERY_PROMPT
+        reviewer = name in {"juiz", "guardrail_saida"}
+        prompt += "\n\n" + (PDF_REVIEW_PROMPT if reviewer else PDF_DELIVERY_PROMPT)
+        if reviewer:
+            trusted_context["etapa_pdf"] = {
+                "fase": "revisao_conteudo_antes_geracao",
+                "geracao_executada": False,
+                "geracao_condicionada_a_aprovacao": True,
+            }
     system = prompt + "\n\nCONTEXTO DA REQUISICAO:\n" + json.dumps(
         privacy.mask_data(trusted_context), ensure_ascii=False,
     )

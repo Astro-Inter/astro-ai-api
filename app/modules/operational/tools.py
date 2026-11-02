@@ -228,14 +228,14 @@ FROM aggregated ORDER BY nr LIMIT %s OFFSET %s"""
         if action in {"consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"}:
             result["unidade_grafico"] = {"consultar_indicadores_equipe":"pessoas", "consultar_grafico_pendencias_nr":"pendências", "consultar_grafico_vencimentos":"registros"}[action]
             if action != "consultar_indicadores_equipe":
-                result["aviso"] = "Pessoas únicas são contadas por categoria; não some essas contagens como pessoas únicas globais."
+                result["aviso"] = "Uma pessoa pode aparecer em mais de uma faixa. Por isso, não some as pessoas das faixas para obter o total da equipe."
             if result["completo"] and len(data) <= 12:
                 result["grafico"] = [{"categoria":row["categoria"],"valor":row["quantidade"]} for row in data]
                 result["tipo_grafico"] = args.tipo_grafico
             else:
                 result["aviso"] = "O gráfico exige todas as categorias e suporta até 12; consulte a tabela paginada."
             if action == "consultar_indicadores_equipe" and referencia_listagem_rh:
-                result["aviso"] = (result.get("aviso", "") + " Agregação de todo o conjunto autorizado pelos filtros da listagem RH, incluindo seu critério de UID cadastrado; não apenas das linhas enviadas.").strip()
+                result["aviso"] = (result.get("aviso", "") + " O gráfico considera todas as pessoas que correspondem aos critérios da lista, não apenas as linhas exibidas.").strip()
         return result
     except Exception:
         return {"status":"indisponivel","mensagem":"Não foi possível consultar o cadastro. Nenhum resultado foi confirmado."}

@@ -609,9 +609,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf
         previous=state["contexto"].get("consulta_operacional") or {}
         pdf_query=distribution_pdf(state["mensagem"],previous)
+        if pdf_query is None:
+            pdf_query = summary_pdf(state["mensagem"], previous, state["contexto"].get("ultima_rota"))
         if isinstance(pdf_query,str):
             return {"rota":"direta","candidato":pdf_query,"pdf_solicitado":False,
                     "agentes_chamados":state["agentes_chamados"]+["roteador"]}
@@ -1014,10 +1016,31 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 total_people=sum(point['valor'] for point in points)
                 candidate=(f"{result['titulo']}: "+'; '.join(f"{p['categoria']}: {p['valor']}" for p in points)
                            +f". Total do conjunto autorizado pelos filtros: {total_people} pessoas em {len(points)} categorias. "
-                           "A agregação foi consultada no cadastro completo autorizado, independentemente das linhas enviadas na tabela anterior ou da página visual.")
+                           "O gráfico considera todas as pessoas que correspondem aos critérios da lista, não apenas as linhas exibidas.")
                 if result.get('aviso'):candidate+=' '+result['aviso']
         else:
             candidate = result.get("mensagem", "Nenhum registro nesta página; isso não comprova ausência em outras páginas.")
+        if name == "consultar_grafico_vencimentos" and result.get("status") == "ok":
+            from app.modules.chat.subgraphs import _data_legivel
+            rows = result.get("linhas", [])
+            # The same source-backed prose is reviewed, delivered and exported.
+            lines = ["Vencimentos dos registros de conformidade da equipe:"]
+            for row in rows:
+                if row.get("categoria") is not None and row.get("quantidade") is not None:
+                    lines.append(f"{row['categoria']}: {row['quantidade']} registro(s).")
+            lines.append("Uma pessoa pode ter mais de um registro e aparecer em mais de uma faixa.")
+            if result.get("fonte"):
+                lines.append(f"Fonte: {result['fonte']}.")
+            dates = {row["data_referencia"] for row in rows if row.get("data_referencia")}
+            if len(dates) == 1:
+                reference = _data_legivel(next(iter(dates)))
+                if reference:
+                    lines.append(f"Dados de {reference}.")
+            if len(rows) < result.get("total", len(rows)):
+                lines.append(f"Este resumo mostra {len(rows)} de {result['total']} faixas. O conjunto é parcial.")
+            if result.get("aviso"):
+                lines.append(result["aviso"])
+            candidate = "\n".join(lines)
         if name=='consultar_detalhes_evento' and result.get('status')=='ok':
             fields={row.get('campo'):row.get('valor') for row in result.get('linhas',[])}
             title=fields.get('Título')
