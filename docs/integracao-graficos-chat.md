@@ -384,13 +384,33 @@ escopo de unidade/workspace e revalidação de acesso dessa ferramenta. O resumo
 incluído na evidência e no plano de apresentação antes da aprovação do Juiz;
 nenhuma ficha é liberada quando a resposta é recusada.
 
-**Web/mobile:** adicionar um indicador à ficha usando `rotulo` e `quantidade`.
-Com `status: "ok"`, mostrar inclusive zero. Com `indisponivel`, mostrar
+**Compatibilidade sem atualização de web/mobile:** a ficha própria completa é
+enviada na ordem `texto` de apresentação → `ficha_usuario` → `texto` com o resumo
+de pendências. O resumo usa o mesmo conteúdo fornecido ao Juiz, com a contagem
+calculada pela aplicação; não exige componente novo, nova tool nem chamada extra
+de IA. Exemplo do último bloco, com contagem fictícia:
+
+```json
+{"tipo":"texto","conteudo":"Pendências de NRs: 3. Cada NR é contada uma vez; não inclui outras categorias de pendência."}
+```
+
+Se a consulta falhar, o texto informa “Não foi possível confirmar a quantidade de
+pendências de NRs agora.” Para ADMIN, informa que o indicador não se aplica.
+A ficha de terceiro mantém seu texto explicativo, que já contém a contagem,
+sem acrescentar uma segunda cópia. Perguntas de campo específico continuam sem
+esse resumo. Os clientes atuais só precisam manter a renderização dos blocos
+`texto` já suportados, na ordem recebida; nenhuma alteração no mobile/web é
+necessária para mostrar a contagem como texto.
+
+O objeto `pendencias` continua disponível para um indicador visual opcional no
+futuro, usando `rotulo` e `quantidade`. Com `status: "ok"`, mostrar inclusive zero.
+Com `indisponivel`, mostrar
 “Não disponível”; com `nao_aplicavel`, omitir ou mostrar “Não se aplica”. Não somar
 esse valor às contagens de outros blocos nem tratá-lo como quantidade de atividades.
 Fonte, critério e referência podem ficar em detalhes acessíveis do indicador.
 Histórico antigo sem `pendencias` (ou com `null`) continua válido: ocultar o
-indicador, sem transformar ausência em zero. O histórico preserva o snapshot da
+indicador, sem transformar ausência em zero. Fichas antigas não recebem o novo
+texto retroativamente. O histórico preserva o snapshot da
 consulta original; reler uma conversa não recalcula pendências nem faz leitura
 adicional de NRs. POST e histórico mantêm a ordem dos blocos. Foto temporária e
 regras de autorização continuam as mesmas.
@@ -405,7 +425,8 @@ histórico e consultas de campos específicos passaram com respostas simuladas.
 ## Cartão do usuário autenticado (`buscar_meus_dados`)
 
 Pedidos completos como “Meus dados” retornam, nesta ordem, um bloco de texto de
-apresentação e um `ficha_usuario` v1. A consulta SQL identifica o usuário somente
+apresentação, um `ficha_usuario` v1 e o resumo de pendências em `texto` quando
+consultado. A consulta SQL identifica o usuário somente
 pelo UID do contexto autenticado. ADMIN usa o próprio cadastro administrativo;
 associações de cargo/unidade ausentes não escondem o cadastro funcional.
 
@@ -422,7 +443,12 @@ quando não houver nome para extrair iniciais. Os demais campos ausentes são nu
    "email":"pessoa@example.com","perfil":"COLABORADOR",
    "cargo":"Analista","unidade":"Matriz","modalidade":"HIBRIDO",
    "foto":{"tipo":"imagem","url":null,"descricao":"Foto do usuário autenticado"},
-   "situacao":null,"conformidade":null}
+   "situacao":null,"conformidade":null,
+   "pendencias":{"status":"ok","quantidade":3,"rotulo":"Pendências de NRs",
+     "data_referencia":"2026-11-02",
+     "criterio":"NRs aplicáveis com atividade pendente ou necessidade de realização/renovação; uma contagem por NR.",
+     "fonte":"Cadastro Astro — situação das NRs aplicáveis"}},
+  {"tipo":"texto","conteudo":"Pendências de NRs: 3. Cada NR é contada uma vez; não inclui outras categorias de pendência."}
 ]
 ```
 
