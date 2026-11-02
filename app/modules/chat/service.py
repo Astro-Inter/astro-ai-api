@@ -404,16 +404,17 @@ class ChatService:
                         chart_class = {"grafico_setores": BlocoGraficoSetores, "grafico_linhas": BlocoGraficoLinhas, "grafico_rosca": BlocoGraficoRosca}.get(chart_data.get("tipo_grafico"), BlocoGrafico)
                         blocks.append(chart_class(titulo=chart_data["titulo"], dados=chart_data["grafico"],
                                                   unidade=chart_data.get("unidade_grafico", "pessoas"), fonte=chart_data["fonte"]))
-                    summary = f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. Total: {chart_data['total']} registro(s)."
+                    summary = f"Retornados {len(chart_data['linhas'])} de {chart_data['total']} registro(s) disponíveis."
                     if compact_expiry:
-                        summary = (f"Página {chart_data['pagina']} de {chart_data['total_paginas']}. "
-                                   f"{chart_data['total']} faixas. Fonte: {chart_data['fonte']}. "
+                        summary = (f"Retornadas {len(chart_data['linhas'])} de {chart_data['total']} faixas. Fonte: {chart_data['fonte']}. "
                                    f"Unidade: {chart_data.get('unidade_grafico', 'registros')}.")
                         dates = {row["data_referencia"] for row in chart_data["linhas"] if row.get("data_referencia")}
                         if len(dates) == 1:
                             summary += f" Referência: {next(iter(dates))}."
                         elif dates:
                             summary += " Referências disponíveis na tabela."
+                    if len(chart_data["linhas"]) < chart_data["total"]:
+                        summary += " O conjunto retornado é parcial."
                     if chart_data.get("aviso"):
                         summary += " " + chart_data["aviso"]
                     blocks.append(BlocoTexto(conteudo=summary))

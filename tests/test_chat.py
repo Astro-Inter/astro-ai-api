@@ -221,8 +221,9 @@ def test_agenda_agent_consults_training_instead_of_sst(chat_client, monkeypatch)
 
     assert response.status_code == 200
     assert "Operação segura" in texto_resposta(response.json())
-    assert "participação: pendente" in texto_resposta(response.json())
-    assert "2026-09-20T08:00:00" in texto_resposta(response.json())
+    assert "Sua participação está pendente" in texto_resposta(response.json())
+    assert "20/09/2026 às 08:00" in texto_resposta(response.json())
+    assert " | " not in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "agenda", "consultar_treinamentos",
         "juiz", "guardrail_saida",
@@ -492,7 +493,8 @@ def test_sst_agent_lists_all_current_nrs_with_compact_payload(chat_client, monke
 
     assert response.status_code == 200
     body = response.json()
-    assert "Encontrei 35 NR(s). Página 1 de 1" in texto_resposta(body)
+    assert "Retornadas 35 de 35 NR(s) disponíveis" in texto_resposta(body)
+    assert "Página 1 de 1" not in texto_resposta(body)
     assert "NR-35" in texto_resposta(body)
     assert "conteudo muito extenso" not in texto_resposta(body)
     assert collection.query == {"revogada": False}
@@ -585,7 +587,7 @@ def test_manager_consults_employee_conformity_with_recent_history(chat_client, m
     result = response.json()
     assert result["agentes_chamados"] == ["guardrail_entrada", "roteador", "sst", "consultar_conformidade_usuario", "juiz", "guardrail_saida"]
     assert "Maria Silva" in texto_resposta(result) and "NR-10" in texto_resposta(result)
-    assert "renovação necessária" in texto_resposta(result)
+    assert "precisa ser renovada" in texto_resposta(result)
     assert not any(call[0] == "sst" for call in model.calls)
 
 
@@ -646,8 +648,8 @@ def test_sst_agent_consults_nr_status_for_authenticated_user(chat_client, monkey
         "guardrail_entrada", "roteador", "sst", "consultar_situacao_nrs",
         "juiz", "guardrail_saida",
     ]
-    assert "NR-10" in texto_resposta(body) and "situação: vigente" in texto_resposta(body)
-    assert "NR-18" in texto_resposta(body) and "ação: renovar" in texto_resposta(body)
+    assert "NR-10" in texto_resposta(body) and "está em dia" in texto_resposta(body)
+    assert "NR-18" in texto_resposta(body) and "Providencie a renovação" in texto_resposta(body)
     assert "Fonte:" not in texto_resposta(body)
     assert "PostgreSQL" not in texto_resposta(body)
     assert [call[0] for call in model.calls] == [
@@ -2559,6 +2561,8 @@ def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, mo
     assert review["apresentacao"]["blocos"] == ["tabela", chart_kind]
     history = client.get(f"/sessions/{body['session_id']}/messages").json()
     assert history["mensagens"][-1]["blocos"] == body["blocos"]
+    assert "Página 1 de 1" not in texto_resposta(body)
+    assert "Página 1 de 1" not in str(judge[1][-1].content)
     assert "juiz" in body["agentes_chamados"] and "guardrail_saida" in body["agentes_chamados"]
     assert next(call for call in model.calls if call[0] == "roteador")[2] is True
     assert "test-private-token" not in str(model.calls)
@@ -2584,6 +2588,9 @@ def test_operational_next_page_preserves_filters_and_rechecks_user(chat_client, 
     assert [item["pagina"] for item in calls] == [1,2]
     assert all(item["agrupar_por"] == "cargo" and item["limite"] == 1 for item in calls)
     assert second.json()["blocos"][1]["pagina"] == 2
+    assert "Retornados 1 de 2 registro(s) disponíveis" in texto_resposta(second.json())
+    assert "conjunto retornado é parcial" in texto_resposta(second.json())
+    assert "Página 2 de 2" not in texto_resposta(second.json())
 
 
 def test_contextual_chart_inherits_rh_filters(chat_client, monkeypatch):
@@ -2601,7 +2608,7 @@ def test_contextual_chart_inherits_rh_filters(chat_client, monkeypatch):
     repo = application.state.chat_service.repository
     async def prepare():
         await repo.ensure(sid,"user-a")
-        repo.docs[sid].update(ultima_rota="rh",consulta_rh={"tipos":["COLABORADOR"],"status":["ATIVO"],"cargo":"Técnica","pagina":2,"limite":20,"consulta":"listar"})
+        repo.docs[sid].update(ultima_rota="rh",consulta_rh={"tipos":["COLABORADOR"],"status":["ATIVO"],"cargo":"Técnica","pagina":1,"limite":20,"consulta":"listar"})
     asyncio.run(prepare())
     model.replies["roteador"] = json.dumps({"acao":"consultar_indicadores_equipe","filtros":{"agrupar_por":"cargo"}})
     response = client.post("/chat/messages",json={"session_id":sid,"message":"Gere um gráfico desses por favor"})

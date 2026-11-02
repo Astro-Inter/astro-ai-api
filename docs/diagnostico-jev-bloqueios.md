@@ -57,3 +57,63 @@ Não houve nova carga Qdrant, alteração Redis, merge ou deploy nesta revisão.
 - [OpenRouter — Jev](https://openrouter.ai/docs/guides/community/jev) e [contrato alpha](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request).
 - [Typesafe — confiança](https://docs.typesafe.ai/confidence).
 - [LangSmith — consulta de traces](https://docs.langchain.com/langsmith/trace-query-syntax).
+
+
+## Pergunta pessoal curta sobre pendências
+
+O exemplo adicional “tenho pendências?” recebeu uma negativa genérica, citando
+outro agente. A captura não identifica por si só a revisão ou o responsável pelo
+roteamento. No código, o reconhecimento pessoal de situação de NRs exige menção
+à norma e não reconhecia essa formulação curta; portanto o fluxo textual podia
+produzir a negativa apesar da existência de uma consulta pessoal.
+
+Agora, a formulação genérica recebe esclarecimento entre NRs/conformidade,
+treinamentos e formulários, sem assumir que todas as pendências são de SST.
+Pedidos completos e explícitos de pendências de NRs/conformidade executam
+`consultar_situacao_nrs`, usando exclusivamente o UID autenticado. Não há resumo
+global fictício de pendências nem nova tool ou chamada adicional de IA.
+Consultas a outra pessoa/equipe, filtros adicionais ou texto inseguro não são
+absorvidos pelo reconhecimento restrito; seguem os fluxos e validações existentes.
+Juiz e guardrails permanecem necessários. Falta de cadastro e indisponibilidade
+não significam ausência de pendências. Perguntas novas e respostas mantêm igualdade
+entre POST e histórico; os registros antigos não são alterados.
+
+
+## Falha confirmada de contrato no gráfico contextual: status vazio
+
+O traceback fornecido identifica `OperationalDecision.model_validate(values)` no
+roteador, após herdar filtros da listagem. `BuscarOutrosUsuariosArgs` usa `status: []`
+e `tipos: []` como listas válidas sem restrição adicional. `TeamArgs`, usado na decisão
+operacional, representa ausência de filtro por `null`; uma lista explícita deve ter
+pelo menos um item. A cópia direta de `[]` gerava `ValidationError: too_short`, sem
+tratamento nesse ponto. Trata-se de adaptação de contratos na aplicação, não de
+veto Jev ou prova de indisponibilidade do provedor.
+
+O reconhecedor de algumas frases exatas já fazia `lista or None`. Uma formulação
+mais longa, como “Faça um gráfico de barras por cargo com base nessa listagem,
+considerando toda a minha equipe autorizada”, seguia o roteador textual e copiava
+as listas sem conversão. Isso explica por que uma formulação podia funcionar e
+outra equivalente falhar. O traceback confirma essa causa específica; não demonstra
+que todas as recusas, falhas de PDF ou indisponibilidades tenham a mesma origem.
+
+A correção centraliza a adaptação dos filtros RH nos dois caminhos. Só listas
+vazias validadas no contrato de origem viram `null`; valores inválidos não são
+apagados nem transformados em ausência de filtro. Filtros explícitos da pergunta
+atual são preservados. Quando a listagem não restringia perfil, a normalização não
+introduz artificialmente COLABORADOR só pela palavra “funcionários” na continuação.
+
+A decisão final continua sendo validada. Se dados legados forem inválidos ou não
+couberem no contrato de destino (por exemplo, nome além do limite), o chat pede que
+a listagem seja consultada novamente, sem executar consulta ampliada ou retornar
+erro interno. Limites e página da tabela não são copiados para as categorias.
+Identidade, SQL de autorização, exclusão do solicitante na referência de RH, Juiz
+e guardrails não foram alterados.
+
+As regressões simulam o caminho textual das três consultas gráficas, listas vazias
+e preenchidas, filtros novos explícitos, filtros salvos inválidos, agregação além
+da quantidade tabular, referências internas, UID autenticado e igualdade entre
+POST/histórico. O próprio contrato operacional continua recusando listas vazias
+fornecidas pelo modelo. Não houve chamada real de IA ou deploy para este ajuste;
+a correção deve ser homologada após publicação autorizada da PR de continuação.
+
+Validação final deste ajuste: **421 testes aprovados**, incluindo 16 regressões novas; dois avisos de dependências. A fixture anterior de listagem paginada foi atualizada para pagina=1 conforme o contrato atual; pagina=2 legada continua coberta como contexto incompatível que exige reconsulta, sem executar a tool.

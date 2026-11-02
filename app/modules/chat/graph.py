@@ -139,6 +139,21 @@ def _continuacao_rh(state: ChatState) -> BuscarOutrosUsuariosArgs | None:
     return None
 
 
+def _filtros_cadastrais_da_listagem(previous: dict) -> dict:
+    """Translate RH's validated empty lists to the aggregate's optional filters.
+
+    This is a contract adapter, not permission handling. Invalid legacy values
+    must still fail validation rather than silently broaden the saved scope.
+    """
+    filters = BuscarOutrosUsuariosArgs.model_validate(previous)
+    return {
+        "tipos": filters.tipos or None,
+        "status": filters.status or None,
+        "nome": filters.nome,
+        "cargo": filters.cargo,
+    }
+
+
 def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
     """Only an explicit, bounded chart reference reuses trusted query filters.
 
@@ -167,7 +182,7 @@ def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
     if not isinstance(previous, dict):
         return "Não encontrei os filtros da listagem anterior. Informe o conjunto que deseja comparar."
     try:
-        filters = BuscarOutrosUsuariosArgs.model_validate(previous)
+        filters = _filtros_cadastrais_da_listagem(previous)
         return OperationalDecision.model_validate({
             "acao": "consultar_indicadores_equipe",
             "referencia_listagem_rh": True,
@@ -176,8 +191,7 @@ def _grafico_da_listagem(state: ChatState) -> OperationalDecision | str | None:
                 "tipo_grafico": {"barras": "grafico_barras", "setores": "grafico_setores",
                                  "pizza": "grafico_setores", "rosca": "grafico_rosca",
                                  "donut": "grafico_rosca", "linhas": "grafico_linhas"}[match["tipo"]],
-                "tipos": filters.tipos or None, "status": filters.status or None,
-                "nome": filters.nome, "cargo": filters.cargo,
+                **filters,
                 # Quantity and page of the previous list are deliberately not reused.
             },
         })
@@ -595,7 +609,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind
         previous=state["contexto"].get("consulta_operacional") or {}
         pdf_query=distribution_pdf(state["mensagem"],previous)
         if isinstance(pdf_query,str):
@@ -616,6 +630,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                                  _sem_acentos(state["mensagem"]).strip())):
             return {"rota": "rh", "rh_decision": RhToolDecision(acao="buscar_meus_dados"),
                     "agentes_chamados": state["agentes_chamados"]+["roteador"]}
+        pending_kind = personal_pending_kind(state["mensagem"])
+        if pending_kind == "esclarecer":
+            return {"rota": "direta", "candidato": "Você quer consultar suas pendências de NRs/conformidade, treinamentos ou formulários?",
+                    "resultado": {"status": "esclarecer"},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if pending_kind == "sst":
+            return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if general_nr_question(state["mensagem"]):
             return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         current=explicit_read(state["mensagem"])
@@ -687,16 +708,25 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 if re.search(r"\b(rosca|donut)\b", normalized):
                     values["filtros"]["tipo_grafico"] = "grafico_rosca"
                 previous = state.get("consulta_rh")
-                if (isinstance(previous, dict)
-                        and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", normalized)):
-                    if decision.acao == "consultar_indicadores_equipe":
-                        values["referencia_listagem_rh"] = True
-                    for field in ("tipos", "status", "nome", "cargo"):
-                        if values["filtros"].get(field) is None and previous.get(field) is not None:
-                            values["filtros"][field] = previous[field]
-                if values["filtros"].get("tipos") is None and re.search(r"\b(funcionarios?|colaboradores)\b", normalized):
-                    values["filtros"]["tipos"] = ["COLABORADOR"]
-                decision = OperationalDecision.model_validate(values)
+                inherited = None
+                try:
+                    if (isinstance(previous, dict)
+                            and re.search(r"\b(nesses?|nessas?|desses?|dessas?|nisso|esses? dados|essas? pessoas)\b", normalized)):
+                        inherited = _filtros_cadastrais_da_listagem(previous)
+                        if decision.acao == "consultar_indicadores_equipe":
+                            values["referencia_listagem_rh"] = True
+                        for field, value in inherited.items():
+                            if values["filtros"].get(field) is None:
+                                values["filtros"][field] = value
+                    if (inherited is None and values["filtros"].get("tipos") is None
+                            and re.search(r"\b(funcionarios?|colaboradores)\b", normalized)):
+                        values["filtros"]["tipos"] = ["COLABORADOR"]
+                    decision = OperationalDecision.model_validate(values)
+                except ValidationError:
+                    return {"rota": "direta", "candidato": (
+                        "Não consegui recuperar os critérios da listagem com segurança. "
+                        "Consulte a lista de pessoas novamente antes de pedir o gráfico."
+                    ), "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
             return {"rota":"consulta_operacional", "operational_decision":decision.model_dump(mode="json"),
                     "agentes_chamados":state["agentes_chamados"] + ["roteador"]}
         employee_filters = _continuacao_rh(state)
@@ -973,10 +1003,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 lines.append(" · ".join(f"{key}: {value}" for key,value in row.items() if value is not None))
             if result.get("aviso"):
                 lines.append(result["aviso"])
-            lines.append(f"Página {result['pagina']} de {result['total_paginas']}. Total: {result['total']} registro(s).")
+            lines.append(f"Retornados {len(result['linhas'])} de {result['total']} registro(s) disponíveis.")
+            if len(result["linhas"]) < result["total"]:
+                lines.append("O conjunto retornado é parcial.")
             candidate = "\n".join(lines)
             if len(candidate) > 5500:
-                candidate = candidate[:5000] + "\n[Resumo abreviado; consulte a tabela e a paginação.]"
+                candidate = candidate[:5000] + "\n[Resumo abreviado; consulte a tabela.]"
             if name=='consultar_indicadores_equipe' and result.get('completo') and result.get('grafico'):
                 points=result['grafico']
                 total_people=sum(point['valor'] for point in points)

@@ -385,3 +385,20 @@ de promover esta API; não houve habilitação em produção neste trabalho.
 PDFs gerados passam a usar [arquivo v1](arquivos-chat.md), em vez de link embutido no texto. O contrato inclui nome, UUID, tamanho opcional, MIME, URL temporária, expiração e estado. Web/mobile precisam desse suporte antes da publicação da extensão. Histórico é reautorizado pelo dono da sessão e não renova o link.
 
 A [homologação ampliada](homologacao-ampliada-pr34.md) descreve a correção das datas BSON, da aprovação dos blocos, da mudança explícita de intenção, da série pessoal zerada e da seleção de eventos. A listagem de eventos agora inclui evento_id; a referência seleciona um registro e não concede acesso.
+
+
+### Rodapés de paginação no texto (PR #40)
+
+A API não apresenta “Página 1 de 1” como texto de resultado. Os metadados legados
+`pagina`/`total_paginas` continuam no contrato dos blocos para compatibilidade;
+com `paginacao: "local"` não descrevem páginas visuais. Web/mobile devem montar
+seus controles locais a partir das linhas e nunca criar um rodapé com esses campos.
+Contagem recebida/total disponível e avisos de corte ou conjunto parcial continuam
+visíveis. Essa limpeza não converte consultas antigas paginadas no servidor em
+conjuntos completos nem remove seus limites ou mecanismos de consulta.
+
+POST e histórico de respostas novas contêm os mesmos blocos sem o rodapé. Dados
+já salvos não são reescritos; clientes podem ainda encontrar textos antigos.
+Na projeção privada enviada aos agentes, o rodapé legado exato “Página 1 de 1”
+é omitido e páginas de transporte local deixam de poluir os blocos anteriores.
+Referências de páginas de documentos e metadados de recortes reais permanecem.

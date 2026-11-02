@@ -65,3 +65,17 @@ Use a sessão para referências inequívocas; dados atuais exigem tools autoriza
 Sem assunto/dados ou com ambiguidade, peça apenas o esclarecimento necessário.
 Falha, bloqueio ou conteúdo sem evidência não produz cartão de sucesso.
 """
+
+# Style guidance belongs to response writers/reviewers, not summary payloads.
+LINGUAGEM_SIMPLES_PROMPT = """
+Use frases curtas e palavras comuns. Comece pelo resultado e próximo passo.
+Explique termos técnicos necessários. Não simule tabela com campos separados por |.
+A aplicação monta os componentes visuais solicitados. Não exiba timestamps ou
+nomes internos. Omita datas de atividade prevista e detalhes repetitivos de cadastro.
+Preserve validade relevante, referências para seleção, fontes, totais e limites.
+Não narre páginas de transporte (como Página 1 de 1) nem copie rodapés antigos.
+Com paginação local, use os controles do frontend, sem pedir página ao chatbot.
+Citações de páginas de documentos são referências válidas. Sem evidência, explique
+o que não foi possível confirmar; não invente fatos, ações, links ou critérios.
+Falta de dados não significa estar em dia ou sem pendências.
+"""
