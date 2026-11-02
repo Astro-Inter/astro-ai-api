@@ -616,6 +616,34 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
+        from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup
+        role = state["usuario_atual"].role
+        if asks_chart_menu(state["mensagem"]):
+            answer, menu = make_chart_menu(role)
+            return {"rota": "direta", "candidato": answer, "menu_graficos": menu,
+                    "resposta_deterministica": True,
+                    "resultado": {"status": "concluido", "evidencia_contexto": {"origem": "catalogo_de_graficos_da_aplicacao", "perfil": role, "opcoes": menu, "texto": answer}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        selection = select_chart(state["mensagem"], state["contexto"].get("menu_graficos"), role)
+        if selection in ("grafico_barras", "grafico_linhas"):
+            return {"rota": "agenda", "grafico_pessoal": selection,
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if isinstance(selection, OperationalDecision):
+            return {"rota": "consulta_operacional", "operational_decision": selection.model_dump(mode="json"),
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        deadline = expiry_followup(state["mensagem"], state["contexto"].get("consulta_prazo"), role) if selection is None else None
+        if deadline:
+            selection, _ = deadline
+            if isinstance(selection, OperationalDecision):
+                return {"rota": "consulta_operacional", "operational_decision": selection.model_dump(mode="json"),
+                        "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if isinstance(selection, str):
+            return {"rota": "direta", "candidato": selection,
+                    "menu_graficos": state["contexto"].get("menu_graficos") if not deadline else None,
+                    "consulta_prazo": deadline[1] if deadline else False,
+                    "resposta_deterministica": True,
+                    "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "esclarecimento_de_consulta", "texto": selection}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         external_reply = external_topic_reply(state["mensagem"])
         if external_reply is not None:
             return {"rota": "direta", "candidato": external_reply,

@@ -1129,7 +1129,7 @@ def pedido_grafico_treinamentos(message: str) -> bool:
 def build_agenda_graph(model: AgentModel):
     async def decide(state: ChatState):
         prepared_decision = state.get("agenda_decision")
-        if pedido_grafico_treinamentos(state["mensagem"]):
+        if state.get("grafico_pessoal") or pedido_grafico_treinamentos(state["mensagem"]):
             return {"agenda_route": "tool", "agenda_decision": "grafico_pessoal",
                     "agentes_chamados": state["agentes_chamados"] + ["agenda"]}
         filters = _filtros_treinamentos(state["mensagem"])
@@ -1160,6 +1160,7 @@ def build_agenda_graph(model: AgentModel):
         if state["agenda_decision"] == "grafico_pessoal":
             normalized = "".join(c for c in unicodedata.normalize("NFKD", state["mensagem"].casefold()) if not unicodedata.combining(c))
             chart_type = "grafico_linhas" if re.search(r"\b(linhas?|evolucao|mensal)\b", normalized) else "grafico_rosca" if re.search(r"\b(rosca|donut)\b", normalized) else "grafico_setores" if re.search(r"\b(setores?|pizza|circular)\b", normalized) else "grafico_barras"
+            chart_type = state.get("grafico_pessoal") or chart_type
             tool_name = "consultar_evolucao_treinamentos" if chart_type == "grafico_linhas" else "consultar_grafico_treinamentos"
             result = await AGENDA_TOOLS[tool_name].ainvoke(
                 {}, config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}})

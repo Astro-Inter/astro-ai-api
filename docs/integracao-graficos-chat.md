@@ -1,9 +1,57 @@
 # Gráficos no chat: contrato para o frontend
 
+## Escolher um gráfico na conversa
+
+“Quais gráficos vc pode fazer?” apresenta opções numeradas compatíveis com o perfil
+autenticado, explicando tanto o assunto quanto o formato. Para gestores: pendências
+por NR, vencimentos por faixa, cobertura, distribuição por cargo e as duas consultas
+pessoais de treinamentos. Para colaboradores: somente treinamentos próprios.
+Administrador não recebe opções de consultas funcionais. O catálogo é uma seleção
+de exemplos executáveis; não substitui os filtros e as consultas documentadas.
+
+Exemplo: “Quais gráficos vc pode fazer?” → “1” consulta pendências por NR para um
+gestor e já tenta apresentar barras, sem perguntar “quer que eu consulte?”. Para um
+colaborador, a opção 1 corresponde à sua evolução mensal de conclusões, em linhas.
+O número pertence ao menu daquela sessão; não existe significado global para “1”.
+“Sim”/“s” sem uma opção escolhida pede qual opção usar. Não confirma uma operação de escrita.
+
+O backend persiste `menu_graficos: {versao: 1, opcoes: [<ids internos>]}` junto ao
+turno aprovado no Mongo. Uma seleção executada ou outro assunto aprovado limpa o
+menu. A aplicação não reconstrói essa seleção a partir de texto antigo do assistente.
+Sessões antigas sem esse metadado devem pedir novamente as opções. A autorização
+é verificada com o usuário/perfil atual e novamente na tool. Sem dados, indisponibilidade
+ou reprovação do Juiz, nenhum gráfico de sucesso é fabricado.
+
+Fora do menu, “vencimento” (incluindo a grafia observada “venximento”) inicia um
+esclarecimento de período para gestores. O marcador interno `consulta_prazo: true`
+é salvo somente com o turno aprovado. Na mesma sessão, “30 d” ou “30 dias” executa
+`consultar_vencimentos_conformidades` com `dias: 30`; aceita 1 a 365 dias.
+Outro assunto aprovado, conclusão da consulta ou troca para perfil não autorizado
+impede reutilizar esse esclarecimento. O gráfico de vencimentos do menu continua
+usando as faixas fixas documentadas; um período personalizado consulta a listagem.
+
+Não há novos campos públicos nem componentes exigidos no web/mobile: menu e
+esclarecimento são blocos `texto`, e as consultas usam os gráficos/tabelas existentes.
+POST e histórico mantêm a ordem e os blocos do turno aprovado. O histórico anterior
+não é reescrito. Os atalhos locais evitam a chamada ao modelo roteador para essas
+seleções; input guard, consulta autorizada e Juiz continuam no fluxo normal.
+
+### Diagnóstico dos relatos de 02/11/2026
+
+Nos traces da janela 17:01–17:08 UTC, os turnos contendo o menu e os esclarecimentos
+passaram pelas rotas `direta`/`sst`, sem spans de ferramentas operacionais de consulta.
+O fluxo antigo deixava menu, número e período sob interpretação textual do roteador
+e não salvava uma escolha de gráfico/esclarecimento como estado estruturado.
+Portanto, a mensagem de indisponibilidade exibida nesses casos não comprova falha
+no banco nem na ferramenta: a consulta esperada não foi executada. A correção
+acima torna essas continuações explícitas sem alterar os guardrails ou aprovar
+resultados automaticamente. Falhas reais das ferramentas continuam tratadas pelo
+fluxo existente e precisam de diagnóstico específico caso ocorram após a consulta.
+
 Os gráficos de treinamentos são pessoais e usam participações em eventos ativos.
 Gráficos de equipe são produzidos por `consultar_indicadores_equipe`; consulte
 [Tools operacionais e autorização](tools-operacionais.md).
-Barras e setores mostram a distribuição por situação; linhas mostra a evolução
+Barras, setores e rosca mostram a distribuição por situação; linhas mostra a evolução
 mensal das conclusões. Não são indicadores da empresa, conformidade ou vencimentos.
 
 `POST /chat/messages` retorna `session_id`, `agentes_chamados` e `blocos`, uma lista ordenada e não vazia. O campo `resposta` não é retornado: até respostas apenas textuais chegam em um bloco `texto`. Percorra os blocos na ordem recebida. Clientes devem ser atualizados antes da API, pois versões antigas dependem de `resposta`. O mesmo campo opcional
@@ -40,7 +88,7 @@ dados e a resposta final corresponde à candidata com Juiz aprovado. Sem dados,
 falha ou acesso indisponível, retorna um bloco de texto. O fluxo existente tem
 fallback do Juiz para respostas determinísticas quando o provedor falha.
 
-Escopo atual: três tipos de gráfico pessoal. Filtros por unidade, empresa, período
+Escopo atual: quatro tipos de gráfico pessoal. Filtros por unidade, empresa, período
 personalizado e status ainda não foram implementados. Não invente essas
 opções no frontend. A API de dashboards da organização usa agregações Databricks e
 regras próprias de workspace; este gráfico consulta PostgreSQL operacional e os

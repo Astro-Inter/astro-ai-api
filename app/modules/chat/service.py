@@ -247,6 +247,8 @@ class ChatService:
                         "fuso": CHAT_TIMEZONE.key, "ultima_rota": doc.get("ultima_rota", ""),
                         "possui_acao_pendente": bool(doc.get("acao_pendente")),
                         "consulta_operacional": doc.get("consulta_operacional"),
+                        "menu_graficos": doc.get("menu_graficos"),
+                        "consulta_prazo": doc.get("consulta_prazo", False),
                         "consulta_rh": rh_query,
                         "formato_resposta": "markdown" if markdown else "texto_simples",
                         "ferramentas_disponiveis": [
@@ -305,6 +307,7 @@ class ChatService:
                     "rota": "", "resultado": {}, "resultado_tool": {}, "rh_decision": None,
                     "rh_route": "", "sst_decision": None, "sst_route": "",
                     "agenda_decision": None, "agenda_route": "",
+                    "grafico_pessoal": None, "menu_graficos": None, "consulta_prazo": False,
                     "operational_decision": None, "roteador_decision": None, "acao_pendente": doc.get("acao_pendente"),
                     "candidato": "", "avaliacao_juiz": {},
                     "resposta": "",
@@ -459,6 +462,8 @@ class ChatService:
                             "ultima_mensagem_previa": compact_session_text(stored_answer, 200),
                             "ultima_rota": result["rota"],
                             "acao_pendente": result.get("acao_pendente"),
+                            "menu_graficos": result.get("menu_graficos"),
+                            "consulta_prazo": result.get("consulta_prazo", False),
                             "consulta_rh": result.get("consulta_rh"),
                             "consulta_operacional": (result.get("operational_decision") if result.get("rota") == "consulta_operacional"
                                                        else doc.get("consulta_operacional")),
