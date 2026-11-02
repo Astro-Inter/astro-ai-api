@@ -87,3 +87,42 @@ Esta validação local não equivale a um reteste publicado no celular. Após
 publicação autorizada, repetir os três pedidos, conferir que nenhum resultado
 matemático é entregue e depois consultar uma dúvida de NR e um indicador
 autorizado. Nenhum merge ou deploy foi realizado nesta correção.
+
+## Entretenimento e continuação por assunto
+
+O relato adicional mostrou uma piada de futebol depois de humor sobre segurança.
+Mesmo uma piada que menciona SST continua sendo entretenimento, não uma consulta
+de segurança do trabalho. A política comum, os critérios do Juiz e as regras do
+guardrail de saída passam a explicitar essa distinção.
+
+Pedidos explícitos e limitados de piada, charada, poema ou ficção recebem a mesma
+orientação de escopo. “Me fale uma sobre futebol também” retoma esse limite quando
+os turnos imediatamente anteriores identificam o pedido como humor. O histórico
+não dá autorização para continuar conteúdo externo. Uma mudança legítima de
+assunto quebra essa inferência; ausência de referente segue a interpretação normal.
+
+Não se bloqueia pela simples presença da palavra “piada”: “Sofri assédio com
+piadas ofensivas” e pedidos para relatar discriminação continuam no fluxo de SST.
+Explicações de normas, prazos e indicadores também não são entretenimento.
+
+O reconhecedor não é uma lista exaustiva de todos os assuntos externos. O limite
+geral também está nos prompts do roteador e revisores; formulações não cobertas
+pelas formas explícitas continuam exigindo classificação e revisão. Não se
+promete ausência absoluta de falhas de modelo. Não há classificador extra nem
+chamadas adicionais de IA para os pedidos reconhecidos.
+
+Uma verificação real pequena apresentou ao Juiz, com conversa sintética, a
+candidata da piada de futebol da imagem. O Juiz pediu **revisão**, em vez de
+aprovar o entretenimento: 3.301 tokens / US$ 0,000430925. Isso não forçou aprovação
+de uma resposta nem acessou contas ou dados reais. A rodada focada inicial teve
+55 aprovações, incluindo piadas, elipse por assunto, limites da inferência e
+relatos legítimos de assédio. Os grupos de testes se sobrepõem às rodadas anteriores.
+
+A produção consultada durante esta ampliação ainda era `01a8873`, com a PR #44
+aberta. As capturas antigas não são tratadas como reteste do código ainda não
+publicado. Nenhum merge ou deploy foi realizado.
+
+Validação ampliada final: **481 testes aprovados**, com 15 casos adicionais de
+entretenimento/continuação e preservação de relatos legítimos. Modelos e consultas
+externas simulados; dois avisos de dependências locais. Esse grupo inclui testes
+da rodada anterior de 466 e não deve ser somado a ela.

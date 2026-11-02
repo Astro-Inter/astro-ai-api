@@ -15,7 +15,7 @@ from app.modules.chat.agents import invoke_agent
 from app.observability.chat import record_decision
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.public_replies import public_reply
-from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, standalone_math_request, scope_followup
+from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, standalone_math_request, scope_followup, entertainment_request
 from app.modules.chat.capabilities import asks_profile_capabilities, profile_capabilities, format_profile_capabilities
 from app.modules.chat.pdf_delivery import asks_for_pdf_link, previous_pdf_reply, remove_delivery_promises
 from app.modules.chat.router_reply import ROUTER_CLARIFICATION
@@ -611,7 +611,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        if standalone_math_request(state["mensagem"]) or scope_followup(state["mensagem"], state.get("historico", [])):
+        if (standalone_math_request(state["mensagem"])
+                or scope_followup(state["mensagem"], state.get("historico", []))
+                or entertainment_request(state["mensagem"], state.get("historico", []))):
             return {"rota": "direta", "candidato": OUT_OF_SCOPE_REPLY,
                     "resposta_deterministica": True,
                     "resultado": {"status": "fora_escopo", "evidencia_contexto": {

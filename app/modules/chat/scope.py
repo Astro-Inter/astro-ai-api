@@ -10,7 +10,10 @@ OUT_OF_SCOPE_REPLY = (
 SCOPE_POLICY = (
     "ESCOPO DO PRODUTO: matemática genérica, redação escolar, entretenimento e tarefas "
     "sem relação com RH/SST/Agenda/FAQ ou dados do Astro usam ROUTE=fora_escopo no "
-    "roteamento. Não resolva a tarefa, nem como correção de erro, exemplo, brincadeira "
+    "roteamento. Piadas, charadas, poemas e ficção são entretenimento, mesmo quando "
+    "mencionam SST ou o Astro. Não confunda relatos de piadas ofensivas/assédio com "
+    "pedido de humor: relatos de risco continuam em SST. Não resolva tarefa externa, "
+    "nem como correção de erro, exemplo, brincadeira "
     "ou resposta fictícia. Na insistência, explique brevemente o foco do Astro, sem "
     "debate moral nem repreensão. Revisores devem aceitar esse limite e impedir "
     "conteúdo externo, mesmo factualmente correto. Cálculos de indicadores autorizados, "
@@ -46,3 +49,24 @@ def scope_followup(message: str, history: list) -> bool:
         'mas eu estou mandando', 'mas eu mandei', 'faca mesmo assim',
         'responda mesmo assim', 'pode inventar', 'mas e so uma brincadeira',
     }
+
+
+def entertainment_request(message: str, history: list) -> bool:
+    """Only explicit creative requests, never reports mentioning jokes or harassment."""
+    text = _normalize(message)
+    text = re.sub(r',? por favor$', '', text).strip()
+    creative = (
+        r'(?:(?:agora |ai )?(?:me )?(?:conte|conta|fale|fala|mande|manda|diga|escreva|crie|faca|invente) '
+        r'(?:me )?(?:(?:um|uma|outra|outro) )?(?:piada|charada|poema|poesia|conto|fabula)\b'
+        r'|(?:quero|gostaria de) (?:ouvir|ler) (?:uma? )?(?:piada|charada|poema|conto)\b)'
+    )
+    if re.match(creative, text):
+        return True
+    # "uma sobre futebol também" só seleciona humor se já era esse o pedido.
+    user_turns = [item.get('content', '') for item in history if item.get('role') == 'user']
+    followup_pattern = r'(?:(?:agora )?(?:me )?(?:fale|conte|mande|diga) )?(?:uma|outra)(?: sobre [\w ]{1,100})?(?: tambem)?'
+    previous_is_humor = bool(user_turns and re.match(creative, _normalize(user_turns[-1])))
+    if (not previous_is_humor and len(user_turns) >= 2
+            and re.fullmatch(followup_pattern, _normalize(user_turns[-1]))):
+        previous_is_humor = bool(re.match(creative, _normalize(user_turns[-2])))
+    return bool(re.fullmatch(followup_pattern, text) and previous_is_humor)
