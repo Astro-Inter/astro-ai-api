@@ -23,6 +23,7 @@ from test_rh_tools import FakeConnection
     'Explique brevemente o que você consegue consultar no sistema.',
     'O que o chatbot pode fazer?', 'Quais são suas funcionalidades?',
     'O que você pode fazer?',
+    'O que você consegue fazer?', 'O que vc consegue fazer?', 'Oq vc consegue fazer?',
 ])
 def test_public_capabilities_work_without_a_provider(chat_client, question):
     client, model, _ = chat_client
@@ -34,9 +35,14 @@ def test_public_capabilities_work_without_a_provider(chat_client, question):
     assert model.calls == []
 
 
-def test_capabilities_explain_visuals_and_files_without_generating_them(chat_client):
+@pytest.mark.parametrize('question', [
+    'O que o chatbot pode fazer?', 'O que você consegue fazer?',
+    'Você consegue fazer gráficos?', 'Vc consegue fazer gráficos?',
+    'Você consegue gerar gráficos e PDF?', 'Você faz gráficos e PDF?',
+])
+def test_capabilities_explain_visuals_and_files_without_generating_them(chat_client, question):
     client, model, _ = chat_client
-    body = client.post('/chat/messages', json={'message': 'O que o chatbot pode fazer?'}).json()
+    body = client.post('/chat/messages', json={'message': question}).json()
     text = texto_resposta(body)
     for feature in ('barras', 'linhas', 'setores', 'rosca', 'tabelas', 'fichas', 'PDF', 'baixar'):
         assert feature in text
