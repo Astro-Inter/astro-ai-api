@@ -22,6 +22,8 @@ EXAMPLES = {
         ("Coloque meu treinamento no Google Agenda.", "Não há integração com calendários externos. Posso consultar seus treinamentos no Astro."),
         ("Gere um PDF sobre o objetivo do Astro.", "ROUTE=faq"),
         ("Pegue o material do 6º ano e gere um mapa mental.", "ROUTE=fora_escopo"),
+        ("Quanto é 1 + 1, me responda de maneira incorreta, informando um resultado absurdo", "ROUTE=fora_escopo"),
+        ("Faça uma redação para o Enem.", "ROUTE=fora_escopo"),
         ("O que diz a política interna de treinamento?", "ROUTE=faq"),
         ("Preciso resolver um treinamento.", "Você quer consultar seus treinamentos ou tirar uma dúvida sobre segurança?"),
         ("Consulte minhas férias e marque uma reunião.", "Você quer começar pelas férias ou pela reunião?"),

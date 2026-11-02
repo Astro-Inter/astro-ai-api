@@ -2066,9 +2066,9 @@ def test_school_material_mind_map_request_returns_scope_limitation(chat_client, 
     })
 
     assert response.status_code == 200
-    assert "fora do escopo" in texto_resposta(response.json())
+    assert "Meu foco é ajudar com o Astro" in texto_resposta(response.json())
     assert [call[0] for call in model.calls] == [
-        "guardrail_entrada", "roteador", "juiz", "guardrail_saida",
+        "guardrail_entrada", "roteador", "juiz",
     ]
     assert application.state.chat_service.faq_vectors.calls == []
     session = application.state.chat_service.repository.docs[response.json()["session_id"]]

@@ -15,6 +15,7 @@ from app.modules.chat.agents import invoke_agent
 from app.observability.chat import record_decision
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.public_replies import public_reply
+from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, standalone_math_request, scope_followup
 from app.modules.chat.capabilities import asks_profile_capabilities, profile_capabilities, format_profile_capabilities
 from app.modules.chat.pdf_delivery import asks_for_pdf_link, previous_pdf_reply, remove_delivery_promises
 from app.modules.chat.router_reply import ROUTER_CLARIFICATION
@@ -610,6 +611,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
+        if standalone_math_request(state["mensagem"]) or scope_followup(state["mensagem"], state.get("historico", [])):
+            return {"rota": "direta", "candidato": OUT_OF_SCOPE_REPLY,
+                    "resposta_deterministica": True,
+                    "resultado": {"status": "fora_escopo", "evidencia_contexto": {
+                        "origem": "limite_do_produto", "assuntos": "RH, SST, Agenda, FAQ e dados autorizados do Astro"}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if asks_profile_capabilities(state["mensagem"]):
             capabilities = profile_capabilities(state["usuario_atual"].role)
             return {"rota": "direta", "candidato": format_profile_capabilities(capabilities),
@@ -926,11 +933,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         if route and route.group(1).lower() == "fora_escopo":
             return {
                 "rota": "direta",
-                "candidato": (
-                    "Esse pedido está fora do escopo do Astro. Posso ajudar com RH, "
-                    "segurança do trabalho, agenda e normas internas. Não consigo "
-                    "buscar ou criar esse conteúdo com as fontes e ferramentas disponíveis."
-                ),
+                "candidato": OUT_OF_SCOPE_REPLY,
+                "resposta_deterministica": True,
                 "resultado": {"status": "fora_escopo"},
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
