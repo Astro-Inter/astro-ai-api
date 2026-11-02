@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date, datetime
 import re
 import unicodedata
 
@@ -298,6 +299,25 @@ def _filtros_treinamentos(message: str) -> ConsultarTreinamentosArgs | None:
         return None
 
 
+def _data_legivel(value, *, horario=False):
+    """Display an ISO calendar date without guessing a timezone or changing data."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, str):
+            parsed = date.fromisoformat(value) if len(value) == 10 else datetime.fromisoformat(value.replace("Z", "+00:00"))
+        else:
+            parsed = value
+        if not isinstance(parsed, (date, datetime)):
+            return None
+        text = parsed.strftime("%d/%m/%Y")
+        if horario and isinstance(parsed, datetime):
+            text += parsed.strftime(" às %H:%M")
+        return text
+    except ValueError:
+        return None
+
+
 def _formatar_usuarios(result: dict) -> str:
     if result.get("consulta") == "contagem" and result.get("status") in {"ok", "sem_dados"}:
         return f"Encontrei {result['total']} usuário(s) no seu escopo autorizado, com os filtros informados. Essa contagem não inclui você."
@@ -318,11 +338,12 @@ def _formatar_usuarios(result: dict) -> str:
     title = f"Encontrei {len(users)} usuário(s):"
     lines = []
     for user in users:
-        details = [
-            user["cargo"], user["unidade"], user.get("modalidade"),
-            user["tipo"], user["status"], user["email"],
-        ]
-        lines.append(f"- {user['nome']}: " + " | ".join(str(item) for item in details if item))
+        details = [str(item) for item in (user.get("cargo"), user.get("unidade"), user.get("modalidade")) if item]
+        description = ", ".join(details)
+        profile = {"COLABORADOR": "Colaborador", "GESTOR": "Gestor", "GESTOR_WORKSPACE": "Gestor do workspace"}.get(user.get("tipo"))
+        profile_text = f" Perfil: {profile}." if profile else ""
+        contact = f" E-mail: {user['email']}." if user.get("email") else ""
+        lines.append(f"{user['nome']}: {description}." + profile_text + contact)
     if "pagina" in result:
         lines.append(f"Retornados {len(users)} de {result['total']} usuário(s) disponíveis.")
         if not users:
@@ -366,7 +387,7 @@ def _formatar_nrs(result: dict) -> str:
         lines = []
         for nr in result["nrs"]:
             details = [nr.get("situacao")]
-            suffix = f" | {' | '.join(details)}" if any(details) else ""
+            suffix = f". Situação da norma: {nr['situacao'].lower()}." if any(details) else ""
             lines.append(f"- NR-{nr.get('numero')} — {nr.get('nome', 'Sem nome')}{suffix}")
         footer = [source_footer]
         if len(result["nrs"]) < total:
@@ -510,7 +531,7 @@ def _formatar_nrs_obrigatorias(result: dict) -> str:
     lines = []
     for nr in nrs:
         recycling = nr.get("tempo_reciclagem_meses")
-        suffix = f" | reciclagem: {recycling} meses" if recycling is not None else ""
+        suffix = f". A reciclagem é a cada {recycling} meses." if recycling is not None else ""
         lines.append(f"- NR-{nr['numero']} — {nr['titulo']}{suffix}")
     return "\n".join([
         header,
@@ -536,7 +557,7 @@ def _formatar_situacao_nrs(result: dict) -> str:
             return result.get("mensagem", "Não foi possível consultar a conformidade.")
         formatted = _formatar_situacao_nrs({k: v for k, v in result.items() if k != "consulta_terceiro"})
         formatted = formatted.replace("Nenhuma NR vigente está vinculada ao seu cargo.", "Nenhuma NR vigente está vinculada ao cargo cadastrado desta pessoa.")
-        return f"Conformidade registrada de {result['usuario']}:\n\n{formatted}\n\nA consulta considera as NRs atribuídas ao cargo e à unidade no Astro; não certifica conformidade legal completa."
+        return f"NRs de {result['usuario']}:\n\n{formatted}"
     if result.get("status") == "nao_aplicavel":
         return result["mensagem"]
     if result.get("status") == "sem_dados":
@@ -546,45 +567,46 @@ def _formatar_situacao_nrs(result: dict) -> str:
 
     nrs = result["nrs"]
     header = (
-        f"Situação das NRs obrigatórias para o cargo {result['cargo']}, "
+        f"Estas são as NRs do cargo {result['cargo']}, "
         f"na unidade {result['unidade']}:"
     )
     if not nrs:
         return "\n".join([header, "Nenhuma NR vigente está vinculada ao seu cargo."])
 
-    situation_labels = {
-        "VIGENTE": "vigente",
-        "PENDENTE": "pendente",
-        "RENOVACAO_NECESSARIA": "renovação necessária",
-        "REALIZACAO_NECESSARIA": "realização necessária",
+    descriptions = {
+        "VIGENTE": "está em dia",
+        "PENDENTE": "tem uma atividade pendente",
+        "RENOVACAO_NECESSARIA": "precisa ser renovada",
+        "REALIZACAO_NECESSARIA": "precisa ser realizada",
     }
-    action_labels = {
-        "NENHUMA": "nenhuma ação imediata",
-        "CONCLUIR_PENDENCIA": "concluir atividade pendente",
-        "RENOVAR_EM_BREVE": "renovar em breve",
-        "RENOVAR": "renovar",
-        "REALIZAR": "realizar",
+    actions = {
+        "CONCLUIR_PENDENCIA": "Conclua a atividade pendente.",
+        "RENOVAR_EM_BREVE": "Programe a renovação em breve.",
+        "RENOVAR": "Providencie a renovação.",
+        "REALIZAR": "Realize a atividade exigida para essa NR.",
     }
-    lines = []
+    paragraphs = []
+    missing_validity = False
     for nr in nrs:
-        details = [
-            f"situação: {situation_labels.get(nr['situacao'], nr['situacao'].lower())}",
-            f"ação: {action_labels.get(nr['acao_necessaria'], nr['acao_necessaria'].lower())}",
-        ]
-        if nr.get("data_validade"):
-            details.append(f"validade: {nr['data_validade']}")
+        description = descriptions.get(nr.get("situacao"), "está sem situação confirmada")
+        # An inconsistent missing date must not become an assurance of validity.
+        validity = _data_legivel(nr.get("data_validade"))
+        if nr.get("situacao") == "VIGENTE" and validity is None:
+            description = "está sem validade confirmada"
+        title = f"NR-{nr['numero']} — {nr['titulo']}"
+        sentences = [f"{title}: {description}."]
+        action = actions.get(nr.get("acao_necessaria"))
+        if action:
+            sentences.append(action)
+        if validity:
+            sentences.append(f"Validade: {validity}.")
         else:
-            details.append("validade não registrada; vigência não comprovada")
-        if nr.get("data_inicio_pendencia"):
-            details.append(f"atividade prevista: {nr['data_inicio_pendencia']}")
-        lines.append(f"- NR-{nr['numero']} — {nr['titulo']} | " + " | ".join(details))
-    if any(not nr.get("data_validade") for nr in nrs):
-        lines.append(
-            "Ausência de data de validade não comprova que uma NR esteja vigente "
-            "ou que não haja vencimento. A situação acima é a registrada no Astro, "
-            "não uma certificação de conformidade legal."
-        )
-    return "\n".join([header, *lines])
+            missing_validity = True
+        paragraphs.append(" ".join(sentences))
+    if missing_validity:
+        paragraphs.append("Algumas NRs estão sem data de validade. Não é possível confirmar se estão em dia.")
+    return "\n\n".join([header, *paragraphs])
+
 
 
 def _event_public_link(value):
@@ -626,27 +648,37 @@ def _formatar_treinamentos(result: dict) -> str:
 
     lines = ["Seus treinamentos atribuídos:"]
     status_labels = {
-        "PENDENTE": "pendente", "REJEITADO": "rejeitado", "CONCLUIDO": "concluído",
+        "PENDENTE": "pendente", "REJEITADO": "rejeitada", "CONCLUIDO": "concluída",
     }
     for training in result["treinamentos"]:
         reference = training.get("evento_id")
-        details = [
-            f"turma: {training['turma']}",
-            f"início: {training['data_inicio']}",
-            f"término: {training['data_termino']}",
-            f"participação: {status_labels.get(training['status_participacao'], training['status_participacao'])}",
-            f"evento: {training['status_evento'].lower()}",
-        ]
+        details = [f"{training['titulo']}.", f"Turma {training['turma']}."]
+        start_date = _data_legivel(training.get("data_inicio"), horario=True)
+        end_date = _data_legivel(training.get("data_termino"), horario=True)
+        if start_date:
+            details.append(f"Começa em {start_date}.")
+        if end_date:
+            details.append(f"Termina em {end_date}.")
+        participation = status_labels.get(training['status_participacao'], "não informada")
+        details.append(f"Sua participação está {participation}.")
+        event_status = {"ATIVO": "ativo", "CANCELADO": "cancelado", "CONCLUIDO": "concluído"}.get(training['status_evento'])
+        if event_status:
+            details.append(f"O evento está {event_status}.")
         if training.get("nr"):
-            details.append(f"NR-{training['nr']['numero']} — {training['nr']['titulo']}")
-        details.append(f"conclusão por: {training['modo_conclusao'].lower().replace('_', ' ')}")
+            details.append(f"Relacionado à NR-{training['nr']['numero']} — {training['nr']['titulo']}.")
+        completion = {"GESTOR": "A conclusão depende da análise do gestor.",
+                      "AUTOMATICO": "A conclusão é automática.",
+                      "COLABORADOR": "A conclusão é feita pelo participante."}.get(training['modo_conclusao'])
+        if completion:
+            details.append(completion)
         if training["evidencia_obrigatoria"]:
-            details.append("evidência obrigatória")
-        if training.get("data_validade"):
-            details.append(f"validade: {training['data_validade']}")
+            details.append("É necessário enviar uma evidência para comprovar a realização.")
+        validity = _data_legivel(training.get("data_validade"))
+        if validity:
+            details.append(f"Validade: {validity}.")
         if type(reference) is int:
-            details.append(f"referência do evento: {reference} (evento_id)")
-        lines.append(f"- {training['titulo']} | " + " | ".join(details))
+            details.append(f"Para selecionar este evento, use a referência do evento: {reference} (evento_id).")
+        lines.append(" ".join(details))
         if training.get("descricao"):
             lines.append(f"  {training['descricao'][:160]}")
         if training.get("motivo_rejeicao"):
@@ -660,7 +692,7 @@ def _formatar_treinamentos(result: dict) -> str:
         lines.append("Nenhum treinamento nesta página. Tente uma página anterior.")
     elif result["pagina"] < result["total_paginas"]:
         lines.append(f"Para ver mais treinamentos, peça a página {result['pagina'] + 1}.")
-    return "\n".join(lines)
+    return "\n\n".join(lines)
 
 
 def _evidencia_treinamentos(result: dict) -> dict:
@@ -721,7 +753,7 @@ def _referencias_eventos(result):
     if not events:
         return 'A consulta não retornou referências evento_id utilizáveis para selecionar um resumo.'
     lines=['Eventos atribuídos a você para selecionar um resumo:']
-    lines.extend(f'- {title} | referência do evento: {reference} (evento_id)' for reference,title in events.items())
+    lines.extend(f'{title}. Para selecionar, use a referência do evento: {reference} (evento_id).' for reference,title in events.items())
     lines.append('Escolha pelo evento_id, por exemplo: Faça um resumo do evento '+str(next(iter(events)))+'. O acesso será verificado novamente.')
     if result.get('pagina',1)<result.get('total_paginas',1):
         lines.append(f"Para mais eventos, consulte a página {result['pagina']+1} da sua agenda.")

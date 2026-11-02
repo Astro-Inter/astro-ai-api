@@ -221,8 +221,9 @@ def test_agenda_agent_consults_training_instead_of_sst(chat_client, monkeypatch)
 
     assert response.status_code == 200
     assert "Operação segura" in texto_resposta(response.json())
-    assert "participação: pendente" in texto_resposta(response.json())
-    assert "2026-09-20T08:00:00" in texto_resposta(response.json())
+    assert "Sua participação está pendente" in texto_resposta(response.json())
+    assert "20/09/2026 às 08:00" in texto_resposta(response.json())
+    assert " | " not in texto_resposta(response.json())
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "agenda", "consultar_treinamentos",
         "juiz", "guardrail_saida",
@@ -586,7 +587,7 @@ def test_manager_consults_employee_conformity_with_recent_history(chat_client, m
     result = response.json()
     assert result["agentes_chamados"] == ["guardrail_entrada", "roteador", "sst", "consultar_conformidade_usuario", "juiz", "guardrail_saida"]
     assert "Maria Silva" in texto_resposta(result) and "NR-10" in texto_resposta(result)
-    assert "renovação necessária" in texto_resposta(result)
+    assert "precisa ser renovada" in texto_resposta(result)
     assert not any(call[0] == "sst" for call in model.calls)
 
 
@@ -647,8 +648,8 @@ def test_sst_agent_consults_nr_status_for_authenticated_user(chat_client, monkey
         "guardrail_entrada", "roteador", "sst", "consultar_situacao_nrs",
         "juiz", "guardrail_saida",
     ]
-    assert "NR-10" in texto_resposta(body) and "situação: vigente" in texto_resposta(body)
-    assert "NR-18" in texto_resposta(body) and "ação: renovar" in texto_resposta(body)
+    assert "NR-10" in texto_resposta(body) and "está em dia" in texto_resposta(body)
+    assert "NR-18" in texto_resposta(body) and "Providencie a renovação" in texto_resposta(body)
     assert "Fonte:" not in texto_resposta(body)
     assert "PostgreSQL" not in texto_resposta(body)
     assert [call[0] for call in model.calls] == [

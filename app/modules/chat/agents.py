@@ -113,6 +113,9 @@ async def _invoke_agent(
         seed_context_people(privacy, item["content"])
     seed_context_people(privacy, state.get("contexto_sessao", ""))
     tool_result = state.get("resultado_tool") or {}
+    if name in {"rh", "sst", "agenda", "faq", "orquestrador", "juiz", "guardrail_saida"}:
+        from app.modules.chat.prompts.inicial import LINGUAGEM_SIMPLES_PROMPT
+        prompt += "\n\n" + LINGUAGEM_SIMPLES_PROMPT
     privacy.seed(tool_result.get("dados"), person=True)
     evidence = (state.get("resultado") or {}).get("evidencia_tool", {}).get("resultado") or {}
     if isinstance(evidence, dict):
