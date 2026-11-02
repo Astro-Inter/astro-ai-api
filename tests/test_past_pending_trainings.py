@@ -12,5 +12,5 @@ def test_pending_and_time_period_are_independent(end,past):
     assert ('O período informado já terminou.' in text)==past
     assert 'Sua participação está pendente.' in text
     assert 'Começa em' not in text and 'Termina em' not in text
-    assert 'referência do evento: 12 (evento_id)' in text
+    assert 'referência do evento: 12' in text
     assert 'evidência para comprovar' in text and data==original

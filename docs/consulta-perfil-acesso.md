@@ -147,3 +147,12 @@ maior aumenta proporcionalmente os tokens de contexto nas chamadas que já o usa
 Validação desta etapa: **74 testes aprovados** de capacidades, exemplos, identidade,
 proteção dos atalhos públicos e histórico, com modelos/consultas simulados. Dois
 avisos de dependências locais. Nenhuma chamada real de IA, merge ou deploy.
+
+As formulações “O que você consegue fazer?”, “O que vc consegue fazer?” e
+“Você consegue fazer gráficos?” também recebem a apresentação completa, com
+gráficos de barras/linhas/setores/rosca, tabelas, fichas e PDFs para baixar.
+Perguntar se o recurso existe não gera um gráfico ou arquivo: a apresentação
+mostra exemplos de pedidos e mantém os limites de perfil e dados disponíveis.
+Essa ampliação de formulações passou em **79 testes** de capacidades, prompts,
+proteção dos atalhos e histórico, com modelos simulados; dois avisos de
+dependências locais. Não houve chamada real de IA, merge ou deploy nesta etapa.

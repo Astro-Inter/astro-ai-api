@@ -89,7 +89,7 @@ Nunca versione `.env`, tokens, chaves de API ou credenciais de banco.
 
 ## Integração contínua
 
-O workflow `.github/workflows/ci.yml` executa em pushes, pull requests e
+O workflow `.github/workflows/ci.yml` executa em pushes na `main`, pull requests e
 manualmente pela aba **Actions** do GitHub. Ele instala as dependências,
 verifica sua compatibilidade com `pip check` e executa a suíte de testes em
 Python 3.12, a mesma versão utilizada pelo Dockerfile. Após os testes, constrói

@@ -28,6 +28,11 @@ class ChatState(TypedDict, total=False):
     sst_route: str
     agenda_decision: object
     agenda_route: str
+    grafico_pessoal: str | None
+    menu_graficos: dict | None
+    consulta_prazo: bool
+    leitura_pendente: dict | None
+    contagem_workspace: bool
     operational_decision: dict | None
     roteador_decision: object
     acao_pendente: dict | None

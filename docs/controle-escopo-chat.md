@@ -126,3 +126,77 @@ Validação ampliada final: **481 testes aprovados**, com 15 casos adicionais de
 entretenimento/continuação e preservação de relatos legítimos. Modelos e consultas
 externas simulados; dois avisos de dependências locais. Esse grupo inclui testes
 da rodada anterior de 466 e não deve ser somado a ela.
+
+## Exercícios escolares sem gabarito
+
+O relato adicional mostra o pedido “Faça um lista para eu treinar multiplicação,
+ela tem que ter 10 exercícios e deve ser simples” sendo atendido após uma resposta
+anterior de limite de escopo. Isso continua sendo material escolar, mesmo sem
+resultados preenchidos. Não equivale a consultar treinamentos de SST.
+
+O roteamento passou a reconhecer pedidos explícitos de listas/atividades para
+praticar matemática, multiplicação, divisão, tabuada e temas equivalentes. A frase
+da captura, incluindo a variação gramatical, e pedidos sem gabarito retornam a
+orientação de escopo, submetida ao Juiz e ao controle de saída existentes.
+A política comum e os exemplos do roteador explicitam esse limite.
+
+“Quais treinamentos preciso realizar?”, exercícios de prevenção de SST,
+listagens de colaboradores, pendências por NR e explicações do cálculo de
+indicadores não são classificados por esse reconhecedor como material escolar.
+O controle não bloqueia a palavra “treinar” isoladamente. Formas não reconhecidas
+continuam no roteador por modelo e na revisão geral de escopo.
+
+Não há chamadas adicionais de IA nem novos contratos para os clientes. Explicar
+o limite é enviado como bloco texto, igual no POST e no histórico, sem gerar lista
+de exercícios ou PDF de sucesso. A produção consultada ainda retornava `01a8873`,
+sem a PR #44, que permanecia aberta. Não houve merge ou deploy.
+
+## Continuação após o merge da PR #44: culinária e opiniões de empresas
+
+O trabalho local de exercícios escolares foi preservado em uma nova branch
+baseada na main `1dc9927023e58b2e938f6e4bb27c02e11ed7d4d8`, pois a PR #44 já
+foi mesclada. As referências anteriores à publicação são registros das respectivas
+rodadas, não uma afirmação de que a PR #44 continua aberta.
+
+“Ok, me ajuda com receita de bolo” e variações explícitas de receitas culinárias
+recebem a orientação de foco do Astro. Pedidos em PDF não geram sequer um arquivo
+com a mensagem de limite: o fluxo desativa `pdf_solicitado` e entrega só texto.
+A mesma proteção vale para exercícios e tarefas classificadas `fora_escopo`.
+
+Rankings genéricos de melhor/pior empresa e pedidos para redigir críticas ou
+elogios são externos ao produto. Uma frase isolada como “eu odeio a Empresa
+Exemplo” não confirma um problema trabalhista e não deve levar à concordância,
+endosso ou oferta de crítica. A resposta faz uma pergunta neutra sobre eventual
+situação de RH/SST. Não há lista de marcas proibidas nem preferência por empresa.
+
+Relatos de assédio, discriminação, risco, acidente, condições de trabalho e
+consultas de indicadores continuam na interpretação de RH/SST. Segurança em
+cozinha industrial não equivale a receita culinária. Receita médica e exame
+ocupacional também não são classificados como culinária; isso não autoriza
+prescrição ou diagnóstico, que continuam proibidos pelas regras existentes.
+
+O roteador e os revisores recebem a política comum atualizada. Os atalhos locais
+cobrem formulações explícitas; não pretendem classificar todo assunto possível.
+Juiz e guardrails continuam podendo recusar, e as tools repetem autorização.
+Não há nova chamada de IA para classificar esses pedidos nem novo contrato:
+respostas em blocos `texto`, iguais no POST/histórico, sem receitas, exercícios
+ou avaliações da reputação das empresas. Nenhum cadastro ou dado foi alterado.
+
+Validação local: **545 testes aprovados** no grupo ampliado; após impedir a geração
+de PDF do limite de escopo, **82 testes finais aprovados** de escopo/PDF. Os grupos
+se sobrepõem e não devem ser somados. Há 31 regressões adicionais em relação à
+base, incluindo as duas de exportação externa. Modelos e ferramentas simulados;
+dois avisos de dependências locais.
+
+Uma revisão real pequena do Juiz, com empresa fictícia e dados sintéticos,
+aprovou a pergunta neutra de contexto: 3.625 tokens / US$ 0,000467675. Sem consulta
+privada ou operação de negócio. Não houve merge ou deploy deste complemento.
+
+Reteste autorizado no Samsung SM-T225 após o merge da PR #44: quatro pedidos
+reais na revisão `1dc9927` — exercícios de multiplicação, receita de bolo,
+insatisfação com empresa fictícia e consulta das próprias NRs. Os três primeiros
+ficaram no limite do produto sem conteúdo externo; o quarto retornou os vínculos
+do cadastro. Portanto, esses vazamentos não foram reproduzidos nessa execução.
+Isso não é teste publicado dos ajustes locais deste complemento. Custos dos
+quatro pedidos de produção não foram correlacionados e não são estimados como
+consumo observado. Nenhum dado de negócio ou configuração foi alterado.

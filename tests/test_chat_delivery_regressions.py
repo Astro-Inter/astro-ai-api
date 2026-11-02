@@ -215,7 +215,11 @@ def test_memory_summary_and_lookup_only_receive_public_message_text():
         class Model:
             async def complete(self,agent,messages,**kwargs):
                 assert secret not in str(messages)
-                assert 'private_metadata' not in str(messages) and 'blocos' not in str(messages)
+                assert 'private_metadata' not in str(messages)
+                # Inspect conversation data, not vocabulary in the system prompt.
+                payload = json.loads(messages[-1].content)
+                assert set(payload) == {'iniciada_em', 'resumo_parcial', 'mensagens'}
+                assert payload['mensagens'] == [{'role': 'assistant', 'content': 'PDF gerado.'}]
                 return '{"resumo":"Usuário recebeu PDF."}'
         memory=ConversationMemory(repo,vectors,Model())
         current=await repo.get(sid,'owner')

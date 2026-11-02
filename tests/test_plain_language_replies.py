@@ -60,9 +60,11 @@ def test_other_pipe_based_lists_keep_meaning_and_selection_references():
     assert ' | ' not in text and '20/09/2026 às 08:00' in text
     assert 'participação está rejeitada' in text and 'evento está cancelado' in text
     assert 'evidência para comprovar' in text and 'Arquivo ilegível' in text
-    assert 'referência do evento: 12 (evento_id)' in text
+    assert 'referência do evento: 12' in text
+    assert 'evento_id' not in text
     refs=_referencias_eventos({'status':'ok','eventos':[training]})
-    assert ' | ' not in refs and 'referência do evento: 12 (evento_id)' in refs
+    assert ' | ' not in refs and 'referência do evento: 12' in refs
+    assert 'evento_id' not in refs
     mandatory=_formatar_nrs_obrigatorias({'status':'ok','cargo':'Técnico','unidade':'Matriz',
         'nrs':[{'numero':10,'titulo':'Eletricidade','tempo_reciclagem_meses':24}]})
     assert ' | ' not in mandatory and 'NR-10' in mandatory

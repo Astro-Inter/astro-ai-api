@@ -54,7 +54,7 @@ são construídos pela API.
   de autorização; não implica consultar eventos de outras pessoas.
 - Seleção mostra somente título e evento_id, sem descrições, links e detalhes não
   solicitados. Evento repetido em turmas distintas usa a mesma referência.
-- Conjunto vazio informa que não há evento_id para selecionar. Não inventa IDs.
+- Conjunto vazio informa que não encontrou eventos, sem expor `evento_id` no texto. Eventos encontrados usam “referência do evento”; o identificador interno continua preservado e não é inventado.
 - Em listagens detalhadas, links loopback/localhost/endereços indefinidos são
   omitidos com aviso. Os valores registrados não são reescritos nem alterados.
 - Referências autorizadas são explicitamente distintas de UID, tokens e chaves

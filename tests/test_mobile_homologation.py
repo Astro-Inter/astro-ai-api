@@ -63,10 +63,11 @@ def test_mobile_event_reference_phrase_uses_all_assigned_events(chat_client,monk
     assert calls and calls[0]['proximos'] is False
     assert client.get(f"/sessions/{body['session_id']}/messages").json()['mensagens'][-1]['blocos']==body['blocos']
     if empty:
-        assert 'não há evento_id para selecionar' in texto_resposta(body)
+        assert texto_resposta(body) == 'Não encontrei eventos atribuídos a você no Astro.'
+        assert 'evento_id' not in texto_resposta(body)
         assert not app.state.chat_service.repository.docs[body['session_id']]['eventos_referencias']
     else:
-        assert 'referência do evento: 12 (evento_id)' in texto_resposta(body)
+        assert 'referência do evento: 12' in texto_resposta(body)
         seen=[]
         async def api(path,params):
             seen.append(path)
@@ -194,5 +195,5 @@ def test_event_test_urls_do_not_block_listing_or_change_registered_data(url):
     evidence=_evidencia_treinamentos({**result,'treinamentos':[event]})
     assert url not in text+str(evidence)
     assert 'Link cadastrado não disponível' in text
-    assert '12 (evento_id)' in text
+    assert 'referência do evento: 12' in text
     assert event['link_externo']==url

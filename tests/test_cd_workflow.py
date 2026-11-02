@@ -3,6 +3,16 @@ from pathlib import Path
 import yaml
 
 
+def test_ci_avoids_duplicate_push_and_pr_runs_and_disables_telemetry():
+    root = Path(__file__).resolve().parents[1]
+    ci = yaml.load((root / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+    assert ci['on']['push']['branches'] == ['main']
+    assert 'pull_request' in ci['on'] and 'workflow_dispatch' in ci['on']
+    assert ci['jobs']['tests']['env']['OTEL_SDK_DISABLED'] == 'true'
+    assert ci['jobs']['docker']['needs'] == 'tests'
+    assert any(step.get('run') == 'python -m pytest -q' for step in ci['jobs']['tests']['steps'])
+
+
 def test_publishing_requires_tests_and_main():
     root = Path(__file__).resolve().parents[1]
     workflow = yaml.load(

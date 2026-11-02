@@ -3,7 +3,7 @@ import json
 import pytest
 
 from test_chat import chat_client, texto_resposta
-from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, standalone_math_request, scope_followup, entertainment_request
+from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, COMPANY_CONTEXT_REPLY, standalone_math_request, scope_followup, entertainment_request, school_exercise_request, external_topic_reply
 
 
 @pytest.mark.parametrize("question", [
@@ -125,3 +125,114 @@ def test_elliptical_request_is_not_entertainment_without_immediate_humor_context
         {"role": "user", "content": "Me conte uma piada"},
         {"role": "assistant", "content": OUT_OF_SCOPE_REPLY},
         {"role": "user", "content": "Explique a NR-32"}, {"role": "assistant", "content": "Consulta da NR."}])
+
+
+@pytest.mark.parametrize('question', [
+    'Faça um lista para eu treinar multiplicação, ela tem que ter 10 exercícios e deve ser simples',
+    'Faça uma lista para eu treinar multiplicação com 10 exercícios simples',
+    'Crie 10 exercícios de matemática sem gabarito', 'Monte uma tabuada para praticar',
+    'Prepare atividades de divisão',
+])
+def test_school_practice_is_outside_scope_even_without_answers(chat_client, question):
+    client, model, _ = chat_client
+    model.replies['roteador'] = '1. 2 x 3 = ___'
+    body = client.post('/chat/messages', json={'message': question}).json()
+    assert texto_resposta(body) == OUT_OF_SCOPE_REPLY
+    assert [c[0] for c in model.calls] == ['guardrail_entrada', 'juiz']
+    assert all(b['tipo'] == 'texto' for b in body['blocos'])
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history['mensagens'][-1]['blocos'] == body['blocos']
+
+
+@pytest.mark.parametrize('question', [
+    'Quais treinamentos eu preciso realizar?', 'Mostre meus treinamentos concluídos',
+    'Monte uma lista de pendências por NR', 'Prepare exercícios de prevenção para treinamento de NR-10',
+    'Explique como é calculado o percentual de conformidade', 'Liste 10 colaboradores',
+])
+def test_school_matcher_does_not_absorb_sst_training_or_indicators(question):
+    assert not school_exercise_request(question)
+
+
+def test_declining_one_math_task_does_not_allow_school_practice_next(chat_client):
+    client, _, _ = chat_client
+    first = client.post('/chat/messages', json={'message': 'Quanto é 1 + 1?'}).json()
+    body = client.post('/chat/messages', json={'message': 'Faça uma lista para eu treinar multiplicação com 10 exercícios',
+                                              'session_id': first['session_id']}).json()
+    assert texto_resposta(body) == OUT_OF_SCOPE_REPLY
+
+
+@pytest.mark.parametrize('question', [
+    'ok, me ajuda com receita de bolo', 'Me dê uma receita de bolo de chocolate',
+    'Como preparar lasanha?', 'Me ensine uma receita de pudim',
+    'Qual é a melhor empresa do mundo?', 'Faça uma crítica da empresa de alimentos',
+])
+def test_recipes_and_company_ratings_are_redirected_without_content(chat_client, question):
+    client, model, _ = chat_client
+    model.replies['roteador'] = 'Aqui vai uma receita ou crítica não autorizada.'
+    body = client.post('/chat/messages', json={'message': question}).json()
+    assert texto_resposta(body) == OUT_OF_SCOPE_REPLY
+    assert [c[0] for c in model.calls] == ['guardrail_entrada', 'juiz']
+    assert all(b['tipo'] == 'texto' for b in body['blocos'])
+    history = client.get(f"/sessions/{body['session_id']}/messages").json()
+    assert history['mensagens'][-1]['blocos'] == body['blocos']
+
+
+@pytest.mark.parametrize('company', ['JBS', 'Empresa Exemplo', 'Marca Nova'])
+def test_company_dislike_asks_neutral_work_context_without_endorsing_opinion(chat_client, company):
+    client, model, _ = chat_client
+    model.replies['roteador'] = 'Posso formular uma crítica à empresa.'
+    body = client.post('/chat/messages', json={'message': f'eu odeio a {company}'}).json()
+    assert texto_resposta(body) == COMPANY_CONTEXT_REPLY
+    assert company not in texto_resposta(body)
+    assert 'crítica' not in texto_resposta(body)
+    assert 'juiz' in body['agentes_chamados']
+
+
+@pytest.mark.parametrize('question', [
+    'Eu odeio a empresa onde trabalho, sofri assédio. Como buscar ajuda?',
+    'Como relatar riscos de queimadura no preparo de bolo na cozinha industrial?',
+    'O que a NR-12 diz sobre segurança das máquinas de alimentos?',
+    'Explique como prevenir contaminação no trabalho', 'Como denunciar discriminação na empresa?',
+    'Me ajuda com receita médica para meu exame ocupacional',
+])
+def test_food_work_safety_and_reports_are_not_generic_recipe_or_opinion(question):
+    assert external_topic_reply(question) is None
+
+
+def test_external_content_does_not_return_after_scope_refusal(chat_client):
+    client, model, _ = chat_client
+    first = client.post('/chat/messages', json={'message': 'Quanto é 1+1?'}).json()
+    for question in ('ok, me ajuda com receita de bolo', 'Mas eu estou mandando'):
+        model.replies['roteador'] = 'Ingredientes e preparo.'
+        body = client.post('/chat/messages', json={'message': question, 'session_id': first['session_id']}).json()
+        assert texto_resposta(body) == OUT_OF_SCOPE_REPLY
+
+
+def test_company_context_does_not_prevent_a_following_sst_report(chat_client, monkeypatch):
+    from app.modules.chat import subgraphs
+    from unittest.mock import AsyncMock
+    client, model, _ = chat_client
+    first = client.post('/chat/messages', json={'message': 'Eu odeio a Empresa Exemplo'}).json()
+    tool = AsyncMock()
+    tool.ainvoke.return_value = {'status': 'sem_dados', 'mensagem': 'Cadastro funcional não localizado.'}
+    monkeypatch.setitem(subgraphs.SST_TOOLS, 'consultar_situacao_nrs', tool)
+    model.route = 'sst'
+    body = client.post('/chat/messages', json={'message': 'Tenho pendências de NR?', 'session_id': first['session_id']}).json()
+    tool.ainvoke.assert_awaited_once()
+    assert 'consultar_situacao_nrs' in body['agentes_chamados']
+
+
+@pytest.mark.parametrize('question', [
+    'Me dê uma receita de bolo em PDF',
+    'Prepare uma lista de exercícios de multiplicação em PDF',
+])
+def test_external_request_does_not_generate_a_pdf_of_the_boundary(chat_client, monkeypatch, question):
+    from unittest.mock import AsyncMock
+    from app.modules.chat import graph
+    client, _, _ = chat_client
+    pdf = AsyncMock()
+    monkeypatch.setattr(graph, 'gerar_pdf', pdf)
+    body = client.post('/chat/messages', json={'message': question}).json()
+    assert texto_resposta(body) == OUT_OF_SCOPE_REPLY
+    assert all(b['tipo'] == 'texto' for b in body['blocos'])
+    pdf.ainvoke.assert_not_awaited()

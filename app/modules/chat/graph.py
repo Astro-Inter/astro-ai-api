@@ -15,7 +15,7 @@ from app.modules.chat.agents import invoke_agent
 from app.observability.chat import record_decision
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.public_replies import public_reply, CAPABILITIES
-from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, standalone_math_request, scope_followup, entertainment_request, mass_repetition_request
+from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, standalone_math_request, scope_followup, entertainment_request, mass_repetition_request, school_exercise_request, external_topic_reply
 from app.modules.chat.content_safety import CONTENT_BOUNDARY, unsafe_generated_text
 from app.modules.chat.capabilities import asks_profile_capabilities, profile_capabilities, format_profile_capabilities
 from app.modules.chat.pdf_delivery import asks_for_pdf_link, previous_pdf_reply, remove_delivery_promises
@@ -616,12 +616,57 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
+        from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup
+        from app.modules.chat.current_intent import conversational_read, team_pending_read
+        role = state["usuario_atual"].role
+        pending_team = team_pending_read(state["mensagem"], state.get("historico", []))
+        if isinstance(pending_team, OperationalDecision):
+            return {"rota": "consulta_operacional", "operational_decision": pending_team.model_dump(mode="json"),
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if isinstance(pending_team, str):
+            return {"rota": "direta", "candidato": pending_team, "resposta_deterministica": True,
+                    "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "tipo_de_pendencia_da_equipe", "texto": pending_team}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if asks_chart_menu(state["mensagem"]):
+            answer, menu = make_chart_menu(role)
+            return {"rota": "direta", "candidato": answer, "menu_graficos": menu,
+                    "resposta_deterministica": True,
+                    "resultado": {"status": "concluido", "evidencia_contexto": {"origem": "catalogo_de_graficos_da_aplicacao", "perfil": role, "opcoes": menu, "texto": answer}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        selection = select_chart(state["mensagem"], state["contexto"].get("menu_graficos"), role)
+        if selection in ("grafico_barras", "grafico_linhas"):
+            return {"rota": "agenda", "grafico_pessoal": selection,
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if isinstance(selection, OperationalDecision):
+            return {"rota": "consulta_operacional", "operational_decision": selection.model_dump(mode="json"),
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        deadline = expiry_followup(state["mensagem"], state["contexto"].get("consulta_prazo"), role) if selection is None else None
+        if deadline:
+            selection, _ = deadline
+            if isinstance(selection, OperationalDecision):
+                return {"rota": "consulta_operacional", "operational_decision": selection.model_dump(mode="json"),
+                        "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if isinstance(selection, str):
+            return {"rota": "direta", "candidato": selection,
+                    "menu_graficos": state["contexto"].get("menu_graficos") if not deadline else None,
+                    "consulta_prazo": deadline[1] if deadline else False,
+                    "resposta_deterministica": True,
+                    "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "esclarecimento_de_consulta", "texto": selection}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        external_reply = external_topic_reply(state["mensagem"])
+        if external_reply is not None:
+            return {"rota": "direta", "candidato": external_reply,
+                    "resposta_deterministica": True, "pdf_solicitado": False,
+                    "resultado": {"status": "esclarecer" if external_reply != OUT_OF_SCOPE_REPLY else "fora_escopo",
+                                  "evidencia_contexto": {"origem": "limite_do_produto", "regra": "Sem receitas, avaliações de empresas ou suposição de relato trabalhista."}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if (standalone_math_request(state["mensagem"])
                 or scope_followup(state["mensagem"], state.get("historico", []))
                 or mass_repetition_request(state["mensagem"])
+                or school_exercise_request(state["mensagem"])
                 or entertainment_request(state["mensagem"], state.get("historico", []))):
             return {"rota": "direta", "candidato": OUT_OF_SCOPE_REPLY,
-                    "resposta_deterministica": True,
+                    "resposta_deterministica": True, "pdf_solicitado": False,
                     "resultado": {"status": "fora_escopo", "evidencia_contexto": {
                         "origem": "limite_do_produto", "assuntos": "RH, SST, Agenda, FAQ e dados autorizados do Astro"}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
@@ -632,8 +677,28 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                     "resultado": {"status": "concluido", "evidencia_contexto": {
                         "origem": "catalogo_da_aplicacao_para_o_perfil_autenticado", **capabilities}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf, change_chart_type
+        from app.modules.chat.current_intent import explicit_read, selected_event, distribution_pdf, general_nr_question, personal_pending_kind, summary_pdf, change_chart_type, pending_people_read, pending_people_offer, pending_people_scope, people_count_read
+        count = people_count_read(state["mensagem"], state.get("historico", []))
+        if count is not None:
+            if role not in {"GESTOR", "GESTOR_WORKSPACE"}:
+                answer = "Seu perfil não permite consultar a contagem de outras pessoas da unidade ou do workspace. Posso ajudar com seus próprios dados e as funções do Astro."
+                return {"rota": "direta", "candidato": answer, "resposta_deterministica": True,
+                        "resultado": {"status": "nao_autorizado", "evidencia_contexto": {"origem": "perfis_autorizados_para_contagem", "perfil": role}},
+                        "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+            decision, scope = count
+            return {"rota": "rh", "rh_decision": decision, "contagem_workspace": scope == "workspace",
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         previous=state["contexto"].get("consulta_operacional") or {}
+        people = pending_people_read(state["mensagem"], previous, state["contexto"].get("leitura_pendente"), state.get("historico", []))
+        if isinstance(people, OperationalDecision):
+            return {"rota": "consulta_operacional", "operational_decision": people.model_dump(mode="json"),
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
+        if isinstance(people, str):
+            return {"rota": "direta", "candidato": people, "resposta_deterministica": True,
+                    "leitura_pendente": (pending_people_scope(previous) if people.startswith("Qual NR")
+                                         else state["contexto"].get("leitura_pendente") if people.startswith("Informe uma NR") else None),
+                    "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "selecao_de_nr_para_leitura", "texto": people}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         chart_change = change_chart_type(state["mensagem"], previous, state["contexto"].get("ultima_rota"))
         if isinstance(chart_change, str):
             return {"rota": "direta", "candidato": chart_change,
@@ -671,7 +736,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if general_nr_question(state["mensagem"]):
             return {"rota": "sst", "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        current=explicit_read(state["mensagem"])
+        current=conversational_read(state["mensagem"], state.get("historico", [])) or explicit_read(state["mensagem"])
         from app.modules.agenda.tools import AgendaToolDecision
         if isinstance(current,AgendaToolDecision):
             return {"rota":"agenda","agenda_decision":current,
@@ -938,7 +1003,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             return {
                 "rota": "direta",
                 "candidato": OUT_OF_SCOPE_REPLY,
-                "resposta_deterministica": True,
+                "resposta_deterministica": True, "pdf_solicitado": False,
                 "resultado": {"status": "fora_escopo"},
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
@@ -970,6 +1035,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 ),
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
+        proposal = pending_people_offer(command, state["contexto"].get("consulta_operacional")) if not route else None
+        if proposal is not None:
+            return {"rota": "direta", "candidato": command, "resposta_deterministica": True,
+                    "leitura_pendente": proposal.model_dump(mode="json"),
+                    "resultado": {"status": "esclarecer", "evidencia_contexto": {"origem": "proposta_de_leitura_nao_executada", "consulta": proposal.model_dump(mode="json")}},
+                    "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         return {
             "rota": route.group(1).lower() if route else "direta",
             "candidato": "" if route else command,

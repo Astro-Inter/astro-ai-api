@@ -321,6 +321,11 @@ def _data_legivel(value, *, horario=False):
 
 def _formatar_usuarios(result: dict) -> str:
     if result.get("consulta") == "contagem" and result.get("status") in {"ok", "sem_dados"}:
+        if result.get("escopo_consultado") in {"workspace", "unidade"}:
+            place = "no seu workspace" if result["escopo_consultado"] == "workspace" else "na sua unidade"
+            prefix = "Seu perfil permite consultar apenas sua unidade, não o workspace inteiro. " if result.get("workspace_restrito") else ""
+            people = "outros colaboradores" if result.get("somente_colaboradores") else "outras pessoas"
+            return f"{prefix}Encontrei {result['total']} {people} {place}, com os filtros informados. Essa contagem não inclui você e considera os perfis visíveis para seu acesso."
         return f"Encontrei {result['total']} usuário(s) no seu escopo autorizado, com os filtros informados. Essa contagem não inclui você."
     if result.get("status") == "sem_dados":
         return "Não encontrei usuários com os filtros informados."
@@ -701,7 +706,7 @@ def _formatar_treinamentos(result: dict, reference_date=None) -> str:
         if validity:
             details.append(f"Validade: {validity}.")
         if type(reference) is int:
-            details.append(f"Para selecionar este evento, use a referência do evento: {reference} (evento_id).")
+            details.append(f"Para selecionar este evento, use a referência do evento: {reference}.")
         lines.append(" ".join(details))
         if training.get("descricao"):
             lines.append(f"  {training['descricao'][:160]}")
@@ -757,7 +762,7 @@ def _formatar_eventos(result: dict, reference_date=None) -> str:
         return (
             "Não encontrei próximos eventos atribuídos a você no Astro."
             if upcoming else "Não encontrei eventos atribuídos a você no Astro."
-        ) + " Sem eventos neste conjunto, não há evento_id para selecionar um resumo."
+        )
     if result.get("status") != "ok":
         return "Não foi possível consultar seus eventos no Astro. " + result.get("mensagem", "")
     trainings = {**result, "treinamentos": result.get("eventos", [])}
@@ -777,10 +782,10 @@ def _referencias_eventos(result):
         if type(reference) is int and reference>0 and isinstance(event.get('titulo'),str):
             events.setdefault(reference,event['titulo'])
     if not events:
-        return 'A consulta não retornou referências evento_id utilizáveis para selecionar um resumo.'
+        return 'Não encontrei um evento com referência disponível para selecionar um resumo.'
     lines=['Eventos atribuídos a você para selecionar um resumo:']
-    lines.extend(f'{title}. Para selecionar, use a referência do evento: {reference} (evento_id).' for reference,title in events.items())
-    lines.append('Escolha pelo evento_id, por exemplo: Faça um resumo do evento '+str(next(iter(events)))+'. O acesso será verificado novamente.')
+    lines.extend(f'{title}. Para selecionar, use a referência do evento: {reference}.' for reference,title in events.items())
+    lines.append('Escolha pela referência do evento, por exemplo: Faça um resumo do evento '+str(next(iter(events)))+'. O acesso será verificado novamente.')
     if result.get('pagina',1)<result.get('total_paginas',1):
         lines.append(f"Para mais eventos, consulte a página {result['pagina']+1} da sua agenda.")
     return '\n'.join(lines)
@@ -862,6 +867,9 @@ def build_rh_graph(model: AgentModel):
             tool_input,
             config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}},
         )
+        if tool_name == "buscar_outros_usuarios" and result.get("consulta") == "contagem":
+            result = {**result, "workspace_restrito": bool(state.get("contagem_workspace") and state["usuario_atual"].role == "GESTOR"),
+                      "somente_colaboradores": bool(decision.filtros and decision.filtros.tipos == ["COLABORADOR"])}
         field = _campo_dado_proprio(state["mensagem"])
         if tool_name == "buscar_meus_dados" and field and result.get("status") == "ok":
             # Não envia CPF ou outros dados não solicitados aos agentes revisores.
@@ -923,7 +931,7 @@ def build_rh_graph(model: AgentModel):
             "resposta_deterministica": True,
             "consulta_rh": (
                 decision.filtros.model_dump()
-                if tool_name == "buscar_outros_usuarios" and result.get("status") in {"ok", "sem_dados"}
+                if tool_name == "buscar_outros_usuarios" and result.get("status") in {"ok", "sem_dados"} and result.get("consulta") != "contagem"
                 else state.get("consulta_rh") if tool_name != "buscar_outros_usuarios" else None
             ),
             "candidato": (
@@ -1129,7 +1137,7 @@ def pedido_grafico_treinamentos(message: str) -> bool:
 def build_agenda_graph(model: AgentModel):
     async def decide(state: ChatState):
         prepared_decision = state.get("agenda_decision")
-        if pedido_grafico_treinamentos(state["mensagem"]):
+        if state.get("grafico_pessoal") or pedido_grafico_treinamentos(state["mensagem"]):
             return {"agenda_route": "tool", "agenda_decision": "grafico_pessoal",
                     "agentes_chamados": state["agentes_chamados"] + ["agenda"]}
         filters = _filtros_treinamentos(state["mensagem"])
@@ -1160,6 +1168,7 @@ def build_agenda_graph(model: AgentModel):
         if state["agenda_decision"] == "grafico_pessoal":
             normalized = "".join(c for c in unicodedata.normalize("NFKD", state["mensagem"].casefold()) if not unicodedata.combining(c))
             chart_type = "grafico_linhas" if re.search(r"\b(linhas?|evolucao|mensal)\b", normalized) else "grafico_rosca" if re.search(r"\b(rosca|donut)\b", normalized) else "grafico_setores" if re.search(r"\b(setores?|pizza|circular)\b", normalized) else "grafico_barras"
+            chart_type = state.get("grafico_pessoal") or chart_type
             tool_name = "consultar_evolucao_treinamentos" if chart_type == "grafico_linhas" else "consultar_grafico_treinamentos"
             result = await AGENDA_TOOLS[tool_name].ainvoke(
                 {}, config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}})
