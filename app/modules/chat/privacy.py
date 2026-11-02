@@ -6,7 +6,7 @@ import unicodedata
 
 INTERNAL_INSTRUCTIONS_BOUNDARY = (
     "Não posso mostrar, resumir ou avaliar minhas instruções internas. "
-    "Sou o Agente do Astro e posso explicar minhas funcionalidades públicas "
+    "Sou o Astrinho, o assistente virtual do Astro e posso explicar minhas funcionalidades públicas "
     "ou ajudar com RH, segurança do trabalho, agenda e normas internas."
 )
 

@@ -43,10 +43,11 @@ def _campo_dado_proprio(message: str) -> str | None:
         return "unidade"
     match = re.fullmatch(
         r"(?:qual (?:e |eh )?(?:o |a )?|(?:me diga|me fale|mostre|informe) (?:qual e )?(?:o |a )?)"
-        r"(?:meu|minha) (nome|e-?mail|cargo|unidade|perfil|modalidade)(?: (?:cadastrad[oa]|no cadastro|no astro))?",
+        r"(?:meu|minha) (nome|e-?mail|cargo|unidade|perfil de acesso|nivel de acesso|tipo de usuario|perfil|modalidade)(?: (?:cadastrad[oa]|no cadastro|no astro))?",
         normalized,
     )
-    return {"email": "email", "e-mail": "email", "perfil": "tipo"}.get(match.group(1), match.group(1)) if match else None
+    return {"email": "email", "e-mail": "email", "perfil": "tipo", "perfil de acesso": "tipo",
+            "nivel de acesso": "tipo", "tipo de usuario": "tipo"}.get(match.group(1), match.group(1)) if match else None
 
 
 def _pedido_dos_proprios_dados(message: str) -> bool:
@@ -360,6 +361,10 @@ def _formatar_meus_dados(result: dict) -> str:
         return result.get("mensagem", "Não foi possível consultar seus dados no momento.")
 
     data = result["dados"]
+    if set(data) == {"tipo"}:
+        role = {"GESTOR_WORKSPACE": "Gestor do Workspace", "GESTOR": "Gestor",
+                "COLABORADOR": "Colaborador", "ADMIN": "Administrador"}.get(data["tipo"])
+        return f"Seu perfil de acesso é {role}." if role else "Não consegui identificar seu perfil de acesso."
     labels = {
         "nome": "Nome", "email": "E-mail", "cpf": "CPF", "tipo": "Perfil",
         "cargo": "Cargo", "unidade": "Unidade", "modalidade": "Modalidade",
@@ -863,7 +868,9 @@ def build_rh_graph(model: AgentModel):
             # Não envia CPF ou outros dados não solicitados aos agentes revisores.
             result = {**result, "dados": {field: result.get("dados", {}).get(field)}}
             if result["dados"][field] is None:
-                result = {**result, "status": "sem_dados", "mensagem": f"Não encontrei o campo {field} no seu cadastro."}
+                message = ("Não encontrei seu perfil de acesso no cadastro." if field == "tipo"
+                           else f"Não encontrei o campo {field} no seu cadastro.")
+                result = {**result, "status": "sem_dados", "mensagem": message}
         if tool_name == "buscar_meus_dados" and not field and result.get("status") == "ok":
             # O cartão completo contém somente campos profissionais suportados.
             allowed = {"nome", "email", "tipo", "cargo", "unidade", "modalidade"}

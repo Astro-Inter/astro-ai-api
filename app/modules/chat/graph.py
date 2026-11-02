@@ -745,7 +745,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             return {
                 "rota": "direta",
                 "candidato": (
-                    "Sou o Agente do Astro. Posso ajudar com informações de RH, "
+                    "Sou o Astrinho, o assistente virtual do Astro. Posso ajudar com informações de RH, "
                     "segurança do trabalho, agenda, treinamentos, políticas internas "
                     "e notificações, conforme suas permissões."
                 ),
