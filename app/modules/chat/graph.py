@@ -14,7 +14,7 @@ from app.infrastructure.llm.models import AgentModel
 from app.modules.chat.agents import invoke_agent
 from app.observability.chat import record_decision
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
-from app.modules.chat.public_replies import public_reply
+from app.modules.chat.public_replies import public_reply, CAPABILITIES
 from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, standalone_math_request, scope_followup, entertainment_request
 from app.modules.chat.capabilities import asks_profile_capabilities, profile_capabilities, format_profile_capabilities
 from app.modules.chat.pdf_delivery import asks_for_pdf_link, previous_pdf_reply, remove_delivery_promises
@@ -768,11 +768,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         if _pergunta_identidade_astro(state["mensagem"]):
             return {
                 "rota": "direta",
-                "candidato": (
-                    "Sou o Astrinho, o assistente virtual do Astro. Posso ajudar com informações de RH, "
-                    "segurança do trabalho, agenda, treinamentos, políticas internas "
-                    "e notificações, conforme suas permissões."
-                ),
+                "candidato": CAPABILITIES,
                 "agentes_chamados": state["agentes_chamados"] + ["roteador"],
             }
         if _campo_dado_proprio(state["mensagem"]) is not None:

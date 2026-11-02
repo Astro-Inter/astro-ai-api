@@ -5,6 +5,15 @@ import unicodedata
 from app.core.security import AccessRole
 
 
+VISUAL_CAPABILITIES = (
+    "Posso apresentar gráficos de barras, linhas, setores e rosca, tabelas e fichas de perfil, "
+    "quando a consulta permitir e houver dados autorizados. Fotos aparecem quando disponíveis. "
+    "Cada tipo de gráfico depende do que os dados permitem comparar."
+)
+PDF_CAPABILITIES = (
+    "Também posso gerar um PDF para baixar com o conteúdo consultado e aprovado. "
+    "Por exemplo: “Gere um PDF desse resumo”."
+)
 PERSONAL_EXAMPLES = (
     "Tenho pendências de NR?",
     "Quais treinamentos eu preciso realizar?",
@@ -14,8 +23,9 @@ PERSONAL_EXAMPLES = (
 TEAM_EXAMPLES = (
     "Quem da minha equipe tem pendências de NR?",
     "Quais conformidades vencem nos próximos 30 dias?",
-    "Mostre a distribuição da minha equipe por cargo.",
+    "Mostre a distribuição da minha equipe por cargo em um gráfico de barras.",
     "Mostre indicadores de cobertura da minha equipe.",
+    "Mostre 100 colaboradores da minha equipe em uma tabela.",
 )
 PROFILE_GUIDES = {
     "COLABORADOR": ("Colaborador", "seus próprios dados e atividades",
@@ -35,7 +45,12 @@ def profile_capabilities(role: AccessRole) -> dict:
     label, scope, examples, note = PROFILE_GUIDES[role]
     return {
         "perfil": label, "escopo": scope, "exemplos": list(examples), "observacao": note,
-        "recursos_gerais": "Explicações sobre o Astro e NRs; PDF do conteúdo consultado e aprovado.",
+        "recursos_gerais": (
+            "Posso explicar o Astro e NRs e mostrar a ficha do seu cadastro. "
+            + ("Gráficos de equipe e consultas funcionais exigem um perfil autorizado. "
+               if role == "ADMIN" else VISUAL_CAPABILITIES + " ")
+            + PDF_CAPABILITIES
+        ),
         "limites": "Cada consulta verifica seu acesso e os dados disponíveis. O chatbot não altera seu perfil, não inscreve pessoas em treinamentos e não cria eventos.",
     }
 
