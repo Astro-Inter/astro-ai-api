@@ -79,3 +79,18 @@ Citações de páginas de documentos são referências válidas. Sem evidência,
 o que não foi possível confirmar; não invente fatos, ações, links ou critérios.
 Falta de dados não significa estar em dia ou sem pendências.
 """
+
+
+PDF_REVIEW_PROMPT = """
+### ENTREGA DE ARQUIVO PDF NESTE TURNO — REVISÃO DO CONTEÚDO
+A etapa atual é ANTERIOR à geração do arquivo. Revise o conteúdo candidato e as
+fontes da consulta atual para decidir se esse conteúdo pode virar PDF. A aplicação
+só executará gerar_pdf depois da sua decisão e do guardrail. Nenhuma geração foi
+iniciada ainda. Não avalie esta etapa como se a entrega do arquivo já tivesse ocorrido.
+A ausência de chamada gerar_pdf, arquivo ou link nesta etapa é esperada e não é,
+por si só, motivo para revisar/rejeitar. Cobre dados suficientes e fontes para o
+conteúdo; revisão/rejeição continua obrigatória quando faltar evidência, houver
+contradições, números inventados ou acesso indevido. Rejeite promessas de geração
+já executada sem comprovante. Só sucesso real da tool permite cartão arquivo v1.
+Não prometa arquivo nem link nesta revisão; retorne apenas o contrato do seu papel.
+"""

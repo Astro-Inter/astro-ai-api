@@ -635,7 +635,7 @@ def _event_public_link(value):
         return None
 
 
-def _formatar_treinamentos(result: dict) -> str:
+def _formatar_treinamentos(result: dict, reference_date=None) -> str:
     if result.get("status") == "sem_dados":
         labels = {
             "a_realizar": "Não encontrei treinamentos ativos pendentes atribuídos a você.",
@@ -656,9 +656,19 @@ def _formatar_treinamentos(result: dict) -> str:
         start_date = _data_legivel(training.get("data_inicio"), horario=True)
         end_date = _data_legivel(training.get("data_termino"), horario=True)
         if start_date:
-            details.append(f"Começa em {start_date}.")
+            details.append(f"Início: {start_date}.")
         if end_date:
-            details.append(f"Termina em {end_date}.")
+            details.append(f"Término: {end_date}.")
+        try:
+            end = training.get("data_termino")
+            end_day = date.fromisoformat(str(end)[:10]) if end else None
+            today = date.fromisoformat(str(reference_date)[:10]) if reference_date else None
+        except ValueError:
+            end_day = today = None
+        if end_day and today and end_day < today:
+            details.append("O período informado já terminou.")
+            if training['status_participacao'] == 'PENDENTE':
+                details.append("A participação continua pendente. Confira a atividade no aplicativo para saber como regularizar.")
         participation = status_labels.get(training['status_participacao'], "não informada")
         details.append(f"Sua participação está {participation}.")
         event_status = {"ATIVO": "ativo", "CANCELADO": "cancelado", "CONCLUIDO": "concluído"}.get(training['status_evento'])
@@ -718,6 +728,8 @@ def _evidencia_treinamentos(result: dict) -> dict:
     return {
         "status": result.get("status"),
         "situacao": result.get("situacao"),
+        "quantidade": result.get("quantidade", len(trainings)),
+        "total": result.get("total"),
         "pagina": result.get("pagina"),
         "total_paginas": result.get("total_paginas"),
         "treinamentos": trainings,
@@ -725,7 +737,7 @@ def _evidencia_treinamentos(result: dict) -> dict:
     }
 
 
-def _formatar_eventos(result: dict) -> str:
+def _formatar_eventos(result: dict, reference_date=None) -> str:
     upcoming = result.get("proximos")
     if result.get("status") == "sem_dados":
         return (
@@ -735,7 +747,7 @@ def _formatar_eventos(result: dict) -> str:
     if result.get("status") != "ok":
         return "Não foi possível consultar seus eventos no Astro. " + result.get("mensagem", "")
     trainings = {**result, "treinamentos": result.get("eventos", [])}
-    return _formatar_treinamentos(trainings).replace(
+    return _formatar_treinamentos(trainings, reference_date).replace(
         "Seus treinamentos atribuídos:",
         "Seus próximos eventos no Astro:" if upcoming else "Seus eventos no Astro:",
     ).replace("treinamento", "evento")
@@ -1162,7 +1174,7 @@ def build_agenda_graph(model: AgentModel):
         }
         if tool_name == "consultar_eventos":
             selection=bool(re.search(r'\b(refer[eê]ncia|evento_id)\b',state['mensagem'],re.I))
-            candidate = _referencias_eventos(result) if selection else _formatar_eventos(result)
+            candidate = _referencias_eventos(result) if selection else _formatar_eventos(result, state["contexto"].get("data_hora"))
             evidence = _evidencia_treinamentos({**result, "treinamentos": result.get("eventos", [])})
             evidence["eventos"] = evidence.pop("treinamentos", [])
             if selection:
@@ -1170,7 +1182,7 @@ def build_agenda_graph(model: AgentModel):
             evidence["proximos"] = result.get("proximos")
             intention = "listar"
         elif tool_name == "consultar_treinamentos":
-            candidate = _formatar_treinamentos(result)
+            candidate = _formatar_treinamentos(result, state["contexto"].get("data_hora"))
             evidence = _evidencia_treinamentos(result)
             intention = "consultar"
         return {

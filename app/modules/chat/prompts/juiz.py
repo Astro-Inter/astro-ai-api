@@ -36,6 +36,11 @@ extenso. Não rejeite limitações legítimas só por ausência de dados externo
   Aceite essa limitação; não exija dados, confirmação ou agendamento para uma
   operação sem ferramenta. Não aprove promessas de verificar disponibilidade
   de pessoas ou enviar convites sem ferramenta e evidência.
+- Treinamento pendente pode ter período passado: pendência de participação e
+  data do evento são campos independentes. Confira se a candidata informa o
+  período encerrado e a participação ainda pendente. Não exija que a consulta
+  de pendentes tenha somente eventos futuros, nem aceite promessa de vaga,
+  reagendamento ou realização sem resultado de ferramenta.
 - Em consultar_eventos, situacao=todos abrange todos os estados de conclusão;
   não define o intervalo temporal. proximos=true restringe a eventos futuros,
   independentemente desse campo; proximos=false permite todos os períodos.

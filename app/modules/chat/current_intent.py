@@ -114,3 +114,37 @@ def distribution_pdf(message,previous):
     filters.update(pagina=1,limite=50,tipo_grafico="grafico_barras")
     return OperationalDecision(acao=decision.acao,filtros=filters,
                                referencia_listagem_rh=decision.referencia_listagem_rh)
+
+
+def summary_pdf(message, previous, last_route):
+    """Requery a selected summary; never turn historical prose into current evidence."""
+    text = ''.join(c for c in unicodedata.normalize('NFKD', message.casefold()) if not unicodedata.combining(c))
+    text = ' '.join(text.split()).strip().rstrip('.!? ')
+    match = re.fullmatch(
+        r"(?:gere|crie|faca|prepare) (?:um )?(?:arquivo )?pdf "
+        r"(?:com (?:esse|este|o)|desse|deste|do) (?:resumo|grafico|resultado)"
+        r"(?: (?:de |da |dos )?(?P<topic>vencimentos|pendencias|distribuicao da equipe|cobertura))?(?: por favor)?", text)
+    if not match:
+        return None
+    actions = {
+        'consultar_grafico_vencimentos': 'vencimentos',
+        'consultar_grafico_pendencias_nr': 'pendencias',
+        'consultar_indicadores_equipe': 'distribuicao da equipe',
+        'consultar_indicadores_cobertura': 'cobertura',
+    }
+    unclear = 'Consulte primeiro o resumo que deseja exportar nesta conversa. Depois, peça o PDF desse resultado.'
+    if last_route != 'consulta_operacional' or not isinstance(previous, dict) or previous.get('acao') not in actions:
+        return unclear
+    if match['topic'] and match['topic'] != actions[previous['acao']]:
+        return unclear
+    try:
+        decision = OperationalDecision.model_validate(previous)
+        filters = decision.filtros.model_dump()
+        filters['pagina'] = 1
+        # Small fixed summaries need all categories, never the previous visual page.
+        if decision.acao != 'consultar_indicadores_cobertura':
+            filters['limite'] = 50
+        return OperationalDecision(acao=decision.acao, filtros=filters,
+            referencia_listagem_rh=decision.referencia_listagem_rh)
+    except ValueError:
+        return unclear

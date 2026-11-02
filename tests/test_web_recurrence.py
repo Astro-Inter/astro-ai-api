@@ -79,7 +79,7 @@ def test_complete_distribution_summary_distinguishes_people_from_categories(chat
     review=next(call for call in model.calls if call[0]=='juiz')
     candidate=json.loads(review[1][-1].content.split('\n',1)[1])['resposta_candidata']
     assert '141 pessoas em 2 categorias' in candidate
-    assert 'independentemente das linhas' in candidate
+    assert 'não apenas as linhas exibidas' in candidate
     assert 'grafico_barras' in [b['tipo'] for b in body['blocos']]
     assert client.get(f"/sessions/{body['session_id']}/messages").json()['mensagens'][-1]['blocos']==body['blocos']
 

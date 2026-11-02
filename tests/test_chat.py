@@ -2722,7 +2722,7 @@ def test_expiry_blocks_do_not_repeat_title_and_keep_context(chat_client, monkeyp
     assert table["linhas"][0]["quantidade"] == 7
     footer = body["blocos"][-1]["conteudo"]
     assert title not in footer and warning in footer
-    assert "Cadastro autorizado" in footer and "registros" in footer and "2026-10-31" in footer
+    assert "Cadastro autorizado" in footer and "registros" in footer and "31/10/2026" in footer
     if has_graph:
         assert body["blocos"][1]["titulo"] == title
         assert body["blocos"][1]["dados"][0]["valor"] == 7
