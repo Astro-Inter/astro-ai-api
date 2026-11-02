@@ -7,6 +7,10 @@ OUT_OF_SCOPE_REPLY = (
     "Meu foco é ajudar com o Astro e com saúde e segurança no trabalho. "
     "Posso ajudar com dados do seu cadastro, NRs, pendências, treinamentos e indicadores autorizados."
 )
+COMPANY_CONTEXT_REPLY = (
+    "Posso ajudar com uma situação concreta de trabalho ou uma consulta no Astro. "
+    "Você quer relatar algum problema de segurança ou RH?"
+)
 SCOPE_POLICY = (
     "ESCOPO DO PRODUTO: matemática genérica, redação escolar, entretenimento e tarefas "
     "sem relação com RH/SST/Agenda/FAQ ou dados do Astro usam ROUTE=fora_escopo no "
@@ -21,6 +25,14 @@ SCOPE_POLICY = (
     " Declarações afetivas pessoais, textos para copiar em massa e repetição mecânica "
     "também estão fora do escopo, mesmo que o destinatário seja chamado de gestor. "
     "Histórico contendo uma resposta inadequada não autoriza continuá-la."
+    " Listas de exercícios escolares e prática de tabuada/multiplicação também "
+    "são tarefas externas, mesmo sem gabarito. 'Treinar' matemática não é consultar "
+    "treinamentos atribuídos de SST."
+    " Receitas culinárias e avaliações genéricas da reputação de empresas são externas. "
+    "Não ofereça redigir críticas, elogios ou rankings de empresas. Uma insatisfação "
+    "sem contexto pode pedir uma pergunta neutra sobre a situação de trabalho. "
+    "Relatos de assédio, discriminação e riscos devem receber apoio sem julgar a empresa. "
+    "Segurança no preparo de alimentos não é ensinar uma receita culinária."
 )
 
 
@@ -82,3 +94,35 @@ def mass_repetition_request(message: str) -> bool:
         return False
     match = re.search(r'\b(?:repita|repete|repetir|escreva|escreve|diga|fale|fala)\b.{0,180}?\b(\d{1,6}|cem|mil) vezes\b', text)
     return bool(match and (match[1] in {'cem', 'mil'} or int(match[1]) >= 20))
+
+
+def school_exercise_request(message: str) -> bool:
+    """Pedido de material para praticar matemática; não confunde treinamento SST."""
+    text = _normalize(message)
+    action = re.match(r'(?:agora |por favor,? )?(?:(?:me )?(?:faca|crie|monte|gere|prepare|escreva|passe)|quero)\b', text)
+    practice = re.search(r'\b(?:exercicios?|atividades?|lista|tabuada|treinar|praticar)\b', text)
+    subject = re.search(r'\b(?:matematica|multiplicacao|divisao|tabuada|algebra|equacoes?|fracoes?|aritmetica)\b', text)
+    return bool(action and practice and subject)
+
+
+def external_topic_reply(message: str) -> str | None:
+    """Pedidos explícitos de culinária/opinião, sem catálogo de marcas proibidas."""
+    text = _normalize(message)
+    text = re.sub(r'^(?:ok|certo|beleza|blz)[,!]?\s+', '', text)
+    # Referências a perigo ou condições de trabalho mantêm a interpretação SST/RH.
+    work_issue = re.search(r'\b(?:assedio|discriminacao|acidente|queimadura|risco|riscos|seguranca|epi|epis|nr|nrs|sst|salario|salarios|direitos|insalubridade|denuncia|denunciar|contaminacao|conformidade|indicadores?)\b|\breceita medica\b|\bexame ocupacional\b', text)
+    if work_issue:
+        return None
+    cooking = re.match(
+        r'(?:(?:me )?(?:ajuda|ajude) com|(?:me )?(?:de|da|passe|mande|ensine|faca|crie|mostre)|quero|como (?:fazer|preparar)) '
+        r'(?:(?:uma|um|a|o) )?(?:receita(?:s)?(?: de| para)?|bolo|torta|pudim|lasanha|pao|brigadeiro)\b', text)
+    if cooking:
+        return OUT_OF_SCOPE_REPLY
+    ranking = re.search(r'\b(?:melhor|pior) empresa(?: do mundo| do brasil)?\b', text)
+    opinion = re.match(r'(?:(?:me )?(?:ajude|ajuda) a (?:escrever|formular)|(?:escreva|faca|crie)) '
+                       r'(?:(?:uma|um) )?(?:critica|elogio|ranking) (?:a|da|das|de|sobre)\b', text)
+    if ranking or opinion:
+        return OUT_OF_SCOPE_REPLY
+    if re.fullmatch(r'(?:eu )?(?:odeio|detesto) (?:a empresa |a |o )[\w&.-]+(?: [\w&.-]+){0,3}', text):
+        return COMPANY_CONTEXT_REPLY
+    return None
