@@ -26,7 +26,7 @@ def test_confirmation_does_not_choose_a_type_or_execute_arbitrary_proposals():
     assert team_pending_read('Pode verificar em outra empresa', [{'role': 'assistant', 'content': LEGACY_OFFER}]) is None
 
 
-@pytest.mark.parametrize('path', ['legacy', 'new'])
+@pytest.mark.parametrize('path', ['legacy', 'new', 'direct'])
 @pytest.mark.parametrize('outcome', ['ok', 'empty', 'unavailable', 'judge', 'downgrade'])
 def test_chosen_team_nr_read_executes_once_with_current_identity(chat_client, monkeypatch, path, outcome):
     client, model, app = chat_client
@@ -55,7 +55,8 @@ def test_chosen_team_nr_read_executes_once_with_current_identity(chat_client, mo
         monkeypatch.setattr(tools, 'team_read', lambda *_a, **_k: pytest.fail('Não deve consultar o banco após perda de permissão.'))
     if outcome == 'judge':
         model.replies['juiz'] = json.dumps({'status': 'rejeitado', 'motivo': 'Teste', 'problemas': ['Dados não validados.']})
-    body = client.post('/chat/messages', json={'message': 'Pode verificar' if path == 'legacy' else 'NRs', 'session_id': first['session_id']}).json()
+    question = {'legacy': 'Pode verificar', 'new': 'NRs', 'direct': 'Consulte as pendências de NR da minha equipe'}[path]
+    body = client.post('/chat/messages', json={'message': question, 'session_id': first['session_id']}).json()
     assert len(calls) == 1 and calls[0][1]['configurable']['usuario_atual']['uid'] == 'user-a'
     assert calls[0][0]['nr'] is None
     assert not any(c[0] == 'roteador' for c in model.calls)

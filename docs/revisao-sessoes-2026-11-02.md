@@ -23,6 +23,7 @@ ausência de recusas, pois turnos bloqueados podem não ser persistidos.
 | “qualquer um” após menu | Seleciona a primeira consulta visível daquele menu. Sem menu ativo não supõe uma operação; apenas leituras documentadas são elegíveis. |
 | Escolha “os próximos treinamentos atribuídos a você” | Encaminha à consulta pessoal autenticada. Não interpreta o pronome como identidade de terceiros. |
 | “Me fala as pendências de NR da minha equipe” | Encaminha à ferramenta existente em vez de produzir resposta sem consulta. |
+| “Consulte as pendências de NR da minha equipe” | Pedido explícito aciona a mesma ferramenta sem nova confirmação; teste de integração reproduz a frase da captura e preserva as falhas/recusas reais. |
 | “Tem algum colaborador meu com pendência?” → escolha de NR | Pergunta uma vez o tipo de pendência; “NRs” executa a consulta. “Pode verificar” após a pergunta antiga especificamente sobre NR também executa, sem exigir outra confirmação. |
 | “Faz em um gráfico de setores” após barras | Alteração de formato reconsulta o conjunto autorizado, preservando filtros. |
 | Exercícios, receitas, humor, avaliações genéricas de empresas e repetição em massa | Controles de escopo da PR e revisões anteriores cobrem os exemplos principais; não constituem garantia universal contra paráfrases/adversários. |
