@@ -1391,7 +1391,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 emit('chat_review_not_approved',level='WARNING',sink=logger,
                      review_status=verdict.get('status') if verdict.get('status') in {'revisar','rejeitado'} else 'unknown',
                      tool=tool if tool in allowed_tools else 'other',issue_count=len(verdict.get('problemas',[])))
-                return {"resposta": "Não consegui confirmar uma resposta confiável para este pedido. Por isso, não vou apresentar informações que possam estar incorretas. Você pode reformular a pergunta ou tentar novamente.",
+                public_reason = "Não consegui confirmar uma resposta confiável para este pedido. Por isso, não vou apresentar informações que possam estar incorretas. Você pode reformular a pergunta ou tentar novamente."
+                if tool == 'consultar_nrs' and state.get('resultado_tool', {}).get('status') == 'ok':
+                    public_reason = ("Consultei as informações da norma, mas a explicação ainda precisa de revisão. "
+                                     "Não consegui confirmar uma resposta confiável para enviar. "
+                                     "Por isso, não vou apresentar uma orientação que possa causar confusão.")
+                return {"resposta": public_reason,
                         "guardar_turno": False,
                         "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}
             record_decision("output_guard", "approved_deterministic")

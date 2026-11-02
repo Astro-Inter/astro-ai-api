@@ -70,3 +70,29 @@ não texto público; não foi configurado como gerador de justificativas.
 
 Nenhum merge/deploy foi realizado pelo agente neste ciclo. As correções novas
 exigem outra PR; os sucessos observados se referem à revisão publicada acima.
+
+## Recusa da definição de NR-2
+
+Na captura posterior, o trace de 02/11 às 17:51:46 de São Paulo confirmou conteúdo
+fundamentado; o Juiz pediu revisão por excesso de detalhes e campos técnicos,
+contrariando o pedido anterior de respostas simples. Não houve decisão do Jev
+que justificasse apresentar essa pergunta como proibida. A mensagem genérica
+também não distinguia consulta concluída de revisão da explicação.
+
+Perguntas breves de definição (“O que é a NR 2?”, “Sobre o que é a NR-2?”) agora
+recebem título, situação e fonte; para norma não revogada, acrescentam um trecho
+curto disponível do objetivo/resumo. Quando revogada, não repetem dados internos
+de reciclagem/aplicabilidade como obrigações atuais. Pedidos de detalhes mantêm
+o formato detalhado e a evidência completa. “NR2” também chega à consulta sem
+exigir espaço. Não há conhecimento regulatório inventado no formatador: situação
+e conteúdo vêm da ferramenta, e o Juiz continua avaliando a candidata final.
+
+Se a consulta de NR concluir mas a revisão ainda não aprovar, o texto explica:
+“Consultei as informações da norma, mas a explicação ainda precisa de revisão.”
+Não expõe o motivo bruto do Juiz, não exibe dados reprovados nem força aprovação.
+
+Verificação externa: a página oficial do MTE identifica a NR-2 como Inspeção
+Prévia, revogada. A consulta do aplicativo continua utilizando seu fluxo oficial
+de fontes, e não uma resposta estática específica para a NR-2.
+
+Fonte: [MTE — NR-2](https://www.gov.br/trabalho-e-emprego/pt-br/acesso-a-informacao/participacao-social/conselhos-e-orgaos-colegiados/comissao-tripartite-partitaria-permanente/normas-regulamentadora/normas-regulamentadoras-vigentes/norma-regulamentadora-no-2-nr-2).
