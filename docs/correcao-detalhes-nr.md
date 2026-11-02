@@ -68,3 +68,25 @@ Após publicação autorizada, repetir no tablet:
    confirmação de que a pessoa está em dia.
 
 Nenhum merge ou deploy é realizado por esta correção.
+
+## Confirmação na NR-32
+
+O trace de 02/11/2026 às 14:24:46 UTC (11:24 em São Paulo) confirmou a mesma
+causa para “É sobre o que a NR 32?” depois da conversa sobre gráficos. A consulta
+executou `consultar_nrs`, modo detalhar, número 32, com status `ok` e origem
+principal `web_oficial`. A evidência entregue ao Juiz omitia os valores, embora
+a candidata os exibisse. O Juiz pediu revisão por não poder comprovar as afirmações.
+Não foi falta do registro da NR-32 nem defeito de gráfico no mobile.
+
+A correção genérica de evidência desta PR já inclui esses dados para qualquer
+número retornado pela tool. Não se criou uma resposta fixa para a NR-32 nem se
+forçou aprovação. A produção consultada após esse relato ainda retornava
+`a96be9fc8a0896303acf28cc8449e5a183c8e5d5`; a PR #43 permanecia aberta.
+
+Foram adicionadas duas regressões explícitas: “É sobre o que a NR 32?” e
+“Sobre o que é a NR-32?” após uma distribuição de equipe. Elas verificam a mudança
+para SST, consulta da NR correta, ausência de nova consulta de equipe, valores
+na evidência do Juiz e igualdade POST/histórico. A rodada de NRs e ferramentas
+de SST teve **40 aprovações**, com modelos e fontes simulados. Esse grupo se
+sobrepõe às rodadas anteriores e não deve ser somado. Não houve chamada real de
+IA adicional, merge ou deploy.

@@ -97,3 +97,50 @@ def test_missing_details_are_not_replaced_by_history(status):
     evidence = subgraphs._evidencia_compacta_nrs(result)
     assert evidence["nrs"] == []
     assert "Disposições gerais" not in subgraphs._formatar_nrs(result)
+
+
+@pytest.mark.parametrize("question", ["É sobre o que a NR 32?", "Sobre o que é a NR-32?"])
+def test_nr32_subject_after_team_chart_has_independent_evidence(chat_client, monkeypatch, question):
+    from app.api import auth
+    from app.core.security import CurrentUser
+    from app.modules.operational.tools import REGISTRY
+    client, model, app = chat_client
+    app.dependency_overrides[auth.get_current_user] = lambda: CurrentUser(uid="user-a", role="GESTOR")
+    chart_tool = AsyncMock()
+    chart_tool.ainvoke.return_value = {
+        "status": "ok", "titulo": "Equipe por cargo",
+        "colunas": [{"chave": "categoria", "titulo": "Cargo"}, {"chave": "quantidade", "titulo": "Pessoas"}],
+        "linhas": [{"categoria": "Cargo A", "quantidade": 3}],
+        "total": 1, "pagina": 1, "total_paginas": 1, "fonte": "Cadastro autorizado",
+        "unidade_grafico": "pessoas", "tipo_grafico": "grafico_barras",
+        "grafico": [{"categoria": "Cargo A", "valor": 3}],
+    }
+    monkeypatch.setitem(REGISTRY, "consultar_indicadores_equipe", chart_tool)
+    model.replies["roteador"] = json.dumps({"acao": "consultar_indicadores_equipe", "filtros": {}})
+    first = client.post("/chat/messages", json={"message": "Mostre a distribuição da minha equipe por cargo."}).json()
+    assert any(b["tipo"] == "grafico_barras" for b in first["blocos"])
+    result = detail()
+    result["nrs"][0].update(numero=32, nome="Norma de teste 32", fonte_oficial="https://www.gov.br/nr-32")
+    result["fonte"]["url"] = "https://www.gov.br/nr-32"
+    result["fontes"][0]["url"] = "https://www.gov.br/nr-32"
+    tool = AsyncMock()
+    tool.ainvoke.return_value = result
+    monkeypatch.setitem(subgraphs.SST_TOOLS, "consultar_nrs", tool)
+    model.calls.clear()
+    model.replies["roteador"] = "ROUTE=sst"
+    response = client.post("/chat/messages", json={"message": question, "session_id": first["session_id"]})
+    assert response.status_code == 200
+    body = response.json()
+    tool.ainvoke.assert_awaited_once()
+    assert tool.ainvoke.call_args.args[0]["numeros"] == [32]
+    assert chart_tool.ainvoke.await_count == 1
+    assert "NR-32" in texto_resposta(body) and "Nenhum componente foi liberado" not in texto_resposta(body)
+    assert all(b["tipo"] == "texto" for b in body["blocos"])
+    call = next(c for c in model.calls if c[0] == "juiz")
+    evidence = json.loads(call[1][-1].content.split("\n", 1)[1])["resultado"]["evidencia_tool"]
+    assert evidence["nome"] == "consultar_nrs"
+    assert evidence["resultado"]["nrs"][0]["numero"] == 32
+    for field in ("resumo_oficial", "situacao", "objetivo", "descricao", "aplicabilidade"):
+        assert evidence["resultado"]["nrs"][0][field] == result["nrs"][0][field]
+    history = client.get(f"/sessions/{first['session_id']}/messages").json()
+    assert history["mensagens"][-1]["blocos"] == body["blocos"]
