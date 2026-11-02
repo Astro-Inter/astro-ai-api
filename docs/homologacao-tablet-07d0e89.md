@@ -167,3 +167,38 @@ analíticas, esclarecimentos e contratos dos prompts, com respostas simuladas.
 Repetir no tablet após publicar a revisão: gráfico de pendências → “tá tudo nos
 conformes na empresa?” → “empresa inteira e quero saber se tá tudo nos conformes”.
 Esta correção não foi publicada em produção durante o desenvolvimento.
+
+## Rosca → vencimentos → atualmente → ok
+
+Na janela de 18h10–18h14 de 02/11/2026, os traces registram esclarecimentos,
+roteamento SST/direto e revisão de texto, sem execução de ferramenta de vencimentos.
+O erro observado foi uma consulta não executada; os registros inspecionados não
+demonstram falha no banco nem exceção HTTP. A correlação com as capturas usa horário
+e sequência porque os textos dos traces são ocultados por privacidade.
+
+O reconhecimento do formato agora aceita “queri de rosca” e “queria de rosca”.
+O menu aprovado guarda a escolha; “vencimentos” executa
+`consultar_grafico_vencimentos` em rosca, sem pedir confirmação ou período.
+Esse gráfico é uma fotografia do cadastro autorizado por faixas fixas: vencidas,
+hoje a 7 dias, de 8 a 30 dias, mais de 30 dias e sem validade. Não representa
+somente vencimentos futuros nem filtra silenciosamente tudo para 30 dias.
+Pedidos de lista com prazo específico continuam usando a consulta de vencimentos
+com o número de dias validado, sem alterar o contrato anterior.
+
+Conversas de versões anteriores podem não ter menu tipado. A recuperação local
+reconhece apenas as perguntas/promessas específicas dessa sequência no histórico
+aprovado da própria sessão. “Atualmente”, “agora” ou “hoje” depois da pergunta de
+prazo consulta as faixas atuais; recupera rosca quando existe a sequência adjacente
+de escolha de formato e assunto. Sem formato recuperável, usa barras. “Ok” após
+a promessa específica de consultar o gráfico executa a leitura, sem nova promessa.
+Fora desse contexto ou sem perfil permitido, não cria a consulta automaticamente.
+
+Permissões continuam nas ferramentas, com UID autenticado; dados, valores e filtros
+não vêm do texto histórico. Pedido de mudar um gráfico existente para rosca mantém
+seus filtros validados. Juiz/guardrails continuam obrigatórios; falha de consulta
+ou recusa não gera gráfico de sucesso. POST e histórico mantêm os mesmos blocos,
+ordem e formato. Nenhum contrato novo para web/mobile e nenhuma chamada extra de IA.
+
+194 testes locais passaram para formato/assunto, retomada de sessões antigas,
+perfis, Juiz, falhas e igualdade entre POST e histórico, usando respostas simuladas.
+Repetir a sequência no tablet após a publicação. Não houve merge ou deploy.

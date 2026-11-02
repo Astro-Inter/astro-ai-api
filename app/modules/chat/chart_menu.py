@@ -40,7 +40,7 @@ def allowed_options(role: str) -> list[str]:
 
 
 def chart_style_request(message: str) -> str | None:
-    match = re.fullmatch(r"(?:quero|faca|faz|mostre) (?:um )?(?:grafico )?(?:de )?(rosco|rosca|donut|barras|setores|linhas)", normalize(message))
+    match = re.fullmatch(r"(?:quero|queria|queri|faca|faz|mostre) (?:um )?(?:grafico )?(?:de )?(rosco|rosca|donut|barras|setores|linhas)", normalize(message))
     if not match:
         return None
     return {'rosco': 'grafico_rosca', 'rosca': 'grafico_rosca', 'donut': 'grafico_rosca',
@@ -99,6 +99,36 @@ def select_chart(message: str, menu: dict | None, role: str) -> OperationalDecis
     if selected in {"conclusoes_pessoais", "treinamentos_pessoais"}:
         return "grafico_linhas" if selected == "conclusoes_pessoais" else kind or "grafico_barras"
     return OperationalDecision(acao=OPTIONS[selected][1], filtros={"tipo_grafico": kind or "grafico_barras", "limite": 50})
+
+
+def legacy_expiry_chart(message: str, history: list[dict], role: str, pending: bool = False) -> OperationalDecision | None:
+    """Recover only bounded, approved clarification turns from older deployments."""
+    if role not in {'GESTOR', 'GESTOR_WORKSPACE'} or not history or history[-1].get('role') != 'assistant':
+        return None
+    text, last = normalize(message), normalize(history[-1].get('content', ''))
+    kinds = {'rosca': 'grafico_rosca', 'setores': 'grafico_setores', 'barras': 'grafico_barras'}
+    kind = None
+    for label, value in kinds.items():
+        promise = f'vou consultar os vencimentos atuais da sua equipe para o grafico de {label}'
+        offer = (f'posso consultar um grafico de {label} com dados autorizados da sua equipe, se a consulta permitir. '
+                 'o que voce quer visualizar: pendencias de nr, vencimentos ou outro indicador? '
+                 f'qual informacao voce quer ver no grafico de {label}')
+        if (last == promise and text in {'ok', 'sim', 's', 'isso', 'pode consultar', 'faca isso'}
+                or last == offer and text in {'vencimento', 'vencimentos'}):
+            kind = value
+    period = 'para qual periodo voce quer consultar os vencimentos da equipe? por exemplo, proximos 30 dias'
+    if pending is True and last == period and text in {'atualmente', 'agora', 'hoje'}:
+        kind = 'grafico_barras'
+        # Exact adjacent legacy sequence: shape -> clarification -> subject -> period.
+        if (len(history) >= 4 and history[-2].get('role') == 'user'
+                and normalize(history[-2].get('content', '')) in {'vencimentos', 'vencimento'}
+                and history[-3].get('role') == 'assistant' and history[-4].get('role') == 'user'):
+            kind = chart_style_request(history[-4].get('content', '')) or kind
+        if kind == 'grafico_linhas':
+            return None
+    if kind:
+        return OperationalDecision(acao='consultar_grafico_vencimentos', filtros={'tipo_grafico': kind, 'limite': 50})
+    return None
 
 
 def expiry_followup(message: str, pending: bool, role: str) -> tuple[OperationalDecision | str, bool] | None:

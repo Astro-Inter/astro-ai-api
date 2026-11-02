@@ -616,7 +616,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def router(state: ChatState):
-        from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup, chart_style_request
+        from app.modules.chat.chart_menu import asks_chart_menu, make_chart_menu, select_chart, expiry_followup, chart_style_request, legacy_expiry_chart
         from app.modules.chat.current_intent import conversational_read, team_pending_read
         role = state["usuario_atual"].role
         pending_team = team_pending_read(state["mensagem"], state.get("historico", []))
@@ -634,7 +634,9 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                     "resposta_deterministica": True,
                     "resultado": {"status": "concluido", "evidencia_contexto": {"origem": "catalogo_de_graficos_da_aplicacao", "perfil": role, "opcoes": menu, "texto": answer}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
-        selection = select_chart(state["mensagem"], state["contexto"].get("menu_graficos"), role)
+        selection = (legacy_expiry_chart(state["mensagem"], state.get("historico", []), role,
+                                        state["contexto"].get("consulta_prazo", False))
+                     or select_chart(state["mensagem"], state["contexto"].get("menu_graficos"), role))
         if selection in ("grafico_barras", "grafico_linhas", "grafico_rosca", "grafico_setores"):
             return {"rota": "agenda", "grafico_pessoal": selection,
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}

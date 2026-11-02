@@ -316,6 +316,8 @@ def summary_pdf(message, previous, last_route):
 
 def change_chart_type(message, previous, last_route):
     """Requery the current chart with the same filters; never count historical rows."""
+    from app.modules.chat.chart_menu import chart_style_request
+    style = chart_style_request(message)
     text = ''.join(c for c in unicodedata.normalize('NFKD', message.casefold()) if not unicodedata.combining(c))
     text = ' '.join(text.split()).strip().rstrip('.!? ')
     match = re.fullmatch(
@@ -324,14 +326,14 @@ def change_chart_type(message, previous, last_route):
         r"(?:um )?(?:grafico (?:de )?)?(?P<kind>setores|pizza|rosca|donut|barras|linhas)"
         r"(?:,? por favor)?", text,
     )
-    if not match:
+    if not match and not style:
         return None
     unclear = "Qual consulta você quer mostrar nesse formato? Consulte os dados desejados nesta conversa e peça a mudança do gráfico."
     if last_route != 'consulta_operacional' or not isinstance(previous, dict):
         return unclear
     kinds = {'setores': 'grafico_setores', 'pizza': 'grafico_setores', 'rosca': 'grafico_rosca',
              'donut': 'grafico_rosca', 'barras': 'grafico_barras', 'linhas': 'grafico_linhas'}
-    requested = kinds[match['kind']]
+    requested = style or kinds[match['kind']]
     team_actions = {'consultar_indicadores_equipe', 'consultar_grafico_pendencias_nr', 'consultar_grafico_vencimentos'}
     categorical_actions = {'consultar_indicadores_cobertura', 'comparar_conformidade_unidades',
                            'simular_impacto_exigencia_nr', 'consultar_resultados_treinamento'}
