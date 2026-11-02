@@ -96,3 +96,36 @@ Prévia, revogada. A consulta do aplicativo continua utilizando seu fluxo oficia
 de fontes, e não uma resposta estática específica para a NR-2.
 
 Fonte: [MTE — NR-2](https://www.gov.br/trabalho-e-emprego/pt-br/acesso-a-informacao/participacao-social/conselhos-e-orgaos-colegiados/comissao-tripartite-partitaria-permanente/normas-regulamentadora/normas-regulamentadoras-vigentes/norma-regulamentadora-no-2-nr-2).
+
+## Entrada sem sentido e indisponibilidade temporária
+
+A captura de 17:58 mostrou uma entrada sem sentido e o erro genérico do mobile.
+Os traces da janela confirmaram `rate_limited` às 17:57:49 no roteador e às
+17:57:54 no guardrail de entrada. Isso registra limitação temporária do provedor,
+não uma proibição do texto nem falha ao interpretar aquelas letras. O trace
+sanitizado não inclui a mensagem original, portanto a correlação é pela janela
+e não por identificação inequívoca do request da captura.
+
+Uma nova tentativa real no mesmo tablet com `Hshshehehebdbdne` recebeu:
+“Não entendi sua mensagem. Pode explicar o que você gostaria de consultar ou
+fazer no Astro?” A primeira captura ainda não mostrava a resposta; a tela foi
+reobservada antes de concluir. Essa chamada adicional não reproduziu a queda.
+
+Para `ChatError.reason=rate_limited`, a API continua retornando HTTP 503 e
+`Retry-After` quando fornecido. O limite vem do serviço externo, não demonstra
+excesso causado pela pessoa e não deve virar uma recusa de segurança. O `detail`
+agora explica o limite temporário de solicitações e que a mensagem não foi concluída.
+Mantém o contrato `{detail: string}`, as tentativas limitadas e o tratamento dos
+demais erros. Não salva uma resposta de sucesso nem perde a conversa existente.
+
+Web/mobile devem usar esse detalhe seguro da API para o erro de envio e respeitar
+`Retry-After` antes de tentar novamente; não repetir automaticamente em laço.
+Se o cliente substitui qualquer 503 por “assistente indisponível”, a frase nova
+não aparecerá até esse ajuste no cliente. Não exibir corpo bruto do provedor,
+stack trace, tokens ou mensagens internas. O fato de a API explicar o erro não
+remove limites de capacidade do serviço externo nem comprova solução da quota.
+
+Testes simulados cobrem limite nas duas etapas, ausência de dados privados,
+preservação da sessão, sucesso após nova tentativa e esclarecimento de texto
+incompreensível. Não foi adicionada heurística de letras aleatórias que possa
+bloquear nomes, siglas ou códigos legítimos.
