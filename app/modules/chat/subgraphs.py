@@ -324,10 +324,10 @@ def _formatar_usuarios(result: dict) -> str:
         ]
         lines.append(f"- {user['nome']}: " + " | ".join(str(item) for item in details if item))
     if "pagina" in result:
-        lines.append(f"Página {result['pagina']} de {result['total_paginas']}. Total: {result['total']} usuário(s).")
+        lines.append(f"Retornados {len(users)} de {result['total']} usuário(s) disponíveis.")
         if not users:
-            lines.append("Nenhum usuário nesta página. Peça uma página anterior.")
-        elif result['pagina'] < result['total_paginas']:
+            lines.append("Nenhum usuário retornado neste recorte; o total disponível permanece informado.")
+        elif len(users) < result["total"]:
             lines.append("O conjunto retornado é parcial.")
     return "\n".join([title, *lines])
 
@@ -363,18 +363,16 @@ def _formatar_nrs(result: dict) -> str:
     )
     if result.get("modo") == "listar":
         total = pagination.get("total", result.get("quantidade", 0))
-        page = pagination.get("pagina", 1)
-        total_pages = pagination.get("total_paginas", 1)
         lines = []
         for nr in result["nrs"]:
             details = [nr.get("situacao")]
             suffix = f" | {' | '.join(details)}" if any(details) else ""
             lines.append(f"- NR-{nr.get('numero')} — {nr.get('nome', 'Sem nome')}{suffix}")
         footer = [source_footer]
-        if pagination.get("tem_proxima_pagina"):
-            footer.insert(0, f"Há mais resultados. Solicite a página {page + 1}.")
+        if len(result["nrs"]) < total:
+            footer.insert(0, "O conjunto retornado é parcial.")
         return "\n".join([
-            f"Encontrei {total} NR(s). Página {page} de {total_pages}:",
+            f"Retornadas {len(result['nrs'])} de {total} NR(s) disponíveis:",
             *lines,
             *footer,
         ])

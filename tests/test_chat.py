@@ -492,7 +492,8 @@ def test_sst_agent_lists_all_current_nrs_with_compact_payload(chat_client, monke
 
     assert response.status_code == 200
     body = response.json()
-    assert "Encontrei 35 NR(s). Página 1 de 1" in texto_resposta(body)
+    assert "Retornadas 35 de 35 NR(s) disponíveis" in texto_resposta(body)
+    assert "Página 1 de 1" not in texto_resposta(body)
     assert "NR-35" in texto_resposta(body)
     assert "conteudo muito extenso" not in texto_resposta(body)
     assert collection.query == {"revogada": False}
@@ -2559,6 +2560,8 @@ def test_operational_query_flows_through_judge_and_visual_blocks(chat_client, mo
     assert review["apresentacao"]["blocos"] == ["tabela", chart_kind]
     history = client.get(f"/sessions/{body['session_id']}/messages").json()
     assert history["mensagens"][-1]["blocos"] == body["blocos"]
+    assert "Página 1 de 1" not in texto_resposta(body)
+    assert "Página 1 de 1" not in str(judge[1][-1].content)
     assert "juiz" in body["agentes_chamados"] and "guardrail_saida" in body["agentes_chamados"]
     assert next(call for call in model.calls if call[0] == "roteador")[2] is True
     assert "test-private-token" not in str(model.calls)
@@ -2584,6 +2587,9 @@ def test_operational_next_page_preserves_filters_and_rechecks_user(chat_client, 
     assert [item["pagina"] for item in calls] == [1,2]
     assert all(item["agrupar_por"] == "cargo" and item["limite"] == 1 for item in calls)
     assert second.json()["blocos"][1]["pagina"] == 2
+    assert "Retornados 1 de 2 registro(s) disponíveis" in texto_resposta(second.json())
+    assert "conjunto retornado é parcial" in texto_resposta(second.json())
+    assert "Página 2 de 2" not in texto_resposta(second.json())
 
 
 def test_contextual_chart_inherits_rh_filters(chat_client, monkeypatch):

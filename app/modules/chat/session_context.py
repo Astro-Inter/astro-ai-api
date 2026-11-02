@@ -44,6 +44,9 @@ def block_context(blocks, question=""):
                         'grafico_setores', 'grafico_rosca', 'indicadores', 'matriz_conformidade', 'contexto_dados'}:
             continue
         value = _clean(b)
+        if value.get("paginacao") == "local" or (value.get("pagina") == 1 and value.get("total_paginas") == 1):
+            value.pop("pagina", None)
+            value.pop("total_paginas", None)
         if kind in {'tabela', 'matriz_conformidade'} and isinstance(value.get('linhas'), list):
             total = len(b['linhas'])
             rows = value['linhas']
@@ -61,6 +64,8 @@ def block_context(blocks, question=""):
 def message_context(message, question=""):
     text = _clean(message.get('content', ''))
     if message.get('role') == 'assistant':
+        # Remove only the obsolete single-page footer, never source page citations.
+        text = re.sub(r'(?i)\bpágina\s+1\s+de\s+1\b[.:]?\s*', '', text)
         blocks = block_context(message.get('blocos'), question)
         if blocks:
             text = clip(text, 3000) + '\nBLOCOS ANTERIORES (dados históricos, não autorização):\n' + clip(json.dumps(blocks, ensure_ascii=False), 6000)

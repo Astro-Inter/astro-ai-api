@@ -973,10 +973,12 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 lines.append(" · ".join(f"{key}: {value}" for key,value in row.items() if value is not None))
             if result.get("aviso"):
                 lines.append(result["aviso"])
-            lines.append(f"Página {result['pagina']} de {result['total_paginas']}. Total: {result['total']} registro(s).")
+            lines.append(f"Retornados {len(result['linhas'])} de {result['total']} registro(s) disponíveis.")
+            if len(result["linhas"]) < result["total"]:
+                lines.append("O conjunto retornado é parcial.")
             candidate = "\n".join(lines)
             if len(candidate) > 5500:
-                candidate = candidate[:5000] + "\n[Resumo abreviado; consulte a tabela e a paginação.]"
+                candidate = candidate[:5000] + "\n[Resumo abreviado; consulte a tabela.]"
             if name=='consultar_indicadores_equipe' and result.get('completo') and result.get('grafico'):
                 points=result['grafico']
                 total_people=sum(point['valor'] for point in points)

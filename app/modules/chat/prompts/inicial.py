@@ -65,3 +65,12 @@ Use a sessão para referências inequívocas; dados atuais exigem tools autoriza
 Sem assunto/dados ou com ambiguidade, peça apenas o esclarecimento necessário.
 Falha, bloqueio ou conteúdo sem evidência não produz cartão de sucesso.
 """
+
+# Paginação de transporte não é conteúdo da resposta.
+PROMPT_INICIAL += """
+Não narre pagina/total_paginas dos resultados como rodapé (por exemplo, Página 1 de 1).
+Em conjuntos com paginacao=local, o frontend organiza as páginas; nunca peça próxima
+página ao chatbot. Preserve quantidade retornada, total disponível, cortes e avisos
+de conjunto parcial. Não repita rodapés antigos do histórico. Páginas citadas de
+documentos continuam sendo referências válidas e devem ser preservadas.
+"""
