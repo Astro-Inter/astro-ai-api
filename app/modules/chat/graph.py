@@ -658,7 +658,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             return {"rota": "direta", "candidato": external_reply,
                     "resposta_deterministica": True, "pdf_solicitado": False,
                     "resultado": {"status": "esclarecer" if external_reply != OUT_OF_SCOPE_REPLY else "fora_escopo",
-                                  "evidencia_contexto": {"origem": "limite_do_produto", "regra": "Sem receitas, avaliações de empresas ou suposição de relato trabalhista."}},
+                                  "evidencia_contexto": {"origem": "limite_do_produto", "orientacao_publica": external_reply}},
                     "agentes_chamados": state["agentes_chamados"] + ["roteador"]}
         if (standalone_math_request(state["mensagem"])
                 or scope_followup(state["mensagem"], state.get("historico", []))
@@ -1095,8 +1095,13 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         elif result.get("status") == "ok":
             # Keep a readable fallback for history, unsupported clients and review.
             lines = [result["titulo"]]
+            labels = {col["chave"]: col["titulo"] for col in result.get("colunas", [])}
+            situations = {"REALIZACAO_NECESSARIA": "precisa realizar a atividade exigida",
+                          "RENOVACAO_NECESSARIA": "precisa renovar o registro de conformidade",
+                          "PENDENTE": "há uma participação pendente"}
             for row in result["linhas"]:
-                lines.append(" · ".join(f"{key}: {value}" for key,value in row.items() if value is not None))
+                lines.append(" · ".join(f"{labels.get(key, key)}: {situations.get(value, value) if key == 'situacao' and isinstance(value, str) else value}"
+                                        for key,value in row.items() if value is not None))
             if result.get("aviso"):
                 lines.append(result["aviso"])
             lines.append(f"Retornados {len(result['linhas'])} de {result['total']} registro(s) disponíveis.")
@@ -1386,7 +1391,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 emit('chat_review_not_approved',level='WARNING',sink=logger,
                      review_status=verdict.get('status') if verdict.get('status') in {'revisar','rejeitado'} else 'unknown',
                      tool=tool if tool in allowed_tools else 'other',issue_count=len(verdict.get('problemas',[])))
-                return {"resposta": "Não consegui validar os dados desta resposta. Nenhum componente foi liberado; tente novamente.",
+                return {"resposta": "Não consegui confirmar uma resposta confiável para este pedido. Por isso, não vou apresentar informações que possam estar incorretas. Você pode reformular a pergunta ou tentar novamente.",
                         "guardar_turno": False,
                         "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}
             record_decision("output_guard", "approved_deterministic")

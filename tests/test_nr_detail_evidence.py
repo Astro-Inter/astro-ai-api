@@ -87,7 +87,7 @@ def test_pending_then_nr_details_requeries_and_preserves_judge_and_history(chat_
         history = client.get(f"/sessions/{first['session_id']}/messages").json()
         assert history["mensagens"][-1]["blocos"] == body["blocos"]
     else:
-        assert "Nenhum componente foi liberado" in texto_resposta(body)
+        assert "Não consegui confirmar uma resposta confiável" in texto_resposta(body)
         assert len(app.state.chat_service.repository.docs[first["session_id"]]["mensagens"]) == 2
 
 
@@ -134,7 +134,7 @@ def test_nr32_subject_after_team_chart_has_independent_evidence(chat_client, mon
     tool.ainvoke.assert_awaited_once()
     assert tool.ainvoke.call_args.args[0]["numeros"] == [32]
     assert chart_tool.ainvoke.await_count == 1
-    assert "NR-32" in texto_resposta(body) and "Nenhum componente foi liberado" not in texto_resposta(body)
+    assert "NR-32" in texto_resposta(body) and "Não consegui confirmar uma resposta confiável" not in texto_resposta(body)
     assert all(b["tipo"] == "texto" for b in body["blocos"])
     call = next(c for c in model.calls if c[0] == "juiz")
     evidence = json.loads(call[1][-1].content.split("\n", 1)[1])["resultado"]["evidencia_tool"]

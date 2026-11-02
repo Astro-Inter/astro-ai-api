@@ -66,4 +66,4 @@ def test_judge_can_still_reject_profile(chat_client, monkeypatch):
     monkeypatch.setitem(subgraphs.RH_TOOLS, "buscar_meus_dados", tool)
     model.replies["juiz"] = json.dumps({"status": "rejeitado", "motivo": "Revisão simulada.", "problemas": ["Evidência inconsistente."]})
     body = client.post("/chat/messages", json={"message": "Qual meu nível de acesso?"}).json()
-    assert "Nenhum componente foi liberado" in texto_resposta(body)
+    assert "Não consegui confirmar uma resposta confiável" in texto_resposta(body)
