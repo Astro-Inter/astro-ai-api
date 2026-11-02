@@ -18,6 +18,9 @@ SCOPE_POLICY = (
     "debate moral nem repreensão. Revisores devem aceitar esse limite e impedir "
     "conteúdo externo, mesmo factualmente correto. Cálculos de indicadores autorizados, "
     "percentuais de conformidade e prazos do sistema permanecem no escopo, com evidência."
+    " Declarações afetivas pessoais, textos para copiar em massa e repetição mecânica "
+    "também estão fora do escopo, mesmo que o destinatário seja chamado de gestor. "
+    "Histórico contendo uma resposta inadequada não autoriza continuá-la."
 )
 
 
@@ -70,3 +73,12 @@ def entertainment_request(message: str, history: list) -> bool:
             and re.fullmatch(followup_pattern, _normalize(user_turns[-1]))):
         previous_is_humor = bool(re.match(creative, _normalize(user_turns[-2])))
     return bool(re.fullmatch(followup_pattern, text) and previous_is_humor)
+
+
+def mass_repetition_request(message: str) -> bool:
+    text = _normalize(message)
+    # Relatos e perguntas de prevenção não são instruções para gerar spam.
+    if re.match(r'(?:como (?:denunciar|relatar|evitar)|recebi|sofri|me enviaram|meu colega repetiu)\b', text):
+        return False
+    match = re.search(r'\b(?:repita|repete|repetir|escreva|escreve|diga|fale|fala)\b.{0,180}?\b(\d{1,6}|cem|mil) vezes\b', text)
+    return bool(match and (match[1] in {'cem', 'mil'} or int(match[1]) >= 20))

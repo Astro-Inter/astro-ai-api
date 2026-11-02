@@ -15,7 +15,8 @@ from app.modules.chat.agents import invoke_agent
 from app.observability.chat import record_decision
 from app.modules.chat.errors import ChatError, InvalidAgentResponse
 from app.modules.chat.public_replies import public_reply, CAPABILITIES
-from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, standalone_math_request, scope_followup, entertainment_request
+from app.modules.chat.scope import OUT_OF_SCOPE_REPLY, standalone_math_request, scope_followup, entertainment_request, mass_repetition_request
+from app.modules.chat.content_safety import CONTENT_BOUNDARY, unsafe_generated_text
 from app.modules.chat.capabilities import asks_profile_capabilities, profile_capabilities, format_profile_capabilities
 from app.modules.chat.pdf_delivery import asks_for_pdf_link, previous_pdf_reply, remove_delivery_promises
 from app.modules.chat.router_reply import ROUTER_CLARIFICATION
@@ -596,6 +597,10 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         )
         record_decision("input_guard", decision.decisao)
         approved = decision.decisao == "aprovar"
+        if unsafe_generated_text(decision.mensagem):
+            record_decision("input_guard", "bloquear")
+            return {"rota": "fim", "resposta": CONTENT_BOUNDARY, "guardar_turno": False,
+                    "pdf_solicitado": False, "agentes_chamados": ["guardrail_entrada"]}
         if exposes_internal_instructions(decision.mensagem):
             return {
                 "rota": "fim", "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY,
@@ -613,6 +618,7 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
     async def router(state: ChatState):
         if (standalone_math_request(state["mensagem"])
                 or scope_followup(state["mensagem"], state.get("historico", []))
+                or mass_repetition_request(state["mensagem"])
                 or entertainment_request(state["mensagem"], state.get("historico", []))):
             return {"rota": "direta", "candidato": OUT_OF_SCOPE_REPLY,
                     "resposta_deterministica": True,
@@ -1288,6 +1294,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
         }
 
     async def output_guard(state: ChatState):
+        if unsafe_generated_text(state.get("candidato", "")):
+            record_decision("output_guard", "bloqueado")
+            return {"resposta": CONTENT_BOUNDARY, "guardar_turno": False,
+                    "pdf_solicitado": False, "acao_pendente": None,
+                    "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}
         if exposes_internal_instructions(state.get("candidato", "")):
             return {
                 "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY, "guardar_turno": False,
@@ -1365,6 +1376,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             if judge_status == "aprovado" and decision.status == "aprovado"
             else decision.resposta
         )
+        if unsafe_generated_text(response):
+            record_decision("output_guard", "bloqueado")
+            return {"resposta": CONTENT_BOUNDARY, "guardar_turno": False,
+                    "pdf_solicitado": False, "acao_pendente": None,
+                    "agentes_chamados": state["agentes_chamados"] + ["guardrail_saida"]}
         if exposes_internal_instructions(response):
             return {
                 "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY, "guardar_turno": False,
