@@ -1134,6 +1134,13 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, fiel
     connection = Connection()
     monkeypatch.setattr(config, "DATABASE_URL", "postgresql://test:test@localhost/astro")
     monkeypatch.setattr(rh_tools, "get_conn", lambda: connection)
+    class PendingData:
+        async def ainvoke(self, args, config):
+            assert field is None and args == {}
+            assert config["configurable"]["usuario_atual"]["uid"] == "user-a"
+            return {"status": "indisponivel"}
+    from app.modules.chat import subgraphs
+    monkeypatch.setitem(subgraphs.SST_TOOLS, "consultar_situacao_nrs", PendingData())
     model.replies["rh"] = json.dumps({
         "acao": "buscar_meus_dados", "filtros": None, "resposta": None,
     })
@@ -1146,6 +1153,7 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, fiel
     assert response.status_code == 200
     assert response.json()["agentes_chamados"] == [
         "guardrail_entrada", "roteador", "rh", "buscar_meus_dados",
+        *([] if field else ["consultar_situacao_nrs"]),
         "juiz", "guardrail_saida",
     ]
     assert [call[0] for call in model.calls] == (["juiz"] if field else ["guardrail_entrada", "roteador", "juiz"])

@@ -20,7 +20,7 @@ def presentation_evidence(name: str, data: dict) -> dict | None:
         return {"blocos": [data.get("tipo_grafico", "grafico_barras")],
                 "categorias_grafico": len(data["categorias"]), "valores_zero_preservados": True}
     if name in {"buscar_meus_dados", "consultar_conformidade_usuario"}:
-        return {"blocos": ["ficha_usuario"]}
+        return {"blocos": ["ficha_usuario"], **({"pendencias": data["pendencias"]} if data.get("pendencias") else {})}
     if name == "buscar_outros_usuarios" and data.get("consulta") == "listar" and data.get("usuarios"):
         count = len(data["usuarios"])
         if "retornada" in data and data["retornada"] != count:

@@ -56,7 +56,7 @@ def _pedido_dos_proprios_dados(message: str) -> bool:
         if not unicodedata.combining(character)
     )
     return _campo_dado_proprio(message) is not None or bool(re.search(
-        r"\b(meus dados|meus dados pessoais|meus dados profissionais|"
+        r"\b(minha ficha|meus dados|meus dados pessoais|meus dados profissionais|"
         r"minhas informacoes|meu cadastro|meu perfil profissional)\b",
         normalized,
     ))
@@ -375,6 +375,9 @@ def _formatar_meus_dados(result: dict) -> str:
         "cargo": "Cargo", "unidade": "Unidade", "modalidade": "Modalidade",
     }
     lines = [f"- {labels[field]}: {value}" for field, value in data.items() if field in labels and value is not None]
+    if result.get("pendencias"):
+        from app.modules.chat.profile_pending import pending_caption
+        lines.append(pending_caption(result["pendencias"]))
     return "\n".join(["Estes são os seus dados:", *lines])
 
 
@@ -606,6 +609,9 @@ def _formatar_situacao_nrs(result: dict) -> str:
             return result.get("mensagem", "Não foi possível consultar a conformidade.")
         formatted = _formatar_situacao_nrs({k: v for k, v in result.items() if k != "consulta_terceiro"})
         formatted = formatted.replace("Nenhuma NR vigente está vinculada ao seu cargo.", "Nenhuma NR vigente está vinculada ao cargo cadastrado desta pessoa.")
+        if result.get("pendencias"):
+            from app.modules.chat.profile_pending import pending_caption
+            formatted += "\n\n" + pending_caption(result["pendencias"])
         return f"NRs de {result['usuario']}:\n\n{formatted}"
     if result.get("status") == "nao_aplicavel":
         return result["mensagem"]
@@ -913,6 +919,14 @@ def build_rh_graph(model: AgentModel):
             allowed = {"nome", "email", "tipo", "cargo", "unidade", "modalidade"}
             result = {**result, "dados": {key: value for key, value in result.get("dados", {}).items()
                                          if key in allowed}}
+            from app.modules.chat.profile_pending import summarize_nr_pending
+            try:
+                pending_result = ({"status": "nao_aplicavel"} if state["usuario_atual"].role == "ADMIN" else
+                    await asyncio.wait_for(SST_TOOLS["consultar_situacao_nrs"].ainvoke({},
+                        config={"configurable": {"usuario_atual": state["usuario_atual"].model_dump()}}), timeout=5))
+            except Exception:
+                pending_result = {"status": "indisponivel"}
+            result = {**result, "pendencias": summarize_nr_pending(pending_result)}
         tool_status = result.get("status")
         statuses = {
             "ok": "concluido",
@@ -969,7 +983,9 @@ def build_rh_graph(model: AgentModel):
                 if tool_name == "buscar_meus_dados"
                 else _formatar_usuarios(result)
             ),
-            "agentes_chamados": state["agentes_chamados"] + [tool_name],
+            "agentes_chamados": state["agentes_chamados"] + [tool_name] + (
+                ["consultar_situacao_nrs"] if tool_name == "buscar_meus_dados" and not field
+                and result.get("status") == "ok" and state["usuario_atual"].role != "ADMIN" else []),
         }
 
     graph = StateGraph(ChatState)
@@ -1054,6 +1070,9 @@ def build_sst_graph(model: AgentModel):
                 "usuario_atual": state["usuario_atual"].model_dump(),
             }},
         )
+        if tool_name == "consultar_conformidade_usuario" and result.get("status") == "ok":
+            from app.modules.chat.profile_pending import summarize_nr_pending
+            result = {**result, "pendencias": summarize_nr_pending(result)}
         tool_status = result.get("status")
         statuses = {
             "ok": "concluido",

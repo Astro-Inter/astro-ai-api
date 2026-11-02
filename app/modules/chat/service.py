@@ -382,6 +382,7 @@ class ChatService:
                                   BlocoFichaUsuario(titulo="Meu perfil", origem="usuario_autenticado",
                                       nome=data.get("nome"), email=data.get("email"), perfil=data.get("tipo"),
                                       cargo=data.get("cargo"), unidade=data.get("unidade"), modalidade=data.get("modalidade"),
+                                      pendencias=chart_data.get("pendencias"),
                                       foto=CelulaImagem(descricao="Foto do usuário autenticado"))]
                 if (structured_ready
                         and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_conformidade_usuario"
@@ -393,6 +394,7 @@ class ChatService:
                     blocks = [BlocoFichaUsuario(
                         nome=name, email=chart_data.get("email"), cargo=chart_data.get("cargo"),
                         unidade=chart_data.get("unidade"), foto=CelulaImagem(descricao=f"Foto de {name}"),
+                        pendencias=chart_data.get("pendencias"),
                         conformidade=ConformidadeFicha(percentual=round(100 * valid / total, 2) if total else None,
                                                        vigentes=valid, total=total, data_referencia=chart_data.get("data_referencia"))),
                               BlocoTexto(conteudo=public_answer)]
