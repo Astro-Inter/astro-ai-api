@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 15
     env:
       PYTHON_DOTENV_DISABLED: "1"
+      OTEL_SDK_DISABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: ""
       OTEL_EXPORTER_OTLP_HEADERS: ""
     steps:
