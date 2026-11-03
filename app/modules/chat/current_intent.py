@@ -45,6 +45,15 @@ def conversational_read(message, history=()):
                                if not unicodedata.combining(c)).split()).strip().rstrip('.!? ')
     text = normalized(message)
     last = normalized(history[-1].get('content', '')) if history and history[-1].get('role') == 'assistant' else ''
+    if (text in {'quais sao as atividades pendentes', 'quais atividades estao pendentes'}
+            and last.startswith('estas sao as nrs do cargo ')):
+        return AgendaToolDecision(acao='consultar_eventos', filtros=ConsultarEventosArgs(
+            situacao='a_realizar', proximos=False))
+    if (text in {'e treinamentos', 'e os treinamentos'}
+            and re.search(r'\b(voce|seus|suas)\b', last)
+            and re.search(r'pendenc|eventos|atividades|treinamentos', last)
+            and not re.search(r'\b(equipe|workspace|empresa)\b', last)):
+        return AgendaToolDecision(acao='consultar_treinamentos', filtros=ConsultarTreinamentosArgs())
     personal_training = re.fullmatch(
         r"(?:(?:liste|mostre|quero ver|quero consultar|consulte) )?(?:os )?(?:proximos )?"
         r"(?:meus treinamentos|treinamentos atribuidos (?:a mim|a voce)|treinamentos que preciso (?:fazer|realizar))", text)

@@ -33,6 +33,7 @@ class ConsultarEventosArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     proximos: bool = True
+    situacao: SituacaoTreinamento = "todos"
     pagina: int = Field(default=1, ge=1, le=1000)
     limite: int = Field(default=5, ge=1, le=10)
 
@@ -256,6 +257,7 @@ def _consultar_participacoes(situacao, pagina, limite, config, *, proximos=False
 @tool("consultar_eventos", args_schema=ConsultarEventosArgs)
 def consultar_eventos(
     proximos: bool = True, pagina: int = 1, limite: int = 5,
+    situacao: SituacaoTreinamento = "todos",
     config: RunnableConfig = None,
 ) -> dict:
     """Consulta eventos do Astro com inscrição do próprio usuário.
@@ -263,7 +265,7 @@ def consultar_eventos(
     Datas pertencem às turmas. Próximos inclui somente eventos ativos com início
     futuro, independentemente da conclusão; nunca lista eventos de terceiros.
     """
-    result = _consultar_participacoes("todos", pagina, limite, config, proximos=proximos)
+    result = _consultar_participacoes(situacao, pagina, limite, config, proximos=proximos)
     result["proximos"] = proximos
     result["eventos"] = result.pop("treinamentos", [])
     if result.get("mensagem"):

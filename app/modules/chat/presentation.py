@@ -34,5 +34,8 @@ def presentation_evidence(name: str, data: dict) -> dict | None:
         if data.get("grafico"):
             kinds.append(data.get("tipo_grafico", "grafico_barras"))
         return {"blocos": kinds, "linhas_validadas": len(data["linhas"]),
-                "categorias_grafico": len(data.get("grafico", []))}
+                "categorias_grafico": len(data.get("grafico", [])),
+                **({"conjunto_completo": data.get("completo", False),
+                    "criterio_populacao": data.get("criterio_populacao")}
+                   if name == "consultar_indicadores_equipe" else {})}
     return None

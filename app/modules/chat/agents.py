@@ -319,8 +319,6 @@ async def invoke_agent(
         if schema is InputDecision:
             return InputDecision(decisao="esclarecer", motivo="contexto_insuficiente", mensagem=question)
         if schema is JudgeDecision:
-            if state.get("resposta_deterministica"):
-                return JudgeDecision(status="aprovado", motivo="Resposta da ferramenta formatada pela aplicação.", problemas=[])
             return JudgeDecision(status="rejeitado", motivo="Não foi possível validar a resposta.", problemas=["Falha no contrato do revisor."])
         if schema is OutputDecision:
             return OutputDecision(status="bloqueado", motivo="Não foi possível validar a resposta.", resposta=question)

@@ -225,6 +225,10 @@ FROM aggregated ORDER BY nr LIMIT %s OFFSET %s"""
             return {"status":"sem_dados","mensagem":"Não há registros nesta página; isso não comprova ausência em outras páginas."}
         data = [dict(zip([key for key,_ in columns], row[:-1])) for row in rows]
         result = table(title, data, columns, rows[0][-1], args.pagina, args.limite)
+        if action == "consultar_indicadores_equipe":
+            # Expose the actual applied criteria to review, not an inferred scope
+            # from the conversation or the table's visible rows.
+            result["filtros_aplicados"] = args.model_dump(exclude={"pagina", "limite", "tipo_grafico"})
         if action in {"consultar_indicadores_equipe", "consultar_grafico_pendencias_nr", "consultar_grafico_vencimentos"}:
             result["unidade_grafico"] = {"consultar_indicadores_equipe":"pessoas", "consultar_grafico_pendencias_nr":"pendências", "consultar_grafico_vencimentos":"registros"}[action]
             if action != "consultar_indicadores_equipe":
@@ -235,6 +239,7 @@ FROM aggregated ORDER BY nr LIMIT %s OFFSET %s"""
             else:
                 result["aviso"] = "O gráfico exige todas as categorias e suporta até 12; consulte a tabela paginada."
             if action == "consultar_indicadores_equipe" and referencia_listagem_rh:
+                result["criterio_populacao"] = "Mesmo recorte autorizado da listagem de usuários, excluindo a própria conta; filtros cadastrais preservados."
                 result["aviso"] = (result.get("aviso", "") + " O gráfico considera todas as pessoas que correspondem aos critérios da lista, não apenas as linhas exibidas.").strip()
         return result
     except Exception:

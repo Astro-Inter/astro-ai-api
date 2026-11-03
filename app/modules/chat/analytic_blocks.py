@@ -1,7 +1,7 @@
 """Apresentação de conjuntos analíticos; nenhum modelo cria métricas ou permissões."""
 from app.modules.chat.schemas import (
     BlocoIndicadores,BlocoContextoDados,BlocoTabela,BlocoMatrizConformidade,
-    BlocoGrafico,BlocoGraficoSetores,BlocoGraficoLinhas,
+    BlocoGrafico,BlocoGraficoSetores,BlocoGraficoLinhas,BlocoGraficoRosca,
 )
 
 
@@ -15,7 +15,7 @@ def build_analytic_blocks(name,data):
             fields["versao"]=2
         blocks.append(cls(**fields))
     if data.get("grafico"):
-        cls={"grafico_barras":BlocoGrafico,"grafico_setores":BlocoGraficoSetores,"grafico_linhas":BlocoGraficoLinhas}[data["tipo_grafico"]]
+        cls={"grafico_barras":BlocoGrafico,"grafico_setores":BlocoGraficoSetores,"grafico_linhas":BlocoGraficoLinhas,"grafico_rosca":BlocoGraficoRosca}[data["tipo_grafico"]]
         blocks.append(cls(titulo=data.get("titulo_grafico",data["titulo"]),fonte=data["fonte"],
                           unidade=data["unidade_grafico"],dados=data["grafico"]))
     blocks.append(BlocoContextoDados.model_validate(data["contexto_dados"]))

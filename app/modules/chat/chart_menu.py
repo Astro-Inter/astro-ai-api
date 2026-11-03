@@ -39,6 +39,16 @@ def allowed_options(role: str) -> list[str]:
     return list(OPTIONS) if role in {"GESTOR", "GESTOR_WORKSPACE"} else personal
 
 
+def catalog_input(message: str, menu: dict | None, role: str) -> bool:
+    """Reconhece esclarecimentos resolvidos pelo catálogo e sua seleção validada.
+
+    Não contorna bloqueios, interpreta texto livre nem autoriza a leitura. O roteador valida a opção,
+    a ferramenta verifica o acesso atual e o Juiz avalia os resultados normalmente.
+    """
+    return (asks_chart_menu(message) or chart_style_request(message) is not None
+            or select_chart(message, menu, role) is not None)
+
+
 def chart_style_request(message: str) -> str | None:
     match = re.fullmatch(r"(?:quero|queria|queri|faca|faz|mostre) (?:um )?(?:grafico )?(?:de )?(rosco|rosca|donut|barras|setores|linhas)", normalize(message))
     if not match:

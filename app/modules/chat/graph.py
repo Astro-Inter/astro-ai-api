@@ -555,6 +555,7 @@ def _pedido_simples_de_acessos(message: str) -> ConsultarAcessosArgs | None:
 
 def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, checkpointer=None):
     async def input_guard(state: ChatState):
+        from app.modules.chat.chart_menu import catalog_input
         if requests_internal_instructions(state["mensagem"]):
             return {
                 "rota": "fim", "resposta": INTERNAL_INSTRUCTIONS_BOUNDARY,
@@ -596,7 +597,11 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
             model, "guardrail_entrada", GUARDRAIL_ENTRADA_PROMPT_COMPLETO, state, InputDecision,
         )
         record_decision("input_guard", decision.decisao)
-        approved = decision.decisao == "aprovar"
+        # The catalog itself supplies the missing subject/choice. A real block
+        # still stops here; only clarification is delegated to the closed menu.
+        catalog_clarification = decision.decisao == "esclarecer" and catalog_input(
+            state["mensagem"], state["contexto"].get("menu_graficos"), state["usuario_atual"].role)
+        approved = decision.decisao == "aprovar" or catalog_clarification
         if unsafe_generated_text(decision.mensagem):
             record_decision("input_guard", "bloquear")
             return {"rota": "fim", "resposta": CONTENT_BOUNDARY, "guardar_turno": False,
@@ -1127,7 +1132,8 @@ def build_chat_graph(model: AgentModel, search_memory=None, search_faq=None, *, 
                 total_people=sum(point['valor'] for point in points)
                 candidate=(f"{result['titulo']}: "+'; '.join(f"{p['categoria']}: {p['valor']}" for p in points)
                            +f". Total do conjunto autorizado pelos filtros: {total_people} pessoas em {len(points)} categorias. "
-                           "O gráfico considera todas as pessoas que correspondem aos critérios da lista, não apenas as linhas exibidas.")
+                           "A tabela e o gráfico apresentam a agregação completa autorizada, sem usar só as linhas da lista anterior.")
+                if result.get('criterio_populacao'):candidate+=' '+result['criterio_populacao']
                 if result.get('aviso'):candidate+=' '+result['aviso']
         else:
             candidate = result.get("mensagem", "Nenhum registro nesta página; isso não comprova ausência em outras páginas.")

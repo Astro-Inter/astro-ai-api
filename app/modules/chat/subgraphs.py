@@ -246,18 +246,21 @@ def _filtros_eventos(message: str) -> ConsultarEventosArgs | None:
         c for c in unicodedata.normalize("NFKD", message.casefold())
         if not unicodedata.combining(c)
     )
-    if not re.search(r"\beventos?\b", normalized):
+    if not re.search(r"\b(eventos?|atividades?)\b", normalized):
         return None
     if re.search(r"\b(google|calendar|nao|como|criar|crie|adicion\w*|coloque|cancel\w*|alter\w*|exclu\w*|outro|outra|colega)\b", normalized):
         return None
     if re.search(r"\b(hoje|amanha|semana|mes|ano|dia)\b|\d{2}/\d{2}", normalized):
         return None
-    if not re.search(r"\b(proxim[oa]s?|meus?|tenho)\b", normalized):
+    if not re.search(r"\b(proxim[oa]s?|meus?|minhas?|tenho)\b", normalized):
         return None
+    pending = bool(re.search(r"\b(pendentes?|a realizar)\b", normalized))
     page = re.search(r"\bpagina\s+(\d+)\b", normalized)
     try:
         return ConsultarEventosArgs(
-            proximos=not bool(re.search(r"\b(todos|historico|passados|anteriores)\b", normalized)),
+            proximos=(bool(re.search(r"\bproxim[oa]s?\b", normalized)) if pending
+                      else not bool(re.search(r"\b(todos|historico|passados|anteriores)\b", normalized))),
+            situacao="a_realizar" if pending else "todos",
             limite=1 if re.search(r"\bproximo evento\b", normalized) else 5,
             pagina=int(page.group(1)) if page else 1,
         )
@@ -701,7 +704,7 @@ def _formatar_treinamentos(result: dict, reference_date=None) -> str:
     if result.get("status") != "ok":
         return result.get("mensagem", "Não foi possível consultar seus treinamentos.")
 
-    lines = ["Seus treinamentos atribuídos:"]
+    lines = ["Atividades atribuídas a você em eventos do Astro:"]
     status_labels = {
         "PENDENTE": "pendente", "REJEITADO": "rejeitada", "CONCLUIDO": "concluída",
     }
@@ -797,14 +800,15 @@ def _formatar_eventos(result: dict, reference_date=None) -> str:
     if result.get("status") == "sem_dados":
         return (
             "Não encontrei próximos eventos atribuídos a você no Astro."
-            if upcoming else "Não encontrei eventos atribuídos a você no Astro."
+            if upcoming else "Não encontrei participações pendentes em eventos ativos atribuídos a você no Astro."
+            if result.get("situacao") == "a_realizar" else "Não encontrei eventos atribuídos a você no Astro."
         )
     if result.get("status") != "ok":
         return "Não foi possível consultar seus eventos no Astro. " + result.get("mensagem", "")
     trainings = {**result, "treinamentos": result.get("eventos", [])}
     return _formatar_treinamentos(trainings, reference_date).replace(
-        "Seus treinamentos atribuídos:",
-        "Seus próximos eventos no Astro:" if upcoming else "Seus eventos no Astro:",
+        "Atividades atribuídas a você em eventos do Astro:",
+        "Seus próximos eventos no Astro:" if upcoming else "Seus eventos pendentes no Astro:" if result.get("situacao") == "a_realizar" else "Seus eventos no Astro:",
     ).replace("treinamento", "evento")
 
 

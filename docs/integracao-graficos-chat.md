@@ -1,5 +1,7 @@
 # Gráficos no chat: contrato para o frontend
 
+Veja também as [correções de montagem, continuidade e validação local](correcoes-homologacao-local.md).
+
 ## Escolher um gráfico na conversa
 
 O formato também pode vir antes do assunto: “que tipo de gráficos?” → “quero um

@@ -94,6 +94,10 @@ def test_sql_aggregates_before_pagination_and_revalidates_scope(monkeypatch,role
     assert params[:3] == ["viewer",role,"viewer"]
     assert result["grafico"] == [{"categoria":"Técnica","valor":7},{"categoria":"Operador","valor":4}]
     assert result["completo"] is True
+    assert result["filtros_aplicados"]["agrupar_por"] == "cargo"
+    assert "limite" not in result["filtros_aplicados"]
+    if reference:
+        assert "excluindo a própria conta" in result["criterio_populacao"]
 
 
 def test_partial_aggregation_never_emits_chart(monkeypatch):
