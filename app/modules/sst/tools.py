@@ -638,11 +638,8 @@ def consultar_nrs_obrigatorias(config: RunnableConfig = None) -> dict:
             ON unidade.id_unidade = usuario.unidade_id
           LEFT JOIN cargo_nr
             ON cargo_nr.cargo_id = cargo.id_cargo
-          LEFT JOIN unidade_nr
-            ON unidade_nr.unidade_id = unidade.id_unidade
-           AND unidade_nr.nr_id = cargo_nr.nr_id
           LEFT JOIN nr_catalogo
-            ON nr_catalogo.codigo_nr = unidade_nr.nr_id
+            ON nr_catalogo.codigo_nr = cargo_nr.nr_id
            AND nr_catalogo.revogada = FALSE
          WHERE usuario.firebase_uid = %s
          ORDER BY nr_catalogo.codigo_nr
@@ -680,7 +677,7 @@ def consultar_nrs_obrigatorias(config: RunnableConfig = None) -> dict:
         "fonte": {
             "tipo": "postgresql",
             "tabelas": [
-                "usuario", "cargo", "unidade", "cargo_nr", "unidade_nr", "nr_catalogo",
+                "usuario", "cargo", "unidade", "cargo_nr", "nr_catalogo",
             ],
         },
     }
@@ -712,7 +709,7 @@ def consultar_situacao_nrs(config: RunnableConfig = None) -> dict:
 
 
 def _consultar_situacao_nrs_filtrada(condition: str, parameters: list) -> dict:
-    """Compartilha os critérios de validade com predicados internos autorizados."""
+    """NRs do cargo, como no perfil Java; predicados internos preservam autorização."""
     query = """
         WITH usuario_atual AS (
             SELECT usuario.id_usuario,
@@ -736,11 +733,8 @@ def _consultar_situacao_nrs_filtrada(condition: str, parameters: list) -> dict:
               FROM usuario_atual
               LEFT JOIN cargo_nr
                 ON cargo_nr.cargo_id = usuario_atual.id_cargo
-              LEFT JOIN unidade_nr
-                ON unidade_nr.unidade_id = usuario_atual.id_unidade
-               AND unidade_nr.nr_id = cargo_nr.nr_id
               LEFT JOIN nr_catalogo
-                ON nr_catalogo.codigo_nr = unidade_nr.nr_id
+                ON nr_catalogo.codigo_nr = cargo_nr.nr_id
                AND nr_catalogo.revogada = FALSE
         )
         SELECT nrs_obrigatorias.usuario,
@@ -846,7 +840,7 @@ def _consultar_situacao_nrs_filtrada(condition: str, parameters: list) -> dict:
         "fonte": {
             "tipo": "postgresql",
             "tabelas": [
-                "usuario", "cargo", "unidade", "cargo_nr", "unidade_nr",
+                "usuario", "cargo", "unidade", "cargo_nr",
                 "nr_catalogo", "conformidade", "turma_colaborador", "turma",
                 "evento", "conclusao_evento",
             ],

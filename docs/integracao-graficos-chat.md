@@ -254,7 +254,7 @@ Campos ausentes são nulos e não devem ser inventados ou exibidos como vazios.
 Exemplo fictício. Renderize como cartão com foto, campos identificados e coluna
 ou seção de conformidade, adaptando o layout ao espaço disponível. O percentual
 é calculado pela aplicação: `round(100 * vigentes / total, 2)`. Conta exclusivamente
-as NRs retornadas pela consulta existente de cargo/unidade, não revogadas, com
+as NRs não revogadas vinculadas ao cargo cadastrado da pessoa consultada, com
 status `VIGENTE` calculado com `CURRENT_DATE` do PostgreSQL. Zero NRs produz
 `percentual: null`, com indicação “Sem NRs aplicáveis”, nunca 0% ou 100%.
 Mostrar contagens, critério e data permite interpretar o indicador. Não é
@@ -367,6 +367,9 @@ O backend reutiliza `consultar_situacao_nrs`: conta números distintos de NRs co
 situação `PENDENTE`, `RENOVACAO_NECESSARIA` ou `REALIZACAO_NECESSARIA`, conforme
 os critérios atuais do cadastro. Exclui `VIGENTE`; duas atividades da mesma NR
 não viram duas pendências. Data ausente não é substituída pela data do dispositivo.
+As NRs pessoais vêm dos vínculos do cargo, como no perfil Java; falta de vínculo
+da unidade não elimina essas NRs. O contexto da unidade continua nas verificações
+de acesso. Isso não altera os denominadores das agregações coletivas existentes.
 Ausência de validade segue a situação fornecida pela consulta existente, sem
 presumir vigência. Esse número não certifica conformidade legal ou aptidão.
 

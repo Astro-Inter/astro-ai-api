@@ -476,14 +476,15 @@ def test_consultar_nrs_obrigatorias_uses_authenticated_user_and_current_schema(m
         "fonte": {
             "tipo": "postgresql",
             "tabelas": [
-                "usuario", "cargo", "unidade", "cargo_nr", "unidade_nr", "nr_catalogo",
+                "usuario", "cargo", "unidade", "cargo_nr", "nr_catalogo",
             ],
         },
     }
     assert connection.db_cursor.parameters == ["firebase-owner"]
     assert "FROM usuario" in connection.db_cursor.query
     assert "JOIN cargo_nr" in connection.db_cursor.query
-    assert "JOIN unidade_nr" in connection.db_cursor.query
+    assert "unidade_nr" not in connection.db_cursor.query
+    assert "nr_catalogo.codigo_nr = cargo_nr.nr_id" in connection.db_cursor.query
     assert "nr_catalogo.revogada = FALSE" in connection.db_cursor.query
     assert "usuarios" not in connection.db_cursor.query
 
@@ -578,6 +579,8 @@ def test_consultar_situacao_nrs_classifies_requirements_for_authenticated_user(m
     assert "FROM turma_colaborador" in query
     assert "LEFT JOIN LATERAL" in query
     assert "CURRENT_DATE + 30" in query
+    assert "unidade_nr" not in query
+    assert "nr_catalogo.codigo_nr = cargo_nr.nr_id" in query
 
 
 def test_consultar_situacao_nrs_does_not_apply_to_admin(monkeypatch):
