@@ -712,6 +712,8 @@ def _formatar_treinamentos(result: dict, reference_date=None) -> str:
         return result.get("mensagem", "Não foi possível consultar seus treinamentos.")
 
     lines = ["Atividades atribuídas a você em eventos do Astro:"]
+    if any(str(item.get("titulo", "")).startswith("HOMOLOGAÇÃO") for item in result["treinamentos"]):
+        lines.append("Os registros identificados como HOMOLOGAÇÃO são dados de teste cadastrados; não representam capacitação ou certificação real.")
     status_labels = {
         "PENDENTE": "pendente", "REJEITADO": "rejeitada", "CONCLUIDO": "concluída",
     }
@@ -733,7 +735,7 @@ def _formatar_treinamentos(result: dict, reference_date=None) -> str:
         if end_day and today and end_day < today:
             details.append("O período informado já terminou.")
             if training['status_participacao'] == 'PENDENTE':
-                details.append("A participação continua pendente. Confira a atividade no aplicativo para saber como regularizar.")
+                details.append("Confira a atividade no aplicativo para saber como regularizar.")
         participation = status_labels.get(training['status_participacao'], "não informada")
         details.append(f"Sua participação está {participation}.")
         event_status = {"ATIVO": "ativo", "CANCELADO": "cancelado", "CONCLUIDO": "concluído"}.get(training['status_evento'])

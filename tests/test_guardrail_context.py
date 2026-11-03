@@ -31,6 +31,8 @@ def test_rh_prompts_use_trusted_role_without_asking_for_permission():
         RH_DECISAO_PROMPT_COMPLETO,
     ):
         assert "usuario_atual.role" in prompt
-        assert "só um" in prompt
+        if prompt != RH_DECISAO_PROMPT_COMPLETO:
+            assert "só um" in prompt
     assert "não autoriza consultar todo o workspace" in GUARDRAIL_ENTRADA_PROMPT_COMPLETO
-    assert "sem afirmar seleção aleatória" in RH_DECISAO_PROMPT_COMPLETO
+    assert "não afirme seleção aleatória" in RH_DECISAO_PROMPT_COMPLETO
+    assert "busca sempre todo o conjunto autorizado até 150" in RH_DECISAO_PROMPT_COMPLETO

@@ -123,6 +123,32 @@ Não há merge nem deploy de produção autorizado por este trabalho.
 
 ## Perguntas para repetir no web e mobile
 
+### Homologação positiva autorizada com registros no banco
+
+Após autorização explícita, foi criado um evento identificado como HOMOLOGAÇÃO,
+sem NR, em modo de conclusão COLABORADOR, com duas turmas e duas participações
+PENDENTE para a conta Gestor de teste: uma turma passada e outra futura. Foram
+sete registros no total; nenhum cadastro existente, permissão ou conformidade foi
+alterado. Os IDs de recuperação ficaram em recibo local privado, fora do Git.
+Os dados foram mantidos para repetição manual, sem exclusão automática.
+
+A consulta pessoal encontrou as duas pendências; a consulta de próximos encontrou
+somente a turma futura. A outra conta de teste não recebeu esses registros nas
+consultas pessoais. O primeiro teste completo apontou falta de clareza na
+apresentação dos registros sintéticos. O texto agora identifica títulos marcados
+HOMOLOGAÇÃO como dados de teste e evita repetir o estado pendente no mesmo item.
+Não foram alterados o Juiz ou suas regras para liberar o teste.
+
+Na repetição, eventos pendentes, continuação sobre treinamentos e próximo evento
+foram aprovados pelo Juiz com respostas positivas. A rodada final reportou seis
+chamadas, 30.839 tokens de entrada, 243 de saída e US$ 0,003975925; a primeira
+rodada diagnóstica consumiu US$ 0,005200525. As sessões de diagnóstico ficaram em
+memória, sem persistência no MongoDB. 48 testes automatizados relevantes passaram.
+Isso valida o serviço local com ferramentas e modelos reais; a interface ainda
+precisa ser homologada com a revisão publicada. Sem merge ou deploy de produção.
+
+### Sequência de perguntas
+
 1. “Liste 100 usuários da minha equipe em uma tabela.”
 2. Na mesma sessão: “Gere um gráfico de barras por cargo com base nesses dados considerando todo o escopo autorizado.”
 3. Nova sessão: “Quero um gráfico de rosca” → “cobertura”.
