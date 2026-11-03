@@ -1,5 +1,7 @@
 # Gráficos no chat: contrato para o frontend
 
+Veja também as [correções de montagem, continuidade e validação local](correcoes-homologacao-local.md).
+
 ## Escolher um gráfico na conversa
 
 O formato também pode vir antes do assunto: “que tipo de gráficos?” → “quero um
@@ -254,7 +256,7 @@ Campos ausentes são nulos e não devem ser inventados ou exibidos como vazios.
 Exemplo fictício. Renderize como cartão com foto, campos identificados e coluna
 ou seção de conformidade, adaptando o layout ao espaço disponível. O percentual
 é calculado pela aplicação: `round(100 * vigentes / total, 2)`. Conta exclusivamente
-as NRs retornadas pela consulta existente de cargo/unidade, não revogadas, com
+as NRs não revogadas vinculadas ao cargo cadastrado da pessoa consultada, com
 status `VIGENTE` calculado com `CURRENT_DATE` do PostgreSQL. Zero NRs produz
 `percentual: null`, com indicação “Sem NRs aplicáveis”, nunca 0% ou 100%.
 Mostrar contagens, critério e data permite interpretar o indicador. Não é
@@ -287,8 +289,11 @@ conclusões pessoais de treinamentos, com a definição já documentada.
 
 ## Tabelas de usuários com paginação local (versão 2)
 
-`buscar_outros_usuarios.limite` agora expressa a quantidade solicitada: por exemplo,
-100. O contrato aceita quantidades entre 1 e 1.000.000 para registrar pedidos acima do teto e informar o corte. O padrão é 20; o máximo efetivamente devolvido é 200. `pagina` é legado e
+`buscar_outros_usuarios` busca sempre o conjunto autorizado completo pelos filtros,
+com teto de **150 usuários** e orçamento de **2 MiB**. `limite` é aceito como campo
+legado (padrão 150), mas não reduz nem amplia a coleta. Um pedido de 100 recebe os
+141 disponíveis, por exemplo; com 210 disponíveis recebe até 150, informando o corte.
+`pagina` é legado e
 somente aceita 1. A API reúne lotes SQL internos de até 50, com os mesmos filtros,
 autorização e ordenação por nome, email e ID único. Contagem e lotes usam uma
 transação somente leitura com snapshot REPEATABLE READ. Não há chamadas adicionais
@@ -301,18 +306,27 @@ O bloco `tabela` de usuários usa `versao: 2` e `paginacao: "local"`:
   "tipo": "tabela", "versao": 2, "titulo": "Usuários",
   "colunas": [{"chave": "nome", "titulo": "Nome"}],
   "linhas": [{"nome": "Pessoa autorizada"}],
-  "pagina": 1, "total_paginas": 1, "total": 143,
+  "pagina": 1, "total_paginas": 1, "total": 1,
   "solicitada": 1, "retornada": 1, "limitado": false,
-  "tem_mais": true, "motivo_limite": null, "paginacao": "local"
+  "tem_mais": false, "motivo_limite": null, "paginacao": "local"
 }
 ```
 
 `total` é a contagem autorizada pelos filtros; `retornada` é o número de linhas.
-`tem_mais` indica que existem registros fora do conjunto recebido. `limitado`
-indica que um limite de segurança impediu atender a quantidade solicitada e
-disponível; seu motivo é `maximo_resultados` ou `tamanho_resposta`. Pedir 100 e
-receber os 23 disponíveis não é corte de segurança. Pedir 100 e receber 100 de
-143 é um conjunto parcial por escolha do solicitante, com `tem_mais: true`.
+`solicitada` representa o conjunto completo pretendido pela consulta (igual ao
+total disponível, ou 1 se vazio), não o número literal da pergunta. O número recebido
+no filtro legado fica em `quantidade_mencionada` somente no resultado interno da tool.
+O resultado interno também informa `politica_quantidade: "conjunto_autorizado"` ao
+Juiz; esses campos não acrescentam propriedades ao bloco público.
+`tem_mais` indica registros fora do conjunto recebido. `limitado` indica corte por
+segurança; seu motivo é `maximo_resultados` ou `tamanho_resposta`. Pedir 100 e
+receber os 141 disponíveis não é corte. Havendo 210, retornar 150 significa
+`solicitada: 210`, `retornada: 150`, `limitado: true`, `tem_mais: true`,
+`motivo_limite: "maximo_resultados"`. O resumo deve avisar que o conjunto é parcial.
+“Mostre o resto que falta” após a listagem reconsulta o conjunto completo com os
+filtros validados anteriores, sem inferir novos perfis ou situações. A resposta
+explica que a nova tabela substitui a anterior, em vez de ser um lote adicional.
+O mesmo teto continua valendo: essa continuação não permite acessar além de 150.
 Os campos legados pagina/total_paginas valem 1 e não descrevem páginas visuais.
 
 O orçamento da resposta de listagem é 2 MiB de JSON, incluindo reserva conservadora para fotos e
@@ -328,12 +342,15 @@ deve calcular um gráfico global a partir dessas linhas.
 
 ### Publicação coordenada e histórico
 
-DEPENDÊNCIA: os clientes web #70 e mobile #79 inspecionados validam até 50 linhas e ainda
-não oferecem paginação local. Antes de publicar a API, atualizar ambos para ler
-versões 1 e 2, validar até 200 linhas na v2 e mostrar, por exemplo, 10 ou 20 linhas
+Os clientes homologados posteriormente já aceitam tabela v2 até 200 linhas e
+paginação local; a nova coleta de até 150 cabe nesse contrato. Clientes antigos
+restritos a 50 linhas continuam incompatíveis com listagens maiores. Validar ambos
+para ler versões 1 e 2 e mostrar, por exemplo, 10 ou 20 linhas
 por página, sem nova chamada ao chatbot. Exibir contagem recebida/total e avisos
 de corte; não renderizar todas as linhas de uma vez. Testar também imagens,
-rolagem e troca de página. Esta alteração de backend não publica esses clientes.
+rolagem e troca de página. Rótulos de `solicitada` devem descrever o conjunto
+consultado, sem atribuí-lo ao número literal digitado pelo usuário. Esta alteração
+de backend não publica esses clientes e não modifica os blocos históricos antigos.
 
 Persistir o bloco completo recebido, incluindo versão e metadados. Ao reabrir a
 conversa, reconstruir as páginas locais do conjunto salvo. Blocos v1 antigos
@@ -367,6 +384,9 @@ O backend reutiliza `consultar_situacao_nrs`: conta números distintos de NRs co
 situação `PENDENTE`, `RENOVACAO_NECESSARIA` ou `REALIZACAO_NECESSARIA`, conforme
 os critérios atuais do cadastro. Exclui `VIGENTE`; duas atividades da mesma NR
 não viram duas pendências. Data ausente não é substituída pela data do dispositivo.
+As NRs pessoais vêm dos vínculos do cargo, como no perfil Java; falta de vínculo
+da unidade não elimina essas NRs. O contexto da unidade continua nas verificações
+de acesso. Isso não altera os denominadores das agregações coletivas existentes.
 Ausência de validade segue a situação fornecida pela consulta existente, sem
 presumir vigência. Esse número não certifica conformidade legal ou aptidão.
 
@@ -384,13 +404,33 @@ escopo de unidade/workspace e revalidação de acesso dessa ferramenta. O resumo
 incluído na evidência e no plano de apresentação antes da aprovação do Juiz;
 nenhuma ficha é liberada quando a resposta é recusada.
 
-**Web/mobile:** adicionar um indicador à ficha usando `rotulo` e `quantidade`.
-Com `status: "ok"`, mostrar inclusive zero. Com `indisponivel`, mostrar
+**Compatibilidade sem atualização de web/mobile:** a ficha própria completa é
+enviada na ordem `texto` de apresentação → `ficha_usuario` → `texto` com o resumo
+de pendências. O resumo usa o mesmo conteúdo fornecido ao Juiz, com a contagem
+calculada pela aplicação; não exige componente novo, nova tool nem chamada extra
+de IA. Exemplo do último bloco, com contagem fictícia:
+
+```json
+{"tipo":"texto","conteudo":"Pendências de NRs: 3. Cada NR é contada uma vez; não inclui outras categorias de pendência."}
+```
+
+Se a consulta falhar, o texto informa “Não foi possível confirmar a quantidade de
+pendências de NRs agora.” Para ADMIN, informa que o indicador não se aplica.
+A ficha de terceiro mantém seu texto explicativo, que já contém a contagem,
+sem acrescentar uma segunda cópia. Perguntas de campo específico continuam sem
+esse resumo. Os clientes atuais só precisam manter a renderização dos blocos
+`texto` já suportados, na ordem recebida; nenhuma alteração no mobile/web é
+necessária para mostrar a contagem como texto.
+
+O objeto `pendencias` continua disponível para um indicador visual opcional no
+futuro, usando `rotulo` e `quantidade`. Com `status: "ok"`, mostrar inclusive zero.
+Com `indisponivel`, mostrar
 “Não disponível”; com `nao_aplicavel`, omitir ou mostrar “Não se aplica”. Não somar
 esse valor às contagens de outros blocos nem tratá-lo como quantidade de atividades.
 Fonte, critério e referência podem ficar em detalhes acessíveis do indicador.
 Histórico antigo sem `pendencias` (ou com `null`) continua válido: ocultar o
-indicador, sem transformar ausência em zero. O histórico preserva o snapshot da
+indicador, sem transformar ausência em zero. Fichas antigas não recebem o novo
+texto retroativamente. O histórico preserva o snapshot da
 consulta original; reler uma conversa não recalcula pendências nem faz leitura
 adicional de NRs. POST e histórico mantêm a ordem dos blocos. Foto temporária e
 regras de autorização continuam as mesmas.
@@ -405,7 +445,8 @@ histórico e consultas de campos específicos passaram com respostas simuladas.
 ## Cartão do usuário autenticado (`buscar_meus_dados`)
 
 Pedidos completos como “Meus dados” retornam, nesta ordem, um bloco de texto de
-apresentação e um `ficha_usuario` v1. A consulta SQL identifica o usuário somente
+apresentação, um `ficha_usuario` v1 e o resumo de pendências em `texto` quando
+consultado. A consulta SQL identifica o usuário somente
 pelo UID do contexto autenticado. ADMIN usa o próprio cadastro administrativo;
 associações de cargo/unidade ausentes não escondem o cadastro funcional.
 
@@ -422,7 +463,12 @@ quando não houver nome para extrair iniciais. Os demais campos ausentes são nu
    "email":"pessoa@example.com","perfil":"COLABORADOR",
    "cargo":"Analista","unidade":"Matriz","modalidade":"HIBRIDO",
    "foto":{"tipo":"imagem","url":null,"descricao":"Foto do usuário autenticado"},
-   "situacao":null,"conformidade":null}
+   "situacao":null,"conformidade":null,
+   "pendencias":{"status":"ok","quantidade":3,"rotulo":"Pendências de NRs",
+     "data_referencia":"2026-11-02",
+     "criterio":"NRs aplicáveis com atividade pendente ou necessidade de realização/renovação; uma contagem por NR.",
+     "fonte":"Cadastro Astro — situação das NRs aplicáveis"}},
+  {"tipo":"texto","conteudo":"Pendências de NRs: 3. Cada NR é contada uma vez; não inclui outras categorias de pendência."}
 ]
 ```
 

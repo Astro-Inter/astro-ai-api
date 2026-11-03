@@ -1079,7 +1079,7 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "rh", "juiz",
     ]
-    assert connection.db_cursor.parameters == ["user-a", ["GESTOR", "COLABORADOR"], "user-a", ["ATIVO"], 20, 0]
+    assert connection.db_cursor.parameters == ["user-a", ["GESTOR", "COLABORADOR"], "user-a", ["ATIVO"], 1, 0]
     assert [call[0] for call in model.calls].count("rh") == 1
     judge_call = next(call for call in model.calls if call[0] == "juiz")
     tool_result = json.loads(judge_call[1][-1].content.split("\n", 1)[1])
@@ -1178,7 +1178,8 @@ def test_rh_agent_uses_current_user_tool(chat_client, monkeypatch, message, fiel
         assert "cpf" not in data
         assert "12345678901" not in str(judge_call[1])
         blocks = response.json()["blocos"]
-        assert [b["tipo"] for b in blocks] == ["texto", "ficha_usuario"]
+        assert [b["tipo"] for b in blocks] == ["texto", "ficha_usuario", "texto"]
+        assert blocks[-1]["conteudo"] == "Não foi possível confirmar a quantidade de pendências de NRs agora."
         card = blocks[1]
         assert card["nome"] == "Lucas" and card["perfil"] == "COLABORADOR"
         assert card["modalidade"] == "HIBRIDO" and card["cargo"] == "Analista"

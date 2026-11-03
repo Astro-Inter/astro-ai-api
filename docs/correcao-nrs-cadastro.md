@@ -9,17 +9,58 @@ e apresentava o intervalo de reciclagem cadastrado como obrigação do colaborad
 Outra execução às 12:51 teve a mesma recusa. Não foi falta de resultados nem
 bloqueio pelo Jev. Traces brutos e dados pessoais ficaram fora do Git.
 
-A consulta SQL filtra normas não revogadas e cruza cargo e unidade do UID
-autenticado. Isso não comprova cumprimento, validade pessoal, periodicidade
+A consulta SQL filtra normas não revogadas vinculadas ao cargo do UID
+autenticado, conforme a tela de perfil. A unidade continua como contexto de
+cadastro/autorização, sem eliminar vínculos de cargo por falta de `unidade_nr`.
+Isso não comprova cumprimento, validade pessoal, periodicidade
 legal aplicável a cada atividade ou todas as obrigações legais da pessoa.
 
 ## Alteração
 
-A candidata informa somente as NRs vinculadas ao cargo e à unidade no Astro,
+A candidata informa somente as NRs vinculadas ao cargo cadastrado no Astro,
 seguida de “Essa lista mostra os vínculos do cadastro; não confirma conclusão
 ou validade das suas atividades”. O prazo genérico de reciclagem não é exposto
 como obrigação pessoal nessa resposta. O valor original permanece intacto no
-resultado da ferramenta e na evidência do Juiz, sem alteração de cadastro ou SQL.
+resultado da ferramenta e na evidência do Juiz, sem alteração de cadastro.
+
+## Atualização: cargo com NRs e unidade sem vínculos
+
+O caso das capturas de 02/11/2026 às 20h27 mostrou um segundo problema. O cargo
+possuía NR-1, NR-5 e NR-32, mas a unidade não tinha esses vínculos. A consulta
+anterior da IA fazia a interseção entre `cargo_nr` e `unidade_nr` e retornava
+zero. A tela Java usa os vínculos de `cargo_nr` para “Minhas NRs”. O trace
+confirmou resultado vazio da ferramenta, aprovado pelo Juiz; não era perda de
+contexto ou bloqueio pelo Jev.
+
+`consultar_nrs_obrigatorias` e `_consultar_situacao_nrs_filtrada` agora selecionam
+as NRs não revogadas diretamente de `cargo_nr`. Os contratos de resposta
+permanecem; somente a lista de tabelas da fonte deixa de citar `unidade_nr`.
+O UID continua vindo exclusivamente da autenticação. Consultas de terceiros
+mantêm resolução inequívoca e revalidação do escopo de unidade/workspace antes
+de ler a situação, usando o mesmo critério de NRs do cargo da pessoa.
+
+Ficha própria, ficha de terceiro e indicador pessoal de pendências herdam essa
+correção. Três NRs vinculadas não são automaticamente três pendências: a
+contagem continua distinguindo registro vigente, atividade pendente e necessidade
+de realização/renovação. Não altera validade, conclusão ou cadastro.
+
+As consultas de NRs da organização e as agregações de equipe continuam com seus
+critérios próprios documentados. Não se altera o denominador das análises
+coletivas nesta correção pessoal, nem a prioridade de seleção de registros de
+validade. A ficha não certifica conformidade legal.
+
+Testes executam a SQL de listagem sobre dados sintéticos com vínculos de unidade
+ausentes, parciais ou completos, incluindo cargo sem NRs, outra pessoa e NR
+revogada. Também cobrem situação, autenticação, restrições de terceiros,
+pendências, apresentação e histórico. A verificação real limitada é somente
+leitura, sem chamadas adicionais de IA.
+
+Nesta atualização, 145 testes locais passaram em dois grupos: 74 para SQL de
+vínculos, ferramentas SST e fichas/pendências; 71 para intenção pessoal,
+apresentação, evidências, respostas específicas e histórico. Na leitura real
+limitada do caso investigado, a listagem corrigida retornou NR-1, NR-5 e NR-32;
+a situação retornou respectivamente pendente, vigente e realização necessária,
+com duas pendências. Não houve alteração de dados ou chamada de LLM nessa leitura.
 
 Resultado vazio informa que não foram encontrados vínculos nessa consulta;
 não afirma ausência de obrigações legais. Consultas de situação pessoal,

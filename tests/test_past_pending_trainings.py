@@ -14,3 +14,15 @@ def test_pending_and_time_period_are_independent(end,past):
     assert 'Começa em' not in text and 'Termina em' not in text
     assert 'referência do evento: 12' in text
     assert 'evidência para comprovar' in text and data==original
+
+
+def test_homologation_label_is_explicit_and_pending_not_duplicated():
+    data={'status':'ok','pagina':1,'total_paginas':1,'treinamentos':[{
+        'titulo':'HOMOLOGAÇÃO CHAT — teste','turma':'HOMOLOGAÇÃO — Passada',
+        'data_inicio':'2026-10-20T08:00:00','data_termino':'2026-10-20T09:00:00',
+        'status_participacao':'PENDENTE','status_evento':'ATIVO',
+        'modo_conclusao':'COLABORADOR','evidencia_obrigatoria':False}]}
+    text=_formatar_treinamentos(data,'2026-11-02')
+    assert 'não representam capacitação ou certificação real' in text
+    assert text.count('Sua participação está pendente.')==1
+    assert 'A participação continua pendente.' not in text

@@ -246,18 +246,21 @@ def _filtros_eventos(message: str) -> ConsultarEventosArgs | None:
         c for c in unicodedata.normalize("NFKD", message.casefold())
         if not unicodedata.combining(c)
     )
-    if not re.search(r"\beventos?\b", normalized):
+    if not re.search(r"\b(eventos?|atividades?)\b", normalized):
         return None
     if re.search(r"\b(google|calendar|nao|como|criar|crie|adicion\w*|coloque|cancel\w*|alter\w*|exclu\w*|outro|outra|colega)\b", normalized):
         return None
     if re.search(r"\b(hoje|amanha|semana|mes|ano|dia)\b|\d{2}/\d{2}", normalized):
         return None
-    if not re.search(r"\b(proxim[oa]s?|meus?|tenho)\b", normalized):
+    if not re.search(r"\b(proxim[oa]s?|meus?|minhas?|tenho)\b", normalized):
         return None
+    pending = bool(re.search(r"\b(pendentes?|a realizar)\b", normalized))
     page = re.search(r"\bpagina\s+(\d+)\b", normalized)
     try:
         return ConsultarEventosArgs(
-            proximos=not bool(re.search(r"\b(todos|historico|passados|anteriores)\b", normalized)),
+            proximos=(bool(re.search(r"\bproxim[oa]s?\b", normalized)) if pending
+                      else not bool(re.search(r"\b(todos|historico|passados|anteriores)\b", normalized))),
+            situacao="a_realizar" if pending else "todos",
             limite=1 if re.search(r"\bproximo evento\b", normalized) else 5,
             pagina=int(page.group(1)) if page else 1,
         )
@@ -333,6 +336,13 @@ def _formatar_usuarios(result: dict) -> str:
         return result.get("mensagem", "Não foi possível consultar os usuários no momento.")
 
     if "retornada" in result:
+        if result.get("politica_quantidade") == "conjunto_autorizado":
+            text = f"Retornados {result['retornada']} de {result['total']} usuários disponíveis no escopo autorizado."
+            if result.get("limitado"):
+                text += " O conjunto é parcial: " + ("limite de 150 usuários." if result.get("motivo_limite") == "maximo_resultados" else "limite de tamanho da resposta.")
+            else:
+                text += " A tabela contém todo o conjunto autorizado pelos filtros."
+            return text
         text = (f"Retornados {result['retornada']} usuário(s) de {result['total']} disponíveis "
                 f"no escopo autorizado; quantidade solicitada: {result['solicitada']}.")
         if result.get("limitado"):
@@ -701,7 +711,9 @@ def _formatar_treinamentos(result: dict, reference_date=None) -> str:
     if result.get("status") != "ok":
         return result.get("mensagem", "Não foi possível consultar seus treinamentos.")
 
-    lines = ["Seus treinamentos atribuídos:"]
+    lines = ["Atividades atribuídas a você em eventos do Astro:"]
+    if any(str(item.get("titulo", "")).startswith("HOMOLOGAÇÃO") for item in result["treinamentos"]):
+        lines.append("Os registros identificados como HOMOLOGAÇÃO são dados de teste cadastrados; não representam capacitação ou certificação real.")
     status_labels = {
         "PENDENTE": "pendente", "REJEITADO": "rejeitada", "CONCLUIDO": "concluída",
     }
@@ -723,7 +735,7 @@ def _formatar_treinamentos(result: dict, reference_date=None) -> str:
         if end_day and today and end_day < today:
             details.append("O período informado já terminou.")
             if training['status_participacao'] == 'PENDENTE':
-                details.append("A participação continua pendente. Confira a atividade no aplicativo para saber como regularizar.")
+                details.append("Confira a atividade no aplicativo para saber como regularizar.")
         participation = status_labels.get(training['status_participacao'], "não informada")
         details.append(f"Sua participação está {participation}.")
         event_status = {"ATIVO": "ativo", "CANCELADO": "cancelado", "CONCLUIDO": "concluído"}.get(training['status_evento'])
@@ -797,14 +809,15 @@ def _formatar_eventos(result: dict, reference_date=None) -> str:
     if result.get("status") == "sem_dados":
         return (
             "Não encontrei próximos eventos atribuídos a você no Astro."
-            if upcoming else "Não encontrei eventos atribuídos a você no Astro."
+            if upcoming else "Não encontrei participações pendentes em eventos ativos atribuídos a você no Astro."
+            if result.get("situacao") == "a_realizar" else "Não encontrei eventos atribuídos a você no Astro."
         )
     if result.get("status") != "ok":
         return "Não foi possível consultar seus eventos no Astro. " + result.get("mensagem", "")
     trainings = {**result, "treinamentos": result.get("eventos", [])}
     return _formatar_treinamentos(trainings, reference_date).replace(
-        "Seus treinamentos atribuídos:",
-        "Seus próximos eventos no Astro:" if upcoming else "Seus eventos no Astro:",
+        "Atividades atribuídas a você em eventos do Astro:",
+        "Seus próximos eventos no Astro:" if upcoming else "Seus eventos pendentes no Astro:" if result.get("situacao") == "a_realizar" else "Seus eventos no Astro:",
     ).replace("treinamento", "evento")
 
 
@@ -969,6 +982,14 @@ def build_rh_graph(model: AgentModel):
         presentation = presentation_evidence(tool_name, result) if not field else None
         if presentation:
             specialist_result["apresentacao"] = presentation
+        candidate = _formatar_meus_dados(result) if tool_name == "buscar_meus_dados" else _formatar_usuarios(result)
+        if (tool_name == "buscar_outros_usuarios" and result.get("politica_quantidade") == "conjunto_autorizado"
+                and result.get("status") == "ok" and re.fullmatch(
+                    r"(?:mostre|liste|exiba) (?:o )?(?:resto|restante)(?: que falta)?[.!?]*",
+                    state["mensagem"].strip(), re.I)):
+            candidate = ("Esta consulta não separa apenas os usuários restantes: ela busca a lista completa até 150. "
+                         "Consultei novamente o conjunto autorizado pelos filtros desta consulta; "
+                         "esta tabela substitui a anterior, não é um lote adicional. " + candidate)
         return {
             "resultado_tool": result,
             "resultado": specialist_result,
@@ -978,11 +999,7 @@ def build_rh_graph(model: AgentModel):
                 if tool_name == "buscar_outros_usuarios" and result.get("status") in {"ok", "sem_dados"} and result.get("consulta") != "contagem"
                 else state.get("consulta_rh") if tool_name != "buscar_outros_usuarios" else None
             ),
-            "candidato": (
-                _formatar_meus_dados(result)
-                if tool_name == "buscar_meus_dados"
-                else _formatar_usuarios(result)
-            ),
+            "candidato": candidate,
             "agentes_chamados": state["agentes_chamados"] + [tool_name] + (
                 ["consultar_situacao_nrs"] if tool_name == "buscar_meus_dados" and not field
                 and result.get("status") == "ok" and state["usuario_atual"].role != "ADMIN" else []),

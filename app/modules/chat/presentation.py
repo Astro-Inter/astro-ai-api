@@ -26,6 +26,7 @@ def presentation_evidence(name: str, data: dict) -> dict | None:
         if "retornada" in data and data["retornada"] != count:
             return None
         return {"blocos": ["tabela"], "versao_tabela": 2 if "retornada" in data else 1,
+                **({"politica_quantidade": "conjunto_autorizado", "limite_resultados": 150} if data.get("politica_quantidade") == "conjunto_autorizado" else {}),
                 "linhas_validadas": count, "paginacao": "local" if "retornada" in data else "servidor",
                 "registros_omitidos_do_prompt": True}
     from app.modules.operational.insights import ACTIONS
@@ -34,5 +35,8 @@ def presentation_evidence(name: str, data: dict) -> dict | None:
         if data.get("grafico"):
             kinds.append(data.get("tipo_grafico", "grafico_barras"))
         return {"blocos": kinds, "linhas_validadas": len(data["linhas"]),
-                "categorias_grafico": len(data.get("grafico", []))}
+                "categorias_grafico": len(data.get("grafico", [])),
+                **({"conjunto_completo": data.get("completo", False),
+                    "criterio_populacao": data.get("criterio_populacao")}
+                   if name == "consultar_indicadores_equipe" else {})}
     return None

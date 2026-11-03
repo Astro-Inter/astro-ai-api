@@ -384,6 +384,9 @@ class ChatService:
                                       cargo=data.get("cargo"), unidade=data.get("unidade"), modalidade=data.get("modalidade"),
                                       pendencias=chart_data.get("pendencias"),
                                       foto=CelulaImagem(descricao="Foto do usuário autenticado"))]
+                        if chart_data.get("pendencias"):
+                            from app.modules.chat.profile_pending import pending_caption
+                            blocks.append(BlocoTexto(conteudo=pending_caption(chart_data["pendencias"])))
                 if (structured_ready
                         and result.get("resultado", {}).get("evidencia_tool", {}).get("nome") == "consultar_conformidade_usuario"
                         and chart_data.get("status") == "ok"):
