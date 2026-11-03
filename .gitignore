@@ -6,4 +6,9 @@ __pycache__/
 *.py[cod]
 *.json
 serviceAccount*.json
+
+# Artefatos locais de investigação, deploy e documentos gerados.
+.investigation/
+.wrangler/
+tmp/
 deploy/k8s/secrets.env
