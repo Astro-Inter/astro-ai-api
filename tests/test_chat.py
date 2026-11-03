@@ -1079,7 +1079,7 @@ def test_rh_agent_uses_user_tool_and_receives_its_result(chat_client, monkeypatc
     assert [call[0] for call in model.calls] == [
         "guardrail_entrada", "roteador", "rh", "juiz",
     ]
-    assert connection.db_cursor.parameters == ["user-a", ["GESTOR", "COLABORADOR"], "user-a", ["ATIVO"], 20, 0]
+    assert connection.db_cursor.parameters == ["user-a", ["GESTOR", "COLABORADOR"], "user-a", ["ATIVO"], 1, 0]
     assert [call[0] for call in model.calls].count("rh") == 1
     judge_call = next(call for call in model.calls if call[0] == "juiz")
     tool_result = json.loads(judge_call[1][-1].content.split("\n", 1)[1])

@@ -289,8 +289,11 @@ conclusões pessoais de treinamentos, com a definição já documentada.
 
 ## Tabelas de usuários com paginação local (versão 2)
 
-`buscar_outros_usuarios.limite` agora expressa a quantidade solicitada: por exemplo,
-100. O contrato aceita quantidades entre 1 e 1.000.000 para registrar pedidos acima do teto e informar o corte. O padrão é 20; o máximo efetivamente devolvido é 200. `pagina` é legado e
+`buscar_outros_usuarios` busca sempre o conjunto autorizado completo pelos filtros,
+com teto de **150 usuários** e orçamento de **2 MiB**. `limite` é aceito como campo
+legado (padrão 150), mas não reduz nem amplia a coleta. Um pedido de 100 recebe os
+141 disponíveis, por exemplo; com 210 disponíveis recebe até 150, informando o corte.
+`pagina` é legado e
 somente aceita 1. A API reúne lotes SQL internos de até 50, com os mesmos filtros,
 autorização e ordenação por nome, email e ID único. Contagem e lotes usam uma
 transação somente leitura com snapshot REPEATABLE READ. Não há chamadas adicionais
@@ -303,18 +306,27 @@ O bloco `tabela` de usuários usa `versao: 2` e `paginacao: "local"`:
   "tipo": "tabela", "versao": 2, "titulo": "Usuários",
   "colunas": [{"chave": "nome", "titulo": "Nome"}],
   "linhas": [{"nome": "Pessoa autorizada"}],
-  "pagina": 1, "total_paginas": 1, "total": 143,
+  "pagina": 1, "total_paginas": 1, "total": 1,
   "solicitada": 1, "retornada": 1, "limitado": false,
-  "tem_mais": true, "motivo_limite": null, "paginacao": "local"
+  "tem_mais": false, "motivo_limite": null, "paginacao": "local"
 }
 ```
 
 `total` é a contagem autorizada pelos filtros; `retornada` é o número de linhas.
-`tem_mais` indica que existem registros fora do conjunto recebido. `limitado`
-indica que um limite de segurança impediu atender a quantidade solicitada e
-disponível; seu motivo é `maximo_resultados` ou `tamanho_resposta`. Pedir 100 e
-receber os 23 disponíveis não é corte de segurança. Pedir 100 e receber 100 de
-143 é um conjunto parcial por escolha do solicitante, com `tem_mais: true`.
+`solicitada` representa o conjunto completo pretendido pela consulta (igual ao
+total disponível, ou 1 se vazio), não o número literal da pergunta. O número recebido
+no filtro legado fica em `quantidade_mencionada` somente no resultado interno da tool.
+O resultado interno também informa `politica_quantidade: "conjunto_autorizado"` ao
+Juiz; esses campos não acrescentam propriedades ao bloco público.
+`tem_mais` indica registros fora do conjunto recebido. `limitado` indica corte por
+segurança; seu motivo é `maximo_resultados` ou `tamanho_resposta`. Pedir 100 e
+receber os 141 disponíveis não é corte. Havendo 210, retornar 150 significa
+`solicitada: 210`, `retornada: 150`, `limitado: true`, `tem_mais: true`,
+`motivo_limite: "maximo_resultados"`. O resumo deve avisar que o conjunto é parcial.
+“Mostre o resto que falta” após a listagem reconsulta o conjunto completo com os
+filtros validados anteriores, sem inferir novos perfis ou situações. A resposta
+explica que a nova tabela substitui a anterior, em vez de ser um lote adicional.
+O mesmo teto continua valendo: essa continuação não permite acessar além de 150.
 Os campos legados pagina/total_paginas valem 1 e não descrevem páginas visuais.
 
 O orçamento da resposta de listagem é 2 MiB de JSON, incluindo reserva conservadora para fotos e
@@ -330,12 +342,15 @@ deve calcular um gráfico global a partir dessas linhas.
 
 ### Publicação coordenada e histórico
 
-DEPENDÊNCIA: os clientes web #70 e mobile #79 inspecionados validam até 50 linhas e ainda
-não oferecem paginação local. Antes de publicar a API, atualizar ambos para ler
-versões 1 e 2, validar até 200 linhas na v2 e mostrar, por exemplo, 10 ou 20 linhas
+Os clientes homologados posteriormente já aceitam tabela v2 até 200 linhas e
+paginação local; a nova coleta de até 150 cabe nesse contrato. Clientes antigos
+restritos a 50 linhas continuam incompatíveis com listagens maiores. Validar ambos
+para ler versões 1 e 2 e mostrar, por exemplo, 10 ou 20 linhas
 por página, sem nova chamada ao chatbot. Exibir contagem recebida/total e avisos
 de corte; não renderizar todas as linhas de uma vez. Testar também imagens,
-rolagem e troca de página. Esta alteração de backend não publica esses clientes.
+rolagem e troca de página. Rótulos de `solicitada` devem descrever o conjunto
+consultado, sem atribuí-lo ao número literal digitado pelo usuário. Esta alteração
+de backend não publica esses clientes e não modifica os blocos históricos antigos.
 
 Persistir o bloco completo recebido, incluindo versão e metadados. Ao reabrir a
 conversa, reconstruir as páginas locais do conjunto salvo. Blocos v1 antigos

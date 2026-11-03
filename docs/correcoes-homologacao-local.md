@@ -84,13 +84,31 @@ Esses testes exercitam o serviço, não substituem login HTTP ou homologação v
   pendente são cobertos com dados simulados, sem alterar os cadastros reais.
 - Pedido adicional “Mostre o resto que falta”: após 100 de 141, retornou nova
   tabela completa com 141, repetindo os 100 anteriores. Não entregou somente os
-  41 adicionais. Esse comportamento observado não foi transformado em paginação
-  de backend nesta correção; entrega incremental precisa de contrato próprio.
+  41 adicionais. Após essa rodada, a política foi alterada a pedido do usuário:
+  a listagem inicial já busca o conjunto completo até 150. Não foi acrescentada
+  paginação de backend ou entrega incremental. Ver detalhes no contrato de tabelas.
 - Consumo reportado nas quatro rodadas: 32 respostas de chat, 167.980 tokens de
   entrada, 1.111 de saída e aproximadamente US$ 0,02094. São valores capturados
   dessas chamadas, não custo total do sistema ou de infraestrutura.
 
 ## Clientes, histórico e limites
+
+### Ajuste posterior: conjunto completo até 150
+
+A listagem agora ignora o campo legado `limite` como corte de quantidade e busca
+todo o conjunto autorizado até 150, com o mesmo orçamento de 2 MiB e lotes internos
+de 50. O bloco continua tabela v2, sem propriedades novas. `solicitada` passa a
+representar o total pretendido pela política; metadados internos registram a
+quantidade mencionada no filtro. Contagem e gráficos não são cortados por 150.
+Histórico antigo mantém seus metadados originais. A mudança vale para novas consultas.
+
+376 testes passaram na suíte de listagens, contratos, ferramentas, histórico e
+regressões anteriores. O teste real final retornou 141 de 141 já no pedido de 100;
+a continuação retornou os mesmos 141 com critérios preservados e informou que é
+uma tabela substituta, não registros adicionais. Ambos foram aprovados pelo Juiz.
+Essa última rodada reportou três chamadas, 15.878 tokens de entrada, 136 de saída
+e US$ 0,002052525; rodadas intermediárias de diagnóstico também consumiram API.
+Nenhum deploy ou merge foi executado.
 
 Não há novo tipo público de bloco: web e mobile que já aceitam rosca v1 continuam
 compatíveis. Tabelas seguem v2 e paginação local, com limites anteriores. A extensão

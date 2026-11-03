@@ -17,7 +17,7 @@ UserType = Literal["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]
 MANAGER_VISIBLE_TYPES = ["GESTOR", "COLABORADOR"]
 WORKSPACE_MANAGER_VISIBLE_TYPES = ["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"]
 
-MAX_USER_RESULTS = 200
+MAX_USER_RESULTS = 150
 USER_QUERY_BATCH = 50
 MAX_USER_TABLE_BYTES = 2 * 1024 * 1024
 
@@ -44,15 +44,15 @@ class BuscarOutrosUsuariosArgs(BaseModel):
     )
     nome: str | None = Field(
         default=None, min_length=1, max_length=255,
-        description="Trecho do nome do funcionário, sem curingas SQL.",
+        description="Trecho do nome do colaborador, sem curingas SQL.",
     )
     cargo: str | None = Field(
         default=None, min_length=1, max_length=255,
         description="Trecho do nome do cargo, sem curingas SQL.",
     )
     limite: int = Field(
-        default=20, ge=1, le=1000000,
-        description="Quantidade solicitada pelo usuário; o backend aplica o teto de 200 resultados.",
+        default=150, ge=1, le=1000000,
+        description="Campo legado de quantidade. Listagens buscam todo o conjunto autorizado até 150, independentemente deste valor; paginação visual local.",
     )
     pagina: int = Field(default=1, ge=1, le=1, description="Legado: somente 1; paginação visual é local.")
     consulta: Literal["listar", "contagem"] = "listar"
@@ -99,8 +99,10 @@ class RhToolDecision(BaseModel):
             data["filtros"] = None
             return data
         if isinstance(filters, dict):
+            legacy_limit = filters.get("limite", 150)
             empty_filters = {
-                "status": [], "tipos": [], "nome": None, "cargo": None, "limite": 20,
+                "status": [], "tipos": [], "nome": None, "cargo": None,
+                "limite": legacy_limit if legacy_limit in (20, 150) else 150,
                 "pagina": 1, "consulta": "listar", "escopo": "autorizado",
             }
             if {**empty_filters, **filters} == empty_filters:
@@ -151,7 +153,7 @@ def buscar_outros_usuarios(
     tipos: list[UserType] | None = None,
     nome: str | None = None,
     cargo: str | None = None,
-    limite: int = 20,
+    limite: int = 150,
     pagina: int = 1,
     consulta: Literal["listar", "contagem"] = "listar",
     escopo: Literal["autorizado", "unidade"] = "autorizado",
@@ -247,7 +249,7 @@ def buscar_outros_usuarios(
                 rows = []
                 if consulta == "listar":
                     # Um snapshot mantém contagem e lotes consistentes durante a consulta.
-                    target = min(limite, MAX_USER_RESULTS)
+                    target = min(total, MAX_USER_RESULTS)
                     used_bytes = 16384  # metadados, colunas e estrutura do bloco
                     while len(rows) < target:
                         batch_size = min(USER_QUERY_BATCH, target - len(rows))
@@ -279,15 +281,17 @@ def buscar_outros_usuarios(
         "consulta": consulta,
         "total": total,
         "pagina": 1,
-        "limite": limite,
+        "limite": MAX_USER_RESULTS if consulta == "listar" else limite,
         "total_paginas": 1,
-        "solicitada": limite,
+        # A política pede o conjunto completo; o teto pode impedir atendê-lo.
+        "solicitada": max(total, 1) if consulta == "listar" else limite,
         "retornada": len(usuarios),
-        "limitado": consulta == "listar" and len(usuarios) < min(limite, total),
+        "limitado": consulta == "listar" and len(usuarios) < total,
         "tem_mais": consulta == "listar" and len(usuarios) < total,
-        "motivo_limite": "tamanho_resposta" if size_limited else "maximo_resultados" if limite > MAX_USER_RESULTS and total > MAX_USER_RESULTS else None,
+        "motivo_limite": ("tamanho_resposta" if size_limited else "maximo_resultados" if total > MAX_USER_RESULTS else None) if consulta == "listar" else None,
         "quantidade": len(usuarios),
         "usuarios": usuarios,
+        **({"politica_quantidade": "conjunto_autorizado", "quantidade_mencionada": limite} if consulta == "listar" else {}),
         **({"escopo_consultado": "workspace" if user.role == "GESTOR_WORKSPACE" and escopo == "autorizado" else "unidade" if user.role in {"GESTOR", "GESTOR_WORKSPACE"} else "autorizado",
             "inclui_solicitante": False} if consulta == "contagem" else {}),
     }

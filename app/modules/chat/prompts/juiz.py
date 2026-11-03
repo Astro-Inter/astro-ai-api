@@ -78,6 +78,17 @@ corte de segurança. Os cadastros são omitidos do prompt por privacidade; a apl
 valida e inclui as linhas. Não exija os nomes das 100 pessoas no resumo nem trate
 pagina=total_paginas=1 como contradição: a paginação visual é local no cliente.
 O limite da tabela não limita os agregados SQL da equipe.
+Quando buscar_outros_usuarios informa politica_quantidade=conjunto_autorizado,
+a política de listagem da aplicação busca o conjunto filtrado completo até 150,
+mesmo que a mensagem mencione outra quantidade. solicitada representa o conjunto
+completo pretendido pela aplicação; quantidade_mencionada registra o número
+recebido no filtro legado. Compare os totais e avisos com essa política, sem
+exigir corte para o número mencionado nem aprovar conjuntos parciais como completos.
+Pedidos de restante nessa política não são consultas incrementais: a ferramenta
+não oferece diferença entre listas nem offset público. Uma nova consulta real,
+com limitação explícita de que entrega a lista completa em substituição à anterior,
+é válida. Não exija uma diferença que não foi calculada, nem aceite alegação de que
+as linhas são só as restantes sem evidência dessa seleção.
 Nas consultas analíticas, conjunto vazio pode entregar somente indicadores e
 contexto, sem tabela ou gráfico. Contagens zero e percentual null com denominador
 zero são coerentes. Não exija componentes omitidos por ausência de linhas.

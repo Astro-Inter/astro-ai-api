@@ -336,6 +336,13 @@ def _formatar_usuarios(result: dict) -> str:
         return result.get("mensagem", "Não foi possível consultar os usuários no momento.")
 
     if "retornada" in result:
+        if result.get("politica_quantidade") == "conjunto_autorizado":
+            text = f"Retornados {result['retornada']} de {result['total']} usuários disponíveis no escopo autorizado."
+            if result.get("limitado"):
+                text += " O conjunto é parcial: " + ("limite de 150 usuários." if result.get("motivo_limite") == "maximo_resultados" else "limite de tamanho da resposta.")
+            else:
+                text += " A tabela contém todo o conjunto autorizado pelos filtros."
+            return text
         text = (f"Retornados {result['retornada']} usuário(s) de {result['total']} disponíveis "
                 f"no escopo autorizado; quantidade solicitada: {result['solicitada']}.")
         if result.get("limitado"):
@@ -973,6 +980,14 @@ def build_rh_graph(model: AgentModel):
         presentation = presentation_evidence(tool_name, result) if not field else None
         if presentation:
             specialist_result["apresentacao"] = presentation
+        candidate = _formatar_meus_dados(result) if tool_name == "buscar_meus_dados" else _formatar_usuarios(result)
+        if (tool_name == "buscar_outros_usuarios" and result.get("politica_quantidade") == "conjunto_autorizado"
+                and result.get("status") == "ok" and re.fullmatch(
+                    r"(?:mostre|liste|exiba) (?:o )?(?:resto|restante)(?: que falta)?[.!?]*",
+                    state["mensagem"].strip(), re.I)):
+            candidate = ("Esta consulta não separa apenas os usuários restantes: ela busca a lista completa até 150. "
+                         "Consultei novamente o conjunto autorizado pelos filtros desta consulta; "
+                         "esta tabela substitui a anterior, não é um lote adicional. " + candidate)
         return {
             "resultado_tool": result,
             "resultado": specialist_result,
@@ -982,11 +997,7 @@ def build_rh_graph(model: AgentModel):
                 if tool_name == "buscar_outros_usuarios" and result.get("status") in {"ok", "sem_dados"} and result.get("consulta") != "contagem"
                 else state.get("consulta_rh") if tool_name != "buscar_outros_usuarios" else None
             ),
-            "candidato": (
-                _formatar_meus_dados(result)
-                if tool_name == "buscar_meus_dados"
-                else _formatar_usuarios(result)
-            ),
+            "candidato": candidate,
             "agentes_chamados": state["agentes_chamados"] + [tool_name] + (
                 ["consultar_situacao_nrs"] if tool_name == "buscar_meus_dados" and not field
                 and result.get("status") == "ok" and state["usuario_atual"].role != "ADMIN" else []),

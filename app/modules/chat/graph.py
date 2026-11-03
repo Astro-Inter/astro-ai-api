@@ -137,8 +137,16 @@ def _consulta_propria_recente(message: str) -> bool:
 
 
 def _continuacao_rh(state: ChatState) -> BuscarOutrosUsuariosArgs | None:
-    # A navegação visual de listas agora é local no cliente. Histórico legado
-    # nunca deve disparar consultas de novas páginas nem reutilizar seus offsets.
+    # A continuação reconsulta a lista completa, nunca uma página ou offset.
+    if (state.get("contexto", {}).get("ultima_rota") == "rh"
+            and re.fullmatch(r"(?:mostre|liste|exiba) (?:o )?(?:resto|restante)(?: que falta)?[.!?]*",
+                             _sem_acentos(state["mensagem"]).strip())
+            and isinstance(state.get("consulta_rh"), dict)):
+        try:
+            filters = BuscarOutrosUsuariosArgs.model_validate(state["consulta_rh"])
+            return filters if filters.consulta == "listar" else None
+        except ValidationError:
+            return None
     return None
 
 

@@ -130,13 +130,14 @@ def test_manager_search_is_limited_to_own_unit_and_allowed_profiles(monkeypatch)
     assert connection.db_cursor.parameters == [
         "firebase-owner", ["GESTOR", "COLABORADOR"], "firebase-owner",
         ["ATIVO", "PRE_CADASTRADO"], ["COLABORADOR"],
-        r"%Ana\%\_%", "%soldador%", 15, 0,
+        r"%Ana\%\_%", "%soldador%", 1, 0,
     ]
     assert result == {
         "status": "ok",
         "quantidade": 1,
-        "consulta": "listar", "total": 1, "pagina": 1, "limite": 15, "total_paginas": 1,
-        "solicitada": 15, "retornada": 1, "limitado": False, "tem_mais": False, "motivo_limite": None,
+        "consulta": "listar", "total": 1, "pagina": 1, "limite": 150, "total_paginas": 1,
+        "solicitada": 1, "retornada": 1, "limitado": False, "tem_mais": False, "motivo_limite": None,
+        "politica_quantidade": "conjunto_autorizado", "quantidade_mencionada": 15,
         "usuarios": [{
             "nome": "Ana Lima", "email": "ana@example.com", "tipo": "COLABORADOR",
             "cargo": "Soldador", "unidade": "Matriz", "modalidade": "PRESENCIAL",
@@ -155,7 +156,7 @@ def test_workspace_manager_search_is_limited_to_workspace_and_allowed_profiles(m
     assert "usuario.unidade_id = (" not in query
     assert connection.db_cursor.parameters == [
         "firebase-owner", ["GESTOR", "GESTOR_WORKSPACE", "COLABORADOR"],
-        "firebase-owner", 20, 0,
+        "firebase-owner",
     ]
     assert result['status'] == 'sem_dados'
     assert result['total'] == 0 and result['usuarios'] == []
@@ -186,7 +187,7 @@ def test_admin_can_search_all_units_but_never_returns_itself(monkeypatch):
     query = connection.db_cursor.query
     assert "usuario.unidade_id = (" not in query
     assert "usuario.firebase_uid <> %s" in query
-    assert connection.db_cursor.parameters == ["firebase-admin", 20, 0]
+    assert connection.db_cursor.parameters == ["firebase-admin"]
     assert result['status'] == 'sem_dados'
     assert result['total'] == 0 and result['usuarios'] == []
 
@@ -288,7 +289,8 @@ def test_database_failure_returns_safe_error(monkeypatch):
 
 
 @pytest.mark.parametrize("requested,available,expected,limited", [
-    (100, 143, 100, False), (500, 300, 200, True), (100, 23, 23, False),
+    (100, 143, 143, False), (500, 300, 150, True), (100, 23, 23, False),
+    (1, 141, 141, False), (20, 151, 150, True), (150, 150, 150, False),
 ])
 def test_listing_collects_internal_batches(monkeypatch, requested, available, expected, limited):
     rows = [(f"Pessoa {i:04}", f"p{i}@example.com", "COLABORADOR", "Cargo", "Unidade", "PRESENCIAL", "ATIVO")
@@ -314,6 +316,10 @@ def test_listing_collects_internal_batches(monkeypatch, requested, available, ex
     assert result["total"] == available
     assert result["limitado"] is limited
     assert result["tem_mais"] == (expected < available)
+    assert result["solicitada"] == available
+    assert result["politica_quantidade"] == "conjunto_autorizado"
+    assert result["quantidade_mencionada"] == requested
+    assert result["motivo_limite"] == ("maximo_resultados" if limited else None)
     assert len({u["email"] for u in result["usuarios"]}) == expected
     assert cursor.batches[0][1] == 0
 
